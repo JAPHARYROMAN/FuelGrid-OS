@@ -68,20 +68,20 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** Postgres + Redis run locally via compose; migrations apply cleanly; baseline tenant/org schema exists.
 
-- [ ] `docker-compose.yml` at repo root: Postgres 16, Redis 7, with named volumes
-- [ ] Add migration runner (`golang-migrate`) — `make migrate-up`, `make migrate-down`, `make migrate-new NAME=...`
-- [ ] Decide on schema conventions and document in `docs/db-conventions.md`:
+- [x] `docker-compose.yml` at repo root: Postgres 16, Redis 7, with named volumes
+- [x] Add migration runner (`golang-migrate`) — `make migrate-up`, `make migrate-down`, `make migrate-new NAME=...`
+- [x] Decide on schema conventions and document in `docs/db-conventions.md`:
   - UUIDv7 PKs (`uuid` column type, `gen_random_uuid()` default for now)
   - `tenant_id uuid NOT NULL` on every tenant-owned table
-  - `created_at`, `updated_at`, `created_by`, `updated_by` everywhere
-  - Soft-delete via `deleted_at` only where business requires it
+  - `created_at`, `updated_at` everywhere (created_by / updated_by added in Stage 4)
+  - Soft-delete via `status='deleted'` (not `deleted_at`) — see db-conventions.md for rationale
   - Snake_case tables/columns
-- [ ] Migration `0001_init.sql`: `tenants`, `companies`, `regions`, `stations` with FK chain and indexes
-- [ ] Migration `0002_users.sql`: `users` table (no auth fields yet — those come next stage)
-- [ ] Connection pool (pgx) wired into API server with health probe in `/readyz`
-- [ ] Seed script for one demo tenant + company + region + station
+- [x] Migration `0001_init.sql`: `tenants`, `companies`, `regions`, `stations` with FK chain and indexes
+- [x] Migration `0002_users.sql`: `users` table (no auth fields yet — those come next stage)
+- [x] Connection pool (pgx) wired into API server with health probe in `/readyz`
+- [x] Seed script for one demo tenant + company + region + station
 
-**Done when:** `make migrate-up` from a clean DB produces the schema; API can query `tenants` table.
+**Done when:** `make migrate-up` from a clean DB produces the schema; API can query `tenants` table. ✅ Verified in CI (`migrations` job spins up Postgres 16 + Redis 7, applies migrations, exercises down-all + re-up, seeds demo data, boots the API and asserts `/readyz` reports postgres + redis ok). Local Docker-based verification deferred — daemon was down at commit time.
 
 ---
 
