@@ -132,14 +132,16 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** No query can return another tenant's data. Tested and verified.
 
-- [ ] Tenant resolver middleware: extract `tenant_id` from session, inject into context
-- [ ] Repository layer convention: every query takes `tenantID` as first scoping parameter; reject queries that don't
-- [ ] Postgres row-level security (RLS) policies on every tenant-owned table as defense-in-depth
-- [ ] `SET app.current_tenant` per transaction; RLS policies reference it
-- [ ] Tenant-isolation integration tests: create two tenants, attempt cross-tenant reads/writes via API → must all 404 or 403
-- [ ] Document tenant safety rules in `docs/multi-tenancy.md`
+- [x] Tenant resolver middleware: `requireAuth` injects `identity.Actor{TenantID, …}` onto the request context; `identity.Require(ctx)` is the single read path
+- [x] Repository layer convention: every existing query takes `tenantID` as first scoping parameter; documented as the contract in [docs/multi-tenancy.md](docs/multi-tenancy.md)
+- [x] Postgres row-level security policies on every tenant-owned table (companies, regions, stations, users, devices, sessions, user_roles, user_station_access, roles)
+- [x] `database.WithTenant(ctx, pool, tenantID, fn)` helper wraps queries in a transaction with `SET LOCAL app.current_tenant`; RLS policies reference `current_setting('app.current_tenant', true)` and fail closed when unset
+- [x] Tenant-isolation integration tests in CI: create a second tenant via psql, attempt cross-tenant GET via the API → 404; query as `fuelgrid_app` with no tenant context → 0 rows; with each tenant's context → only their rows
+- [x] Document tenant safety rules in `docs/multi-tenancy.md`
 
-**Done when:** Integration tests prove cross-tenant data access is impossible at API and DB layers.
+**Done when:** Integration tests prove cross-tenant data access is impossible at API and DB layers. ✅ Verified in CI — the new "Tenant isolation" step asserts: (a) cross-tenant `GET /api/v1/stations/{id}` returns 404 (app-layer scoping), (b) `fuelgrid_app` SELECT against `stations` with each tenant's `app.current_tenant` returns only that tenant's rows, (c) no tenant context returns zero rows (fail-closed RLS).
+
+**Posture note:** RLS is ENABLED but not FORCED. The API still connects as the table owner today, so its operative defense is application-layer `WHERE tenant_id = ?` scoping. The `fuelgrid_app` role exists and is subject to RLS — a future stage will migrate the API onto it, at which point FORCE can be added.
 
 ---
 

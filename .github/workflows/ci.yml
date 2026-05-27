@@ -244,11 +244,120 @@ jobs:
             echo "post-logout /me returned $status, expected 401"; exit 1
           fi
 
+      - name: Tenant isolation — seed a second tenant and verify both layers
+        env:
+          AUTH_PASSWORD_PEPPER: ci-test-pepper
+        run: |
+          # The auth-smoke step left a running API. Re-boot a clean instance
+          # so this step is independent.
+          pkill -f /tmp/api || true
+          /tmp/api &
+          API_PID=$!
+          trap "kill $API_PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 20); do
+            if curl -sS -f http://127.0.0.1:8080/healthz > /dev/null; then break; fi
+            sleep 0.5
+          done
+
+          PSQL="PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
+
+          # Create a second tenant + company + station + user as the
+          # superuser. RLS is enabled but not forced, so the superuser
+          # bypasses it.
+          eval $PSQL <<'SQL'
+            INSERT INTO tenants (id, name, slug)
+            VALUES ('22222222-2222-2222-2222-222222222222', 'Other Co.', 'other');
+
+            INSERT INTO companies (id, tenant_id, name)
+            VALUES ('33333333-3333-3333-3333-333333333333',
+                    '22222222-2222-2222-2222-222222222222',
+                    'Other Petroleum Ltd');
+
+            INSERT INTO stations (id, tenant_id, company_id, name, code, country)
+            VALUES ('44444444-4444-4444-4444-444444444444',
+                    '22222222-2222-2222-2222-222222222222',
+                    '33333333-3333-3333-3333-333333333333',
+                    'Other Station 1', 'OTH-01', 'Tanzania');
+          SQL
+
+          demo_tenant_id=$(eval $PSQL -c "SELECT id FROM tenants WHERE slug='demo'")
+          other_tenant_id="22222222-2222-2222-2222-222222222222"
+          other_station_id="44444444-4444-4444-4444-444444444444"
+
+          # ----- App-layer isolation -----
+          # Log in as the demo tenant's user, request the OTHER tenant's
+          # station by id. The app-layer WHERE tenant_id = ? filter must
+          # cause this to look like a missing row -> 404.
+          login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"tenant_slug":"demo","email":"demo@fuelgrid.local","password":"fuelgrid-demo-password-1234"}')
+          token=$(echo "$login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+
+          status=$(curl -sS -o /tmp/other.json -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/stations/$other_station_id \
+            -H "Authorization: Bearer $token")
+          if [ "$status" != "404" ]; then
+            echo "cross-tenant GET stations/$other_station_id returned $status, expected 404"
+            cat /tmp/other.json
+            exit 1
+          fi
+          echo "app layer: cross-tenant station lookup correctly returns 404"
+
+          # ----- DB-layer isolation (RLS via fuelgrid_app role) -----
+          APP_PSQL="PGPASSWORD=fuelgrid_app psql -At -h 127.0.0.1 -U fuelgrid_app -d fuelgrid"
+
+          # Demo tenant context: should see 2 stations (MIK-01, MSA-01).
+          count=$(eval $APP_PSQL -c "
+            BEGIN;
+            SET LOCAL app.current_tenant = '$demo_tenant_id';
+            SELECT count(*) FROM stations;
+            COMMIT;
+          " | tail -n 1)
+          if [ "$count" != "2" ]; then
+            echo "fuelgrid_app + demo tenant context: expected 2 stations, got $count"
+            exit 1
+          fi
+          echo "RLS: demo tenant context sees 2 stations"
+
+          # Other tenant context: should see 1 station (OTH-01).
+          count=$(eval $APP_PSQL -c "
+            BEGIN;
+            SET LOCAL app.current_tenant = '$other_tenant_id';
+            SELECT count(*) FROM stations;
+            COMMIT;
+          " | tail -n 1)
+          if [ "$count" != "1" ]; then
+            echo "fuelgrid_app + other tenant context: expected 1 station, got $count"
+            exit 1
+          fi
+          echo "RLS: other tenant context sees 1 station"
+
+          # No tenant context set: RLS must fail closed -> 0 rows.
+          count=$(eval $APP_PSQL -c "SELECT count(*) FROM stations" | tail -n 1)
+          if [ "$count" != "0" ]; then
+            echo "fuelgrid_app with no tenant context: expected 0 stations, got $count"
+            exit 1
+          fi
+          echo "RLS: no tenant context -> 0 stations (fail-closed)"
+
+          # Random non-existent tenant: also 0.
+          count=$(eval $APP_PSQL -c "
+            BEGIN;
+            SET LOCAL app.current_tenant = '99999999-9999-9999-9999-999999999999';
+            SELECT count(*) FROM stations;
+            COMMIT;
+          " | tail -n 1)
+          if [ "$count" != "0" ]; then
+            echo "fuelgrid_app + nonexistent tenant: expected 0 stations, got $count"
+            exit 1
+          fi
+          echo "RLS: nonexistent tenant -> 0 stations"
+
       - name: Verify seeded rows
         run: |
           docker run --rm --network host postgres:16-alpine \
             psql "$DATABASE_URL" -c "
-              SELECT (SELECT count(*) FROM tenants WHERE slug='demo')     AS tenants,
+              SELECT (SELECT count(*) FROM tenants)                       AS tenants,
                      (SELECT count(*) FROM companies)                     AS companies,
                      (SELECT count(*) FROM regions)                       AS regions,
                      (SELECT count(*) FROM stations)                      AS stations,
