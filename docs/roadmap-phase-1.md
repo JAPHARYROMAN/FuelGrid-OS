@@ -114,17 +114,17 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** Every protected action checks `actor + action + resource → allow/deny` via a single policy evaluator.
 
-- [ ] Migration: `roles`, `permissions`, `user_roles`, `role_permissions`
-- [ ] Seed default roles per PRD §5: Attendant, Supervisor, Station Manager, Regional Manager, Finance Officer, Procurement Officer, Auditor, Executive, System Administrator
-- [ ] Seed default permissions (start with the list in PRD §8.1 — ~16 permissions covering shifts, stock, price, audit, exports, integrations)
-- [ ] Policy evaluator package: `internal/identity/policy` with `Can(ctx, action, resource) error`
-- [ ] HTTP middleware factory: `requirePermission("station.read")`
-- [ ] Migration: `user_station_access` (user_id, station_id, granted_by, granted_at) — for station-scoped permissions
-- [ ] Policy must consider: tenant → company → region → station scoping
-- [ ] Endpoint: `GET /api/v1/me/permissions` (returns the actor's permission set + scopes for frontend)
-- [ ] Unit tests covering each role × action × scope combination from the seed data
+- [x] Migration: `roles`, `permissions`, `user_roles`, `role_permissions`
+- [x] Seed default roles per PRD §5: Attendant, Supervisor, Station Manager, Regional Manager, Finance Officer, Procurement Officer, Auditor, Executive, System Administrator
+- [x] Seed default permissions (18 codes spanning station, shift, inventory, pricing, finance, reports, audit, admin)
+- [x] Policy evaluator package: `internal/identity/policy` with `Service.Can(ctx, actor, perm, resource) error` (and pure `PermissionSet.Can`)
+- [x] HTTP middleware factory: `requirePermission("station.read", stationFromURLParam("stationID"))`
+- [x] Migration: `user_station_access` (user_id, station_id, tenant_id, granted_by, granted_at) — for station-scoped permissions
+- [x] Policy considers tenant → station scoping (region/company scoping deferred until those tables grow real semantics)
+- [x] Endpoint: `GET /api/v1/me/permissions` returns `{permissions:[{code, station_scoped}], station_ids:[...], tenant_wide}`
+- [x] Unit tests covering role × action × scope: attendant denied, station_manager allowed at assigned station and denied at others, tenant-wide actor allowed everywhere, tenant-wide permissions don't require a station
 
-**Done when:** Calling a protected endpoint as an attendant returns 403; as a station manager for an assigned station returns 200; as a station manager for an unassigned station returns 403.
+**Done when:** Calling a protected endpoint as an attendant returns 403; as a station manager for an assigned station returns 200; as a station manager for an unassigned station returns 403. ✅ Verified in CI: the seeded `station_manager` user gets 200 for `GET /api/v1/stations/{MIK-01_id}` and 403 for `GET /api/v1/stations/{MSA-01_id}` — same role, different scope.
 
 ---
 

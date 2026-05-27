@@ -190,6 +190,46 @@ jobs:
           echo "$me" | grep -q '"user_id"'
           echo "$me" | grep -q '"tenant_id"'
 
+          # /me/permissions: demo user is station_manager scoped to MIK-01.
+          perms=$(curl -sS http://127.0.0.1:8080/api/v1/me/permissions -H "Authorization: Bearer $token")
+          echo "permissions: $perms"
+          echo "$perms" | grep -q '"station.read"'
+          echo "$perms" | grep -q '"reports.export"'
+          echo "$perms" | grep -q '"tenant_wide":false'
+          # attendant-only permissions must not appear (attendant role has only shift.open)
+          if echo "$perms" | grep -q '"users.assign_roles"'; then
+            echo "station_manager unexpectedly has users.assign_roles"; exit 1
+          fi
+
+          # Look up the two seeded station ids by code.
+          mik_id=$(PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid \
+            -c "SELECT id FROM stations WHERE code='MIK-01'")
+          msa_id=$(PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid \
+            -c "SELECT id FROM stations WHERE code='MSA-01'")
+          echo "MIK-01=$mik_id MSA-01=$msa_id"
+          if [ -z "$mik_id" ] || [ -z "$msa_id" ]; then
+            echo "missing seeded station ids"; exit 1
+          fi
+
+          # station_manager + user_station_access(MIK-01): allowed.
+          status=$(curl -sS -o /tmp/mik.json -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/stations/$mik_id \
+            -H "Authorization: Bearer $token")
+          if [ "$status" != "200" ]; then
+            echo "GET stations/MIK-01 returned $status, expected 200"
+            cat /tmp/mik.json; exit 1
+          fi
+          grep -q '"code":"MIK-01"' /tmp/mik.json
+
+          # Same role, no user_station_access for MSA-01: forbidden.
+          status=$(curl -sS -o /tmp/msa.json -w '%{http_code}' \
+            http://127.0.0.1:8080/api/v1/stations/$msa_id \
+            -H "Authorization: Bearer $token")
+          if [ "$status" != "403" ]; then
+            echo "GET stations/MSA-01 returned $status, expected 403"
+            cat /tmp/msa.json; exit 1
+          fi
+
           # Logout returns 204
           status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/api/v1/auth/logout \
             -H "Authorization: Bearer $token")

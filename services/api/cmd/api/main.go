@@ -15,6 +15,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/session"
@@ -162,6 +163,9 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			logger,
 		)
 		logger.Info("identity service wired")
+
+		deps.Policy = policy.NewService(policy.NewDBLoader(deps.DB))
+		logger.Info("policy service wired")
 	} else {
 		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
 	}

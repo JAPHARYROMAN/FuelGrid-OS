@@ -16,16 +16,19 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
 )
 
 // Deps groups the backing services the API depends on. DB and Redis may be
 // nil for thin smoke tests — the readiness probe skips probes for nil deps.
-// Identity must be non-nil whenever auth routes are reachable.
+// Identity and Policy must be non-nil whenever auth/admin routes are
+// reachable.
 type Deps struct {
 	DB       *database.Pool
 	Redis    *cache.Client
 	Identity *identity.Service
+	Policy   *policy.Service
 }
 
 // Server owns the chi router and the embedded *http.Server. It is the
@@ -35,13 +38,20 @@ type Server struct {
 	logger   *slog.Logger
 	deps     Deps
 	identity *identity.Service
+	policy   *policy.Service
 	http     *http.Server
 }
 
 // New wires the router, middleware stack, and route table for the API.
 // It does not start the listener — call Start for that.
 func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
-	s := &Server{cfg: cfg, logger: logger, deps: deps, identity: deps.Identity}
+	s := &Server{
+		cfg:      cfg,
+		logger:   logger,
+		deps:     deps,
+		identity: deps.Identity,
+		policy:   deps.Policy,
+	}
 
 	r := chi.NewRouter()
 
@@ -91,7 +101,18 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireAuth)
 				r.Get("/me", s.handleMe)
+				if s.policy != nil {
+					r.Get("/me/permissions", s.handleMePermissions)
+				}
 			})
+
+			if s.policy != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(s.requireAuth)
+					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+						Get("/stations/{stationID}", s.handleGetStation)
+				})
+			}
 		}
 	})
 
