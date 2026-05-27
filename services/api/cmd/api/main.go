@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/events"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
@@ -168,6 +170,38 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Info("policy service wired")
 	} else {
 		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
+	}
+
+	// Outbox publisher. Needs Postgres only. The in-process bus is the
+	// dispatch target today; a Kafka/NATS replacement plugs in here later
+	// without touching the producers (handlers / services).
+	if deps.DB != nil {
+		bus := events.NewInProcessBus(logger.With("component", "events.bus"))
+		// Subscribe a catch-all that logs every event. Keeps a visible
+		// trail in dev and CI until concrete consumers land.
+		bus.Subscribe("*", func(_ context.Context, e events.Event) error {
+			logger.Info("event dispatched",
+				"event_id", e.ID,
+				"event_type", e.Type,
+				"tenant_id", e.TenantID,
+				"aggregate_type", e.AggregateType,
+				"aggregate_id", e.AggregateID,
+			)
+			return nil
+		})
+
+		publisher := events.NewPublisher(deps.DB, bus, events.PublisherConfig{
+			PollInterval: cfg.OutboxPollInterval,
+			BatchSize:    cfg.OutboxBatchSize,
+		}, logger.With("component", "events.publisher"))
+		publisher.Start()
+		cleanups = append(cleanups, func() {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stopCancel()
+			if err := publisher.Stop(stopCtx); err != nil {
+				logger.Warn("publisher stop", "error", err)
+			}
+		})
 	}
 
 	return deps, cleanup, nil

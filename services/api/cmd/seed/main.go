@@ -40,6 +40,10 @@ const (
 	// in any non-development environment via DEMO_USER_PASSWORD.
 	defaultUserPassword = "fuelgrid-demo-password-1234" //nolint:gosec // G101: development-only default, override in prod
 	defaultRoleCode     = "station_manager"
+
+	defaultAdminEmail = "admin@fuelgrid.local"
+	// Same dev-only convenience for the admin seed.
+	defaultAdminPassword = "fuelgrid-admin-password-1234" //nolint:gosec // G101: development-only default, override in prod
 )
 
 func main() {
@@ -62,10 +66,16 @@ func run() error {
 	userEmail := envOr("DEMO_USER_EMAIL", defaultUserEmail)
 	userPassword := envOr("DEMO_USER_PASSWORD", defaultUserPassword)
 	roleCode := envOr("DEMO_ROLE_CODE", defaultRoleCode)
+	adminEmail := envOr("DEMO_ADMIN_EMAIL", defaultAdminEmail)
+	adminPassword := envOr("DEMO_ADMIN_PASSWORD", defaultAdminPassword)
 	pepper := os.Getenv("AUTH_PASSWORD_PEPPER")
 
 	hasher := password.New(password.DefaultParams, pepper)
 	passwordHash, err := hasher.Hash(userPassword)
+	if err != nil {
+		return err
+	}
+	adminHash, err := hasher.Hash(adminPassword)
 	if err != nil {
 		return err
 	}
@@ -99,6 +109,7 @@ func run() error {
 	}
 
 	var tenantID, companyID, regionID, station1ID, station2ID, userID, roleID string
+	var adminUserID, adminRoleID string
 
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug)
@@ -175,6 +186,29 @@ func run() error {
 		return err
 	}
 
+	// Admin user — has the system_admin role (all permissions) and no
+	// user_station_access rows (tenant-wide reach). Stage 7's CI smoke
+	// uses this account to exercise the admin grant-role endpoint.
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (tenant_id, email, full_name, status,
+		                  password_hash, password_changed_at)
+		VALUES ($1, $2, 'Demo Admin', 'active', $3, now())
+		RETURNING id
+	`, tenantID, adminEmail, adminHash).Scan(&adminUserID); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(ctx, `
+		SELECT id FROM roles WHERE code = 'system_admin' AND is_system = true
+	`).Scan(&adminRoleID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id, tenant_id)
+		VALUES ($1, $2, $3)
+	`, adminUserID, adminRoleID, tenantID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -192,6 +226,9 @@ func run() error {
 		"user_email", userEmail,
 		"role_code", roleCode,
 		"access_scope", "station MIK-01 only",
+		"admin_user_id", adminUserID,
+		"admin_email", adminEmail,
+		"admin_role", "system_admin",
 	)
 	return nil
 }

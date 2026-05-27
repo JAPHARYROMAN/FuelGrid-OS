@@ -45,6 +45,10 @@ type Config struct {
 	AuthLoginLockAfter   int           `envconfig:"AUTH_LOGIN_LOCK_AFTER" default:"10"`
 	AuthLoginLockFor     time.Duration `envconfig:"AUTH_LOGIN_LOCK_FOR" default:"30m"`
 	AuthPasswordResetTTL time.Duration `envconfig:"AUTH_PASSWORD_RESET_TTL" default:"1h"`
+
+	// Outbox publisher.
+	OutboxPollInterval time.Duration `envconfig:"OUTBOX_POLL_INTERVAL" default:"2s"`
+	OutboxBatchSize    int           `envconfig:"OUTBOX_BATCH_SIZE" default:"100"`
 }
 
 // Load reads environment variables and returns a populated Config.

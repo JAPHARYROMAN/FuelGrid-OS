@@ -353,6 +353,85 @@ jobs:
           fi
           echo "RLS: nonexistent tenant -> 0 stations"
 
+      - name: Audit + outbox — grant role writes audit_logs + outbox_events
+        env:
+          AUTH_PASSWORD_PEPPER: ci-test-pepper
+          OUTBOX_POLL_INTERVAL: 500ms
+        run: |
+          pkill -f /tmp/api || true
+          /tmp/api &
+          API_PID=$!
+          trap "kill $API_PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 20); do
+            if curl -sS -f http://127.0.0.1:8080/healthz > /dev/null; then break; fi
+            sleep 0.5
+          done
+
+          PSQL="PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
+
+          # Login as the seeded admin user (system_admin role).
+          admin_login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"tenant_slug":"demo","email":"admin@fuelgrid.local","password":"fuelgrid-admin-password-1234"}')
+          admin_token=$(echo "$admin_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          if [ -z "$admin_token" ]; then
+            echo "admin login failed: $admin_login"; exit 1
+          fi
+
+          # Look up the demo (non-admin) user id.
+          demo_user_id=$(eval $PSQL -c "SELECT id FROM users WHERE email='demo@fuelgrid.local'")
+
+          # Snapshot row counts before the grant.
+          audit_before=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.role.granted'")
+          outbox_before=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted'")
+
+          # Grant the 'attendant' role to the demo user.
+          status=$(curl -sS -o /tmp/grant.json -w '%{http_code}' \
+            -X POST http://127.0.0.1:8080/api/v1/admin/users/$demo_user_id/roles \
+            -H "Authorization: Bearer $admin_token" \
+            -H 'Content-Type: application/json' \
+            -d '{"role_code":"attendant"}')
+          if [ "$status" != "201" ]; then
+            echo "grant role returned $status, expected 201"
+            cat /tmp/grant.json; exit 1
+          fi
+
+          # Same tx wrote audit_logs and outbox_events. published_at may
+          # already be NOT NULL if the publisher's tick beat us here.
+          audit_after=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.role.granted'")
+          outbox_after=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted'")
+          if [ "$audit_after" != "$((audit_before + 1))" ]; then
+            echo "audit_logs delta expected 1, got $((audit_after - audit_before))"
+            exit 1
+          fi
+          if [ "$outbox_after" != "$((outbox_before + 1))" ]; then
+            echo "outbox_events delta expected 1, got $((outbox_after - outbox_before))"
+            exit 1
+          fi
+          echo "tx wrote +1 audit_logs and +1 outbox_events"
+
+          # Wait for the publisher to dispatch (poll interval is 500ms).
+          for i in $(seq 1 10); do
+            published=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted' AND published_at IS NOT NULL")
+            if [ "$published" -ge "$outbox_after" ]; then
+              echo "publisher dispatched the event after ~$((i * 500))ms"
+              break
+            fi
+            sleep 0.5
+          done
+
+          published=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted' AND published_at IS NOT NULL")
+          if [ "$published" != "$outbox_after" ]; then
+            echo "publisher did not mark events published: $published of $outbox_after"
+            exit 1
+          fi
+
+          # Auditor read: the same admin token has audit.read (system_admin).
+          logs=$(curl -sS -H "Authorization: Bearer $admin_token" \
+            'http://127.0.0.1:8080/api/v1/audit-logs?action=user.role.granted')
+          echo "audit-logs: $logs"
+          echo "$logs" | grep -q '"action":"user.role.granted"'
+
       - name: Verify seeded rows
         run: |
           docker run --rm --network host postgres:16-alpine \
@@ -361,7 +440,10 @@ jobs:
                      (SELECT count(*) FROM companies)                     AS companies,
                      (SELECT count(*) FROM regions)                       AS regions,
                      (SELECT count(*) FROM stations)                      AS stations,
-                     (SELECT count(*) FROM users WHERE password_hash IS NOT NULL) AS users_with_password;
+                     (SELECT count(*) FROM users WHERE password_hash IS NOT NULL) AS users_with_password,
+                     (SELECT count(*) FROM audit_logs)                    AS audit_logs,
+                     (SELECT count(*) FROM outbox_events)                 AS outbox_events,
+                     (SELECT count(*) FROM outbox_events WHERE published_at IS NOT NULL) AS outbox_published;
             "
 
   docker:

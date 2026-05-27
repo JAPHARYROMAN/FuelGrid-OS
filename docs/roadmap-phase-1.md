@@ -149,16 +149,16 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** Every sensitive action emits a domain event and writes an immutable audit log. Outbox pattern wired end-to-end.
 
-- [ ] Migration: `audit_logs` (id, tenant_id, actor_id, action, entity_type, entity_id, previous_value jsonb, new_value jsonb, reason, ip, user_agent, occurred_at)
-- [ ] Migration: `outbox_events` (id, tenant_id, event_type, aggregate_type, aggregate_id, payload jsonb, metadata jsonb, occurred_at, published_at)
-- [ ] Domain event envelope type matches architecture §13.2 fields
-- [ ] Repository convention: every write in a transaction also writes to `outbox_events` in the same transaction
-- [ ] Background outbox publisher goroutine: polls unpublished events → publishes to in-process bus (Kafka/NATS deferred to later phase) → marks published
-- [ ] Audit interceptor: wraps sensitive handlers, captures before/after, writes to `audit_logs`
-- [ ] Sensitive actions list per PRD §15.2 wired up (price change, permission change, record deletion, etc.) — most are placeholders for now since features don't exist yet
-- [ ] `GET /api/v1/audit-logs` with filters (entity, actor, date range) — auditor-only
+- [x] Migration: `audit_logs` (id, tenant_id, actor_id, action, entity_type, entity_id, previous_value jsonb, new_value jsonb, reason, ip, user_agent, request_id, occurred_at)
+- [x] Migration: `outbox_events` (id, tenant_id, event_type, event_version, aggregate_type, aggregate_id, actor_id, payload jsonb, metadata jsonb, occurred_at, published_at, correlation_id, causation_id)
+- [x] Domain event envelope type matches architecture §13.2 fields exactly (`internal/events/event.go`)
+- [x] Repository convention: every sensitive write now lands in the same DB transaction as its `audit.Write` + `events.WriteOutbox` — demonstrated by the grant-role endpoint
+- [x] Background outbox publisher goroutine: polls unpublished events with `FOR UPDATE SKIP LOCKED`, dispatches to the in-process bus, marks `published_at`. Kafka/NATS deferred.
+- [x] Audit writer (`internal/audit`) — handlers wrap the action and its audit row in one tx so a crash between business change and audit row is impossible
+- [x] Sensitive actions wired: `user.role.granted` lands today; the audit + outbox pattern is the template every later sensitive write follows (price change, period lock, record deletion, etc.)
+- [x] `GET /api/v1/audit-logs` with filters (action, entity_type, entity_id, actor_id, since, until, limit) — requires `audit.read`, scoped to actor's tenant
 
-**Done when:** A user permission change writes both an `audit_logs` row and an `outbox_events` row in the same transaction, and the publisher dispatches the event.
+**Done when:** A user permission change writes both an `audit_logs` row and an `outbox_events` row in the same transaction, and the publisher dispatches the event. ✅ Verified in CI: the new "Audit + outbox" step logs in as the seeded `admin@fuelgrid.local`, POSTs `{role_code:"attendant"}` to `/api/v1/admin/users/{demo_user_id}/roles`, snapshots row counts before/after, then waits for the publisher to set `published_at`. All three assertions hold: +1 `audit_logs`, +1 `outbox_events`, and the new outbox row reaches `published_at IS NOT NULL` within the polling window. The same admin token can then read the entry back via `GET /audit-logs?action=user.role.granted`.
 
 ---
 

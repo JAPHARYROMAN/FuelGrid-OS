@@ -111,6 +111,14 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 					r.Use(s.requireAuth)
 					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
 						Get("/stations/{stationID}", s.handleGetStation)
+
+					// Auditor-only: read audit_logs scoped to the actor's tenant.
+					r.With(s.requirePermission("audit.read", nil)).
+						Get("/audit-logs", s.handleListAuditLogs)
+
+					// Admin actions: grant a system role to a user.
+					r.With(s.requirePermission("users.assign_roles", nil)).
+						Post("/admin/users/{userID}/roles", s.handleGrantRole)
 				})
 			}
 		}
