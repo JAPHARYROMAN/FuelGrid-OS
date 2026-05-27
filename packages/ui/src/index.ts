@@ -19,3 +19,21 @@ export {
 
 export { EmptyState, LoadingState, ErrorState } from './components/states';
 export type { ErrorStateProps } from './components/states';
+
+export {
+  Dialog,
+  DialogTrigger,
+  DialogClose,
+  DialogPortal,
+  DialogOverlay,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from './components/dialog';
+
+export { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './components/table';
+
+export { Badge, badgeVariants } from './components/badge';
+export type { BadgeProps } from './components/badge';

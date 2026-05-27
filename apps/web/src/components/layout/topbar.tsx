@@ -1,8 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import { useTheme } from 'next-themes';
-import { Command, LogOut, Moon, Search, Sun } from 'lucide-react';
+import { Command, LogOut, Moon, Search, Sun, UserCircle } from 'lucide-react';
 
 import { SdkError } from '@fuelgrid/sdk';
 import { Button } from '@fuelgrid/ui';
@@ -21,14 +23,22 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
 
   const clearSession = useAuthStore((s) => s.clearSession);
   const resetTenantContext = useTenantStore((s) => s.reset);
+  const activeStationID = useTenantStore((s) => s.activeStationID);
+  const setActiveStation = useTenantStore((s) => s.setActiveStation);
+
+  const token = useAuthStore((s) => s.token);
+
+  const stations = useQuery({
+    queryKey: ['stations'],
+    queryFn: ({ signal }) => api.listStations({}, signal),
+    enabled: Boolean(token),
+  });
 
   async function handleLogout() {
     try {
       await api.logout();
     } catch (err) {
-      // 401/expired/already-invalid is fine — we're logging out anyway.
       if (!(err instanceof SdkError) || err.status >= 500) {
-        // Surface real server errors but don't block the local logout.
         console.error('logout failed', err);
       }
     }
@@ -41,19 +51,44 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-card/40 px-4">
-      <button
-        type="button"
-        onClick={onOpenCommand}
-        className="group flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
-      >
-        <Search className="size-4" />
-        <span>Search…</span>
-        <kbd className="ml-4 inline-flex items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-          <Command className="size-3" />K
-        </kbd>
-      </button>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onOpenCommand}
+          className="group flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
+        >
+          <Search className="size-4" />
+          <span>Search…</span>
+          <kbd className="ml-4 inline-flex items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <Command className="size-3" />K
+          </kbd>
+        </button>
+
+        {(stations.data?.items?.length ?? 0) > 0 ? (
+          <select
+            className="h-9 rounded-md border border-border bg-background px-2 text-xs"
+            value={activeStationID ?? ''}
+            onChange={(e) => setActiveStation(e.target.value || null)}
+            aria-label="Active station"
+          >
+            <option value="">All stations</option>
+            {(stations.data?.items ?? []).map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.code} — {s.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
 
       <div className="flex items-center gap-1">
+        <Link
+          href="/profile"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Profile"
+        >
+          <UserCircle className="size-4" />
+        </Link>
         <Button
           variant="ghost"
           size="icon"

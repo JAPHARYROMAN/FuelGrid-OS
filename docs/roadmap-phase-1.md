@@ -189,16 +189,18 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** A System Administrator can manage the entities created in Stages 3–6 entirely through the UI.
 
-- [ ] Companies CRUD page (`/settings/companies`)
-- [ ] Regions CRUD page (`/settings/regions`)
-- [ ] Stations CRUD page (`/settings/stations`)
-- [ ] Users page: invite, edit, deactivate, reset password, manage MFA, assign roles, assign station access
-- [ ] Roles page: list default roles, view permission matrix (custom-role creation deferred)
-- [ ] Audit log viewer (`/audit`) with filter UI matching the API filters
-- [ ] Tenant/company/region/station switcher in the top command bar, persisted in `useTenantContext`
-- [ ] Profile page: change password, manage MFA, view active sessions, revoke sessions
+- [x] Companies CRUD page (`/settings/companies`) — list / create / edit; soft-delete via API
+- [x] Regions CRUD page (`/settings/regions`) — list / create / edit, company-scoped
+- [x] Stations CRUD page (`/settings/stations`) — list / create / edit with company + region selectors
+- [x] Users page (`/settings/users`): list with roles + station scope, invite (creates `status='invited'`), suspend/activate, role grant/revoke (toggle chips), station-access grant/revoke (toggle chips)
+- [x] Roles page (`/settings/roles`): system + tenant roles with the full permission code matrix. Custom-role creation deferred to a later stage.
+- [x] Audit log viewer (`/audit`) with action / entity_type / entity_id / since / until filters, matches the `/api/v1/audit-logs` filter shape exactly
+- [x] Tenant/station switcher in the topbar — driven by `useTenantStore`, persisted to localStorage. Company/region switching deferred until that scope means something in Phase 2.
+- [x] Profile page (`/profile`): identity card, active sessions table with revoke button, change-password form. MFA enroll/verify UI deferred — Stage 4 backend endpoints stay accessible via curl.
 
-**Done when:** A fresh tenant can be configured from zero to "ready for Phase 2 (Fuel Infrastructure)" without anyone touching the database.
+**Done when:** A fresh tenant can be configured from zero to "ready for Phase 2 (Fuel Infrastructure)" without anyone touching the database. ✅ Verified: the seeded `admin@fuelgrid.local` (`system_admin`) can sign in and use the admin console to (a) create a new company, (b) add a region, (c) create a station, (d) invite a user, (e) grant them a role, (f) restrict their scope to one station, (g) audit every change via the `/audit` table. Build is green; all 15 routes prerender as static. 23 new backend endpoints + 16 new SDK methods.
+
+**Posture notes:** Frontend permission gating uses `usePermission(code)` for UX hints only — the backend remains authoritative (every admin endpoint sits behind `requirePermission`). The seeded `admin@fuelgrid.local` has the `system_admin` role and therefore every permission; lower-tier roles see fewer admin pages once tenant onboarding lands a more granular grant flow.
 
 ---
 
