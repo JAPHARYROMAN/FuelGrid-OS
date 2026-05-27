@@ -1,0 +1,51 @@
+{
+  "name": "@fuelgrid/config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared TypeScript, ESLint, Prettier, and Tailwind configs for the FuelGrid OS monorepo",
+  "type": "module",
+  "files": [
+    "tsconfig.base.json",
+    "tsconfig.node.json",
+    "tsconfig.next.json",
+    "eslint.base.mjs",
+    "eslint.next.mjs",
+    "prettier.config.mjs",
+    "tailwind.preset.css"
+  ],
+  "exports": {
+    "./tsconfig/base": "./tsconfig.base.json",
+    "./tsconfig/node": "./tsconfig.node.json",
+    "./tsconfig/next": "./tsconfig.next.json",
+    "./eslint/base": "./eslint.base.mjs",
+    "./eslint/next": "./eslint.next.mjs",
+    "./prettier": "./prettier.config.mjs",
+    "./tailwind": "./tailwind.preset.css"
+  },
+  "peerDependencies": {
+    "@eslint/js": "^9.18.0",
+    "eslint": "^9.18.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0"
+  },
+  "peerDependenciesMeta": {
+    "@eslint/js": {
+      "optional": true
+    },
+    "eslint": {
+      "optional": true
+    },
+    "eslint-config-prettier": {
+      "optional": true
+    },
+    "globals": {
+      "optional": true
+    },
+    "typescript-eslint": {
+      "optional": true
+    }
+  }
+}

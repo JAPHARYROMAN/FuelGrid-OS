@@ -1,0 +1,34 @@
+/*
+ * FuelGrid OS — Tailwind v4 design tokens
+ *
+ * Apps import this via `@import "@fuelgrid/config/tailwind";` from their
+ * own globals.css. Tokens here come from docs/ui-ux.md §5 (Color System)
+ * and §6 (Typography).
+ *
+ * This is the Stage 1 token slot. Full token set + dark mode wiring lands
+ * in Stage 8 when the web app shell is built.
+ */
+
+@theme {
+  /* Brand & semantic surface colors */
+  --color-navy: #0b1220;
+  --color-charcoal: #11161f;
+  --color-slate: #1f2937;
+  --color-accent: #3b82f6;
+  --color-cyan: #06b6d4;
+  --color-violet: #8b5cf6;
+
+  /* Semantic status */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #06b6d4;
+
+  /* Fuel product colors (per docs/ui-ux.md §5.2) */
+  --color-fuel-pms: #f97316;
+  --color-fuel-diesel: #2563eb;
+  --color-fuel-kerosene: #a855f7;
+  --color-fuel-lpg: #14b8a6;
+  --color-fuel-lubricants: #d97706;
+  --color-fuel-adblue: #93c5fd;
+}

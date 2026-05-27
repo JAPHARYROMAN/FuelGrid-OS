@@ -1,0 +1,33 @@
+# Normalize line endings — store everything as LF in the repo.
+# Windows checkouts get LF too; Husky shell hooks and YAML configs require it.
+* text=auto eol=lf
+
+# Force LF for source and config formats
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.css       text eol=lf
+*.go        text eol=lf
+*.sql       text eol=lf
+*.sh        text eol=lf
+Makefile    text eol=lf
+Dockerfile  text eol=lf
+
+# Husky hook scripts must be LF and executable
+.husky/*    text eol=lf
+
+# Binary formats (skip diff)
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.pdf       binary
+*.zip       binary
