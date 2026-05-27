@@ -1,0 +1,704 @@
+openapi: 3.1.0
+info:
+  title: FuelGrid OS API
+  version: 0.1.0
+  description: |
+    Hand-maintained spec for the FuelGrid OS API surface. Kept in
+    lockstep with the Go handlers by review until Stage 11+ wires
+    automatic generation from chi route metadata.
+
+    The Stage-10 CI workflow validates this file with `redocly lint`.
+    SDK regeneration is manual today — see packages/sdk/.
+servers:
+  - url: http://localhost:8080
+    description: Local dev (`go run ./services/api/cmd/api`)
+
+tags:
+  - { name: Health,     description: Liveness, readiness, and metrics }
+  - { name: Auth,       description: Login, logout, refresh, password reset, MFA }
+  - { name: Me,         description: Current actor's identity, permissions, sessions }
+  - { name: Companies,  description: Tenant CRUD over the companies hierarchy }
+  - { name: Regions,    description: Regions under a company }
+  - { name: Stations,   description: Physical fueling locations }
+  - { name: Users,      description: Tenant user administration }
+  - { name: Roles,      description: System + tenant role catalogue }
+  - { name: Audit,      description: Append-only sensitive-action log }
+
+security:
+  - bearerAuth: []
+
+paths:
+
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is up
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StatusResponse' }
+
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Returns 200 only when every configured backing service responds.
+      security: []
+      responses:
+        '200': { description: Ready,     content: { application/json: { schema: { $ref: '#/components/schemas/ReadyResponse' } } } }
+        '503': { description: Not ready, content: { application/json: { schema: { $ref: '#/components/schemas/ReadyResponse' } } } }
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus exposition
+      description: Open in dev; gate via ingress / network policy in production.
+      security: []
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain: { schema: { type: string } }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: Token issued or MFA required, content: { application/json: { schema: { $ref: '#/components/schemas/LoginResponse' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke current session
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Extend the current session
+      responses:
+        '200':
+          description: New expiry
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  expires_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/password-reset/request:
+    post:
+      tags: [Auth]
+      summary: Issue a password reset token
+      description: Always returns 202; never reveals whether the email matched.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenant_slug, email]
+              properties:
+                tenant_slug: { type: string }
+                email: { type: string, format: email }
+      responses:
+        '202': { description: Request accepted }
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      tags: [Auth]
+      summary: Redeem a reset token and set a new password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token: { type: string }
+                new_password: { type: string, minLength: 12 }
+      responses:
+        '204': { description: Password reset }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/auth/mfa/enroll:
+    post:
+      tags: [Auth]
+      summary: Begin MFA enrollment (returns secret + otpauth URL)
+      responses:
+        '200':
+          description: Enrollment payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  otpauth_url: { type: string, format: uri }
+        '409': { description: MFA already enabled }
+
+  /api/v1/auth/mfa/verify:
+    post:
+      tags: [Auth]
+      summary: Confirm enrollment with a TOTP code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, minLength: 6, maxLength: 6 }
+      responses:
+        '204': { description: MFA enabled }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/me:
+    get:
+      tags: [Me]
+      summary: Current actor
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+
+  /api/v1/me/permissions:
+    get:
+      tags: [Me]
+      summary: Permissions + scope for UI gating
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MePermissions' } } } }
+
+  /api/v1/me/sessions:
+    get:
+      tags: [Me]
+      summary: List the actor's active sessions
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SessionList' } } } }
+
+  /api/v1/me/sessions/{sessionID}:
+    delete:
+      tags: [Me]
+      summary: Revoke one of the actor's sessions
+      parameters:
+        - in: path
+          name: sessionID
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Revoked }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/me/password:
+    post:
+      tags: [Me]
+      summary: Change the actor's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password: { type: string }
+                new_password: { type: string, minLength: 12 }
+      responses:
+        '204': { description: Password changed }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/companies:
+    get:
+      tags: [Companies]
+      summary: List companies
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CompanyList' } } } }
+    post:
+      tags: [Companies]
+      summary: Create a company
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CompanyCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Company' } } } }
+
+  /api/v1/companies/{id}:
+    patch:
+      tags: [Companies]
+      summary: Update a company
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CompanyUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Company' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Companies]
+      summary: Soft-delete a company (sets status='deleted')
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/regions:
+    get:
+      tags: [Regions]
+      summary: List regions
+      parameters: [{ in: query, name: company_id, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/RegionList' } } } }
+    post:
+      tags: [Regions]
+      summary: Create a region
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegionCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Region' } } } }
+
+  /api/v1/regions/{id}:
+    patch:
+      tags: [Regions]
+      summary: Update a region
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegionUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Region' } } } }
+    delete:
+      tags: [Regions]
+      summary: Soft-delete a region
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+
+  /api/v1/stations:
+    get:
+      tags: [Stations]
+      summary: List stations
+      parameters: [{ in: query, name: region_id, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StationList' } } } }
+    post:
+      tags: [Stations]
+      summary: Create a station
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StationCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Station' } } } }
+
+  /api/v1/stations/{stationID}:
+    get:
+      tags: [Stations]
+      summary: Get one station
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Station' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Stations]
+      summary: Update a station
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StationUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Station' } } } }
+    delete:
+      tags: [Stations]
+      summary: Soft-delete a station
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: List tenant users with roles + station scope
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UserList' } } } }
+
+  /api/v1/admin/users:
+    post:
+      tags: [Users]
+      summary: Invite a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, full_name]
+              properties:
+                email: { type: string, format: email }
+                full_name: { type: string }
+      responses:
+        '201': { description: Invited }
+
+  /api/v1/admin/users/{userID}/status:
+    patch:
+      tags: [Users]
+      summary: Update a user's status (active|suspended)
+      parameters: [{ in: path, name: userID, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [active, suspended] }
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/users/{userID}/roles:
+    post:
+      tags: [Users]
+      summary: Grant a system role
+      parameters: [{ in: path, name: userID, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role_code]
+              properties:
+                role_code: { type: string }
+      responses:
+        '201': { description: Granted }
+
+  /api/v1/admin/users/{userID}/roles/{roleCode}:
+    delete:
+      tags: [Users]
+      summary: Revoke a role
+      parameters:
+        - { in: path, name: userID,   required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: roleCode, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Revoked }
+
+  /api/v1/admin/users/{userID}/station-access:
+    post:
+      tags: [Users]
+      summary: Grant explicit access to one station
+      parameters: [{ in: path, name: userID, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [station_id]
+              properties:
+                station_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Granted }
+
+  /api/v1/admin/users/{userID}/station-access/{stationID}:
+    delete:
+      tags: [Users]
+      summary: Revoke station access
+      parameters:
+        - { in: path, name: userID,    required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Revoked }
+
+  /api/v1/roles:
+    get:
+      tags: [Roles]
+      summary: System + tenant roles with permission codes
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/RoleList' } } } }
+
+  /api/v1/audit-logs:
+    get:
+      tags: [Audit]
+      summary: Filtered audit log
+      parameters:
+        - { in: query, name: action,      schema: { type: string } }
+        - { in: query, name: entity_type, schema: { type: string } }
+        - { in: query, name: entity_id,   schema: { type: string } }
+        - { in: query, name: actor_id,    schema: { type: string, format: uuid } }
+        - { in: query, name: since,       schema: { type: string, format: date-time } }
+        - { in: query, name: until,       schema: { type: string, format: date-time } }
+        - { in: query, name: limit,       schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuditLogList' } } } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: Authentication required or invalid
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Forbidden:
+      description: Authenticated but not authorized
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Resource not found
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RateLimited:
+      description: Too many requests
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:  { type: string }
+        status: { type: integer }
+    StatusResponse:
+      type: object
+      properties: { status: { type: string } }
+    ReadyResponse:
+      type: object
+      properties:
+        status: { type: string }
+        checks:
+          type: object
+          additionalProperties: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [tenant_slug, email, password]
+      properties:
+        tenant_slug: { type: string }
+        email:       { type: string, format: email }
+        password:    { type: string }
+        mfa_code:    { type: string }
+    LoginResponse:
+      type: object
+      properties:
+        token:        { type: string }
+        expires_at:   { type: string, format: date-time }
+        mfa_required: { type: boolean }
+
+    Me:
+      type: object
+      properties:
+        user_id:       { type: string, format: uuid }
+        tenant_id:     { type: string, format: uuid }
+        session_id:    { type: string, format: uuid }
+        mfa_satisfied: { type: boolean }
+    MePermissions:
+      type: object
+      properties:
+        permissions:
+          type: array
+          items:
+            type: object
+            properties:
+              code:           { type: string }
+              station_scoped: { type: boolean }
+        station_ids:
+          type: array
+          items: { type: string, format: uuid }
+        tenant_wide: { type: boolean }
+
+    Session:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        issued_at:  { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        user_agent: { type: string }
+        is_current: { type: boolean }
+    SessionList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Session' } }
+        count: { type: integer }
+
+    Company:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        tenant_id:       { type: string, format: uuid }
+        name:            { type: string }
+        legal_name:      { type: string }
+        registration_no: { type: string }
+        tax_id:          { type: string }
+        currency:        { type: string, minLength: 3, maxLength: 3 }
+        timezone:        { type: string }
+        status:          { type: string }
+    CompanyCreate:
+      type: object
+      required: [name]
+      properties:
+        name:            { type: string }
+        legal_name:      { type: string }
+        registration_no: { type: string }
+        tax_id:          { type: string }
+        currency:        { type: string, minLength: 3, maxLength: 3 }
+        timezone:        { type: string }
+    CompanyUpdate:
+      type: object
+      properties:
+        name:            { type: string }
+        legal_name:      { type: string }
+        registration_no: { type: string }
+        tax_id:          { type: string }
+        currency:        { type: string }
+        timezone:        { type: string }
+        status:          { type: string }
+    CompanyList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Company' } }
+        count: { type: integer }
+
+    Region:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        tenant_id:  { type: string, format: uuid }
+        company_id: { type: string, format: uuid }
+        name:       { type: string }
+        code:       { type: string }
+        status:     { type: string }
+    RegionCreate:
+      type: object
+      required: [company_id, name]
+      properties:
+        company_id: { type: string, format: uuid }
+        name:       { type: string }
+        code:       { type: string }
+    RegionUpdate:
+      type: object
+      properties:
+        name:   { type: string }
+        code:   { type: string }
+        status: { type: string }
+    RegionList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Region' } }
+        count: { type: integer }
+
+    Station:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        tenant_id:    { type: string, format: uuid }
+        company_id:   { type: string, format: uuid }
+        region_id:    { type: string, format: uuid }
+        name:         { type: string }
+        code:         { type: string }
+        address_line1: { type: string }
+        address_line2: { type: string }
+        city:         { type: string }
+        state:        { type: string }
+        country:      { type: string }
+        latitude:     { type: number, minimum: -90,  maximum: 90 }
+        longitude:    { type: number, minimum: -180, maximum: 180 }
+        timezone:     { type: string }
+        status:       { type: string }
+    StationCreate:
+      type: object
+      required: [company_id, name, code]
+      properties:
+        company_id: { type: string, format: uuid }
+        region_id:  { type: string, format: uuid }
+        name:       { type: string }
+        code:       { type: string }
+        address_line1: { type: string }
+        address_line2: { type: string }
+        city:       { type: string }
+        state:      { type: string }
+        country:    { type: string }
+        latitude:   { type: number }
+        longitude:  { type: number }
+        timezone:   { type: string }
+    StationUpdate:
+      type: object
+      properties:
+        region_id:  { type: string, format: uuid }
+        name:       { type: string }
+        code:       { type: string }
+        city:       { type: string }
+        country:    { type: string }
+        status:     { type: string }
+    StationList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Station' } }
+        count: { type: integer }
+
+    User:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        email:         { type: string, format: email }
+        full_name:     { type: string }
+        status:        { type: string }
+        mfa_enabled:   { type: boolean }
+        last_login_at: { type: string, format: date-time }
+        created_at:    { type: string, format: date-time }
+        roles:         { type: array, items: { type: string } }
+        station_ids:   { type: array, items: { type: string, format: uuid } }
+        tenant_wide:   { type: boolean }
+    UserList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/User' } }
+        count: { type: integer }
+
+    Role:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        code:        { type: string }
+        name:        { type: string }
+        description: { type: string }
+        is_system:   { type: boolean }
+        permissions: { type: array, items: { type: string } }
+    RoleList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Role' } }
+        count: { type: integer }
+
+    AuditLog:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        tenant_id:      { type: string, format: uuid }
+        actor_id:       { type: string, format: uuid }
+        action:         { type: string }
+        entity_type:    { type: string }
+        entity_id:      { type: string }
+        previous_value: {}
+        new_value:      {}
+        reason:         { type: string }
+        ip:             { type: string }
+        user_agent:     { type: string }
+        request_id:     { type: string }
+        occurred_at:    { type: string, format: date-time }
+    AuditLogList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/AuditLog' } }
+        count: { type: integer }
+        limit: { type: integer }

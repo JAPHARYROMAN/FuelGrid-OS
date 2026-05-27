@@ -19,6 +19,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
+	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
@@ -33,6 +34,7 @@ type Deps struct {
 	Redis    *cache.Client
 	Identity *identity.Service
 	Policy   *policy.Service
+	Metrics  *observability.Metrics
 }
 
 // Server owns the chi router and the embedded *http.Server. It is the
@@ -43,6 +45,7 @@ type Server struct {
 	deps     Deps
 	identity *identity.Service
 	policy   *policy.Service
+	metrics  *observability.Metrics
 
 	companies   *companies.Repo
 	regions     *regions.Repo
@@ -62,6 +65,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		deps:     deps,
 		identity: deps.Identity,
 		policy:   deps.Policy,
+		metrics:  deps.Metrics,
 	}
 
 	// Admin / domain repos only get built when the pool is up. Handlers
@@ -79,6 +83,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Use(chimiddleware.RequestID)
 	r.Use(echoRequestID)
 	r.Use(s.logRequests)
+	r.Use(s.recordMetrics)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(cors.Handler(cors.Options{
@@ -92,6 +97,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
+	r.Get("/metrics", s.handleMetrics)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		if s.identity != nil {

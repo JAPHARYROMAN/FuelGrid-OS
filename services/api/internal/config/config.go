@@ -49,6 +49,13 @@ type Config struct {
 	// Outbox publisher.
 	OutboxPollInterval time.Duration `envconfig:"OUTBOX_POLL_INTERVAL" default:"2s"`
 	OutboxBatchSize    int           `envconfig:"OUTBOX_BATCH_SIZE" default:"100"`
+
+	// Observability.
+	MetricsObserveInterval time.Duration `envconfig:"METRICS_OBSERVE_INTERVAL" default:"15s"`
+	OtelExporter           string        `envconfig:"OTEL_EXPORTER" default:"none"`
+	OtelServiceName        string        `envconfig:"OTEL_SERVICE_NAME" default:"fuelgrid-api"`
+	SentryDSN              string        `envconfig:"SENTRY_DSN"`
+	SentryTracesSampleRate float64       `envconfig:"SENTRY_TRACES_SAMPLE_RATE" default:"0.05"`
 }
 
 // Load reads environment variables and returns a populated Config.

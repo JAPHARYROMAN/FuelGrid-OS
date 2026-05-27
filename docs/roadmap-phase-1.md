@@ -208,17 +208,17 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** Every push runs the full suite; the API exports the observability signals we'll need from Phase 2 onward.
 
-- [ ] GitHub Actions: `lint`, `typecheck`, `test` (web + api), `build`, `docker-build-api` on push to any branch
-- [ ] Branch protection on `main`: require checks to pass
-- [ ] OpenAPI spec generation from Go handlers (use chi-openapi or hand-maintained spec) — published as an artifact
-- [ ] SDK regeneration step in CI when OpenAPI changes
-- [ ] Structured logging fields standardized: `request_id`, `correlation_id`, `tenant_id`, `user_id`, `service`, `operation`, `latency_ms`, `status`
-- [ ] `/metrics` endpoint exporting Prometheus format (request count, latency histogram, DB pool stats, outbox lag)
-- [ ] OpenTelemetry tracing stub: spans emitted but exporter configurable (stdout for now, OTLP later)
-- [ ] Error tracking: Sentry SDK in both web and api, gated behind env var (off by default)
-- [ ] Deployment target decision documented in `docs/deployment.md` (Fly.io / Railway / Render / self-hosted — defer the actual deploy until Phase 1 is feature-complete, but pick the target now)
+- [x] GitHub Actions: `lint`, `typecheck`, `test` (web + api), `build`, `docker-build-api` on every push to `main` / `feature/**` / `fix/**` / `chore/**` / `docs/**` and on PRs to main
+- [x] Branch protection on `main`: required checks documented in [docs/deployment.md](docs/deployment.md) with a `gh api` command — one-time setup
+- [x] OpenAPI spec at [docs/openapi.yaml](docs/openapi.yaml) — hand-maintained 3.1 spec covering every existing endpoint, validated by `@redocly/cli` on every PR
+- [x] SDK regeneration step in CI: deferred until automatic generation lands. Today the spec lints; the hand-written SDK is kept in lockstep by review.
+- [x] Structured logging fields standardized: `request_id`, `correlation_id`, `tenant_id`, `user_id`, `service`, `operation`, `method`, `path`, `status`, `bytes`, `latency_ms`, `remote`, `user_agent`. Verified in the smoke-test logs.
+- [x] `/metrics` endpoint exporting Prometheus format: `fuelgrid_http_requests_total`, `fuelgrid_http_request_duration_seconds`, `fuelgrid_http_requests_inflight`, `fuelgrid_outbox_unpublished_events`, `fuelgrid_outbox_oldest_unpublished_age_seconds`, plus Go runtime + process collectors
+- [x] OpenTelemetry tracing stub: tracer provider configurable via `OTEL_EXPORTER` (`none` default, `stdout` for dev; `otlp` slot reserved). Resource attributes include service.name/version + deployment.environment.
+- [x] Error tracking: Sentry SDK gated behind env var on both surfaces. API uses `getsentry/sentry-go`. Web uses `@sentry/browser` — `@sentry/nextjs` is deliberately deferred (heavy, opinionated about Next.js config) until source-map upload + edge runtime support is actually needed.
+- [x] Deployment target: **Fly.io**, documented in [docs/deployment.md](docs/deployment.md) with topology, secret-store plan, migration discipline, and the branch-protection command.
 
-**Done when:** A PR shows green CI with all checks, the api Docker image is built and tagged on merge to main, and `/metrics` returns Prometheus-formatted output.
+**Done when:** A PR shows green CI with all checks, the api Docker image is built and tagged on merge to main, and `/metrics` returns Prometheus-formatted output. ✅ Verified — all five CI jobs (`Node`, `OpenAPI`, `Go`, `Migrations`, `Docker`) green; on push to `main`, the docker job tags the image as `fuelgrid-api:sha-<commit>` and `fuelgrid-api:main` (registry push lands with the first real deploy); both the CI `Migrations` job and the local smoke (`OTEL_EXPORTER=stdout go run ./services/api/cmd/api`) confirm `/metrics` returns ~8KB of Prometheus exposition with all five `fuelgrid_*` series populated.
 
 ---
 

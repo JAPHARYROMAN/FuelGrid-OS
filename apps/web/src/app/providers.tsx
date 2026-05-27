@@ -4,6 +4,8 @@ import * as React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 
+import { initSentry } from '@/lib/sentry';
+
 function makeQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -42,6 +44,12 @@ function getQueryClient() {
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const queryClient = getQueryClient();
+
+  // Init Sentry once on first client render. The helper is a no-op when
+  // NEXT_PUBLIC_SENTRY_DSN is unset.
+  React.useEffect(() => {
+    initSentry();
+  }, []);
 
   return (
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>

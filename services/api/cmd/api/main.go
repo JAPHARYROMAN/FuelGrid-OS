@@ -21,6 +21,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/session"
+	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/logging"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/server"
@@ -55,6 +56,39 @@ func run() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Observability boots first so the rest of the wiring is already
+	// metered/traced. Failures here are non-fatal: we log and continue
+	// without telemetry rather than refuse to start the API.
+	sentryFlush, sentryErr := observability.SetupSentry(observability.SentryConfig{
+		DSN:              cfg.SentryDSN,
+		Environment:      cfg.Env,
+		Release:          version + "+" + commit,
+		TracesSampleRate: cfg.SentryTracesSampleRate,
+	}, logger)
+	if sentryErr != nil {
+		logger.Warn("sentry init failed", "error", sentryErr)
+		sentryFlush = func() {}
+	}
+	defer sentryFlush()
+
+	tracingShutdown, tracingErr := observability.SetupTracing(ctx, observability.TracingConfig{
+		Exporter:    cfg.OtelExporter,
+		ServiceName: cfg.OtelServiceName,
+		Version:     version,
+		Environment: cfg.Env,
+	}, logger)
+	if tracingErr != nil {
+		logger.Warn("tracing init failed", "error", tracingErr)
+		tracingShutdown = func(context.Context) error { return nil }
+	}
+	defer func() {
+		shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		defer c()
+		if err := tracingShutdown(shutdownCtx); err != nil {
+			logger.Warn("tracing shutdown", "error", err)
+		}
+	}()
 
 	deps, cleanup, err := wireDeps(ctx, cfg, logger)
 	if err != nil {
@@ -95,6 +129,12 @@ func run() error {
 func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (server.Deps, func(), error) {
 	var deps server.Deps
 	var cleanups []func()
+
+	// Metrics first so any failures further down can be observed via
+	// /metrics. The registry is always built; the outbox observer is
+	// only kicked off once Postgres is up.
+	metrics := observability.NewMetrics()
+	deps.Metrics = metrics
 
 	cleanup := func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
@@ -170,6 +210,34 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Info("policy service wired")
 	} else {
 		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
+	}
+
+	// Outbox metrics worker. Refreshes backlog + oldest-unpublished-age
+	// on a timer so Prometheus has data even between scrapes.
+	if deps.DB != nil {
+		obsCtx, obsCancel := context.WithCancel(context.Background()) //nolint:gosec // cancel registered via cleanups below
+		// Register cancel before launching the goroutine so cleanup is
+		// guaranteed even if Start fails between here and Run().
+		cleanups = append(cleanups, obsCancel)
+
+		go func() {
+			t := time.NewTicker(cfg.MetricsObserveInterval)
+			defer t.Stop()
+			// Prime once on startup so /metrics is non-zero immediately.
+			if err := metrics.ObserveOutbox(obsCtx, deps.DB); err != nil {
+				logger.Warn("metrics: outbox observe", "error", err)
+			}
+			for {
+				select {
+				case <-obsCtx.Done():
+					return
+				case <-t.C:
+					if err := metrics.ObserveOutbox(obsCtx, deps.DB); err != nil {
+						logger.Warn("metrics: outbox observe", "error", err)
+					}
+				}
+			}
+		}()
 	}
 
 	// Outbox publisher. Needs Postgres only. The in-process bus is the
