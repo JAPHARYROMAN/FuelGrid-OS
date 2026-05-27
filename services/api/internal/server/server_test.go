@@ -38,12 +38,12 @@ func TestHealthAndReady(t *testing.T) {
 				t.Fatalf("status = %d, want 200", res.StatusCode)
 			}
 
-			var body map[string]string
+			var body map[string]any
 			if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 				t.Fatalf("decode body: %v", err)
 			}
-			if body["status"] != tc.wantStatus {
-				t.Errorf("status field = %q, want %q", body["status"], tc.wantStatus)
+			if got, _ := body["status"].(string); got != tc.wantStatus {
+				t.Errorf("status field = %q, want %q", got, tc.wantStatus)
 			}
 			if got := res.Header.Get("Content-Type"); got != "application/json" {
 				t.Errorf("Content-Type = %q, want application/json", got)
@@ -76,5 +76,5 @@ func newTestServer() *Server {
 		Port: 0,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(cfg, logger)
+	return New(cfg, logger, Deps{})
 }

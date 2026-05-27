@@ -76,6 +76,91 @@ jobs:
       - name: Build
         run: go build ./...
 
+  migrations:
+    name: Migrations — apply, seed, /readyz check
+    runs-on: ubuntu-latest
+    needs: go
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fuelgrid
+          POSTGRES_PASSWORD: fuelgrid
+          POSTGRES_DB: fuelgrid
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fuelgrid -d fuelgrid"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Apply migrations
+        run: go run ./services/api/cmd/migrate up
+
+      - name: Verify current version
+        run: go run ./services/api/cmd/migrate version
+
+      - name: Roll back to zero
+        run: go run ./services/api/cmd/migrate down-all
+
+      - name: Re-apply migrations
+        run: go run ./services/api/cmd/migrate up
+
+      - name: Seed demo data
+        run: go run ./services/api/cmd/seed
+
+      - name: Build api binary
+        run: go build -o /tmp/api ./services/api/cmd/api
+
+      - name: Boot api and probe /readyz
+        run: |
+          /tmp/api &
+          API_PID=$!
+          trap "kill $API_PID 2>/dev/null || true" EXIT
+
+          for i in $(seq 1 20); do
+            if curl -sS -f http://127.0.0.1:8080/healthz > /dev/null; then
+              echo "API is up"
+              break
+            fi
+            sleep 0.5
+          done
+
+          # /readyz must report 200 with both postgres and redis checks ok.
+          body=$(curl -sS http://127.0.0.1:8080/readyz)
+          echo "readyz: $body"
+          echo "$body" | grep -q '"postgres":"ok"'
+          echo "$body" | grep -q '"redis":"ok"'
+
+      - name: Verify seeded rows
+        run: |
+          docker run --rm --network host postgres:16-alpine \
+            psql "$DATABASE_URL" -c "
+              SELECT (SELECT count(*) FROM tenants WHERE slug='demo') AS tenants,
+                     (SELECT count(*) FROM companies)               AS companies,
+                     (SELECT count(*) FROM regions)                 AS regions,
+                     (SELECT count(*) FROM stations)                AS stations;
+            "
+
   docker:
     name: Docker — build api image
     runs-on: ubuntu-latest

@@ -1,0 +1,46 @@
+# Local development stack for FuelGrid OS.
+# Run with: `docker compose up -d`
+# Tear down (keep data): `docker compose down`
+# Tear down (drop data): `docker compose down -v`
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fuelgrid-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-fuelgrid}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fuelgrid}
+      POSTGRES_DB: ${POSTGRES_DB:-fuelgrid}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-fuelgrid} -d ${POSTGRES_DB:-fuelgrid}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: fuelgrid-redis
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: fuelgrid_postgres_data
+  redis_data:
+    name: fuelgrid_redis_data

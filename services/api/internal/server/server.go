@@ -1,3 +1,5 @@
+// Package server owns the HTTP composition root: router, middleware
+// stack, route table, and graceful lifecycle.
 package server
 
 import (
@@ -11,21 +13,31 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/japharyroman/fuelgrid-os/services/api/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
+	"github.com/japharyroman/fuelgrid-os/services/api/internal/database"
 )
+
+// Deps groups the backing services the API depends on. Either may be nil
+// for thin smoke tests — the readiness probe skips probes for nil deps.
+type Deps struct {
+	DB    *database.Pool
+	Redis *cache.Client
+}
 
 // Server owns the chi router and the embedded *http.Server. It is the
 // composition root for every middleware and route the API exposes.
 type Server struct {
 	cfg    config.Config
 	logger *slog.Logger
+	deps   Deps
 	http   *http.Server
 }
 
 // New wires the router, middleware stack, and route table for the API.
 // It does not start the listener — call Start for that.
-func New(cfg config.Config, logger *slog.Logger) *Server {
-	s := &Server{cfg: cfg, logger: logger}
+func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
+	s := &Server{cfg: cfg, logger: logger, deps: deps}
 
 	r := chi.NewRouter()
 

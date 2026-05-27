@@ -23,10 +23,16 @@ type Config struct {
 	CORSOrigins     []string      `envconfig:"API_CORS_ALLOWED_ORIGINS" default:"http://localhost:3000"`
 	ShutdownTimeout time.Duration `envconfig:"API_SHUTDOWN_TIMEOUT" default:"15s"`
 
-	// Optional deps — used by /readyz once Stage 3 lands. Leaving these
-	// unset is fine; readiness simply skips probes that aren't configured.
-	DatabaseURL string `envconfig:"DATABASE_URL"`
-	RedisURL    string `envconfig:"REDIS_URL"`
+	// Optional deps. Leaving DatabaseURL / RedisURL unset is supported
+	// for ultra-thin smoke tests; the readiness probe simply skips probes
+	// for un-configured dependencies.
+	DatabaseURL          string        `envconfig:"DATABASE_URL"`
+	DatabaseMaxOpenConns int32         `envconfig:"DATABASE_MAX_OPEN_CONNS" default:"25"`
+	DatabaseMinIdleConns int32         `envconfig:"DATABASE_MIN_IDLE_CONNS" default:"5"`
+	DatabaseConnLifetime time.Duration `envconfig:"DATABASE_CONN_MAX_LIFETIME" default:"30m"`
+	DatabaseConnIdleTime time.Duration `envconfig:"DATABASE_CONN_MAX_IDLE_TIME" default:"5m"`
+
+	RedisURL string `envconfig:"REDIS_URL"`
 }
 
 // Load reads environment variables and returns a populated Config.
