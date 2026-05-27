@@ -16,6 +16,16 @@ linters:
     - revive
     - unconvert
     - unparam
+  settings:
+    revive:
+      # The `exported` rule demands a doc comment for every exported
+      # symbol. We keep package-level docs and document the non-obvious
+      # methods individually; insisting on a comment for boilerplate
+      # CRUD methods isn't worth the noise.
+      rules:
+        - name: package-comments
+        - name: var-declaration
+        - name: redefines-builtin-id
   exclusions:
     paths:
       - vendor

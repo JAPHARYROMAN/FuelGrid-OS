@@ -14,9 +14,13 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
+	"github.com/japharyroman/fuelgrid-os/internal/companies"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
+	"github.com/japharyroman/fuelgrid-os/internal/regions"
+	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
 )
 
@@ -39,7 +43,14 @@ type Server struct {
 	deps     Deps
 	identity *identity.Service
 	policy   *policy.Service
-	http     *http.Server
+
+	companies   *companies.Repo
+	regions     *regions.Repo
+	stations    *stations.Repo
+	userRepo    *repo.UserRepo
+	sessionRepo *repo.SessionRepo
+
+	http *http.Server
 }
 
 // New wires the router, middleware stack, and route table for the API.
@@ -53,18 +64,20 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		policy:   deps.Policy,
 	}
 
+	// Admin / domain repos only get built when the pool is up. Handlers
+	// gate themselves on s.deps.DB == nil checks at registration time.
+	if deps.DB != nil {
+		s.companies = companies.New(deps.DB)
+		s.regions = regions.New(deps.DB)
+		s.stations = stations.New(deps.DB)
+		s.userRepo = repo.NewUserRepo(deps.DB)
+		s.sessionRepo = repo.NewSessionRepo(deps.DB)
+	}
+
 	r := chi.NewRouter()
 
-	// Order matters: RequestID first so every later middleware can log it;
-	// Recoverer near the top so panics in handlers don't take down the
-	// process; CORS late enough that preflight failures still get logged.
 	r.Use(chimiddleware.RequestID)
 	r.Use(echoRequestID)
-	// NOTE: chi's RealIP middleware was deliberately omitted — it blindly
-	// trusts X-Forwarded-For / X-Real-IP, which is vulnerable to client
-	// spoofing in front of any proxy that doesn't strip them. When we
-	// deploy behind a controlled ingress we'll wire a tighter version
-	// that only honors these headers from trusted ranges.
 	r.Use(s.logRequests)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
@@ -89,8 +102,6 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 				r.Post("/password-reset/request", s.handlePasswordResetRequest)
 				r.Post("/password-reset/confirm", s.handlePasswordResetConfirm)
 
-				// MFA enrollment is an authenticated action — the user
-				// must already be logged in (with or without MFA).
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireAuth)
 					r.Post("/mfa/enroll", s.handleMfaEnroll)
@@ -98,28 +109,84 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 				})
 			})
 
+			// Authenticated routes (no specific permission gate beyond
+			// having a session).
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireAuth)
 				r.Get("/me", s.handleMe)
 				if s.policy != nil {
 					r.Get("/me/permissions", s.handleMePermissions)
 				}
+				if s.sessionRepo != nil {
+					r.Get("/me/sessions", s.handleListMySessions)
+					r.Delete("/me/sessions/{sessionID}", s.handleRevokeMySession)
+					r.Post("/me/password", s.handleChangeMyPassword)
+				}
 			})
 
 			if s.policy != nil {
+				// Station read (existing Stage-5 endpoint, now backed by
+				// the proper stations repo).
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireAuth)
 					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
 						Get("/stations/{stationID}", s.handleGetStation)
 
-					// Auditor-only: read audit_logs scoped to the actor's tenant.
 					r.With(s.requirePermission("audit.read", nil)).
 						Get("/audit-logs", s.handleListAuditLogs)
 
-					// Admin actions: grant a system role to a user.
 					r.With(s.requirePermission("users.assign_roles", nil)).
 						Post("/admin/users/{userID}/roles", s.handleGrantRole)
 				})
+
+				// Admin console surface. Everything beyond this point
+				// is tenant-wide and writes audit + outbox via the
+				// audit.WriteWithOutbox helper.
+				if s.companies != nil {
+					r.Group(func(r chi.Router) {
+						r.Use(s.requireAuth)
+
+						r.With(s.requirePermission("station.read", nil)).
+							Get("/companies", s.handleListCompanies)
+						r.With(s.requirePermission("companies.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/companies", s.handleCreateCompany)
+							r.Patch("/companies/{id}", s.handleUpdateCompany)
+							r.Delete("/companies/{id}", s.handleDeleteCompany)
+						})
+
+						r.With(s.requirePermission("station.read", nil)).
+							Get("/regions", s.handleListRegions)
+						r.With(s.requirePermission("regions.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/regions", s.handleCreateRegion)
+							r.Patch("/regions/{id}", s.handleUpdateRegion)
+							r.Delete("/regions/{id}", s.handleDeleteRegion)
+						})
+
+						r.With(s.requirePermission("station.read", nil)).
+							Get("/stations", s.handleListStations)
+						r.With(s.requirePermission("station.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/stations", s.handleCreateStation)
+							r.Patch("/stations/{stationID}", s.handleUpdateStation)
+							r.Delete("/stations/{stationID}", s.handleDeleteStation)
+						})
+
+						r.With(s.requirePermission("users.manage", nil)).
+							Get("/users", s.handleListUsers)
+						r.With(s.requirePermission("users.invite", nil)).
+							Post("/admin/users", s.handleInviteUser)
+						r.With(s.requirePermission("users.manage", nil)).
+							Patch("/admin/users/{userID}/status", s.handleUpdateUserStatus)
+						r.With(s.requirePermission("users.assign_roles", nil)).
+							Delete("/admin/users/{userID}/roles/{roleCode}", s.handleRevokeUserRole)
+						r.With(s.requirePermission("users.assign_roles", nil)).Group(func(r chi.Router) {
+							r.Post("/admin/users/{userID}/station-access", s.handleGrantStationAccess)
+							r.Delete("/admin/users/{userID}/station-access/{stationID}", s.handleRevokeStationAccess)
+						})
+
+						r.With(s.requirePermission("users.manage", nil)).
+							Get("/roles", s.handleListRoles)
+					})
+				}
 			}
 		}
 	})

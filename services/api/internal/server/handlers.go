@@ -57,3 +57,20 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
 }
+
+// decodeJSON parses a request body. Surfaces a single uniform "invalid
+// JSON body" error so handlers don't each do their own decoder boilerplate.
+func decodeJSON(r *http.Request, v any) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return errInvalidJSON
+	}
+	return nil
+}
+
+var errInvalidJSON = &decodeError{msg: "invalid JSON body"}
+
+type decodeError struct{ msg string }
+
+func (e *decodeError) Error() string { return e.msg }

@@ -171,3 +171,155 @@ func (r *UserRepo) ActivateMfa(ctx context.Context, userID uuid.UUID) error {
 
 // IsNotFound is a small convenience for callers translating to sentinel errors.
 func IsNotFound(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+// -----------------------------------------------------------------------
+// Admin queries (Stage 9). These power /api/v1/users and friends.
+// -----------------------------------------------------------------------
+
+// Summary is the small projection returned by the list endpoint.
+type Summary struct {
+	ID          uuid.UUID
+	Email       string
+	FullName    string
+	Status      string
+	MfaEnabled  bool
+	LastLoginAt *time.Time
+	CreatedAt   time.Time
+}
+
+// List returns every non-deleted user in the tenant, newest first.
+func (r *UserRepo) List(ctx context.Context, tenantID uuid.UUID) ([]Summary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, full_name, status, mfa_enabled, last_login_at, created_at
+		FROM users
+		WHERE tenant_id = $1 AND status <> 'deleted'
+		ORDER BY created_at DESC
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Summary
+	for rows.Next() {
+		var s Summary
+		if err := rows.Scan(
+			&s.ID, &s.Email, &s.FullName, &s.Status, &s.MfaEnabled, &s.LastLoginAt, &s.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// Invite creates a user with status='invited' and no password. The
+// password is set later when the user accepts via the password-reset
+// flow.
+func (r *UserRepo) Invite(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, email, fullName string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `
+		INSERT INTO users (tenant_id, email, full_name, status)
+		VALUES ($1, $2, $3, 'invited')
+		RETURNING id
+	`, tenantID, email, fullName).Scan(&id)
+	return id, err
+}
+
+// UpdateStatus flips active/suspended; deleted is reached via soft-delete.
+func (r *UserRepo) UpdateStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE users SET status = $3
+		WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'
+	`, id, tenantID, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// GrantStationAccess gives the user explicit access to a station. The
+// presence of any user_station_access row downgrades the user from
+// tenant-wide to station-scoped — see docs/multi-tenancy.md.
+func (r *UserRepo) GrantStationAccess(ctx context.Context, tx pgx.Tx, userID, stationID, tenantID, grantedBy uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		INSERT INTO user_station_access (user_id, station_id, tenant_id, granted_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id, station_id) DO NOTHING
+	`, userID, stationID, tenantID, grantedBy)
+	return err
+}
+
+// RevokeStationAccess removes a single station from the user's scope.
+func (r *UserRepo) RevokeStationAccess(ctx context.Context, tx pgx.Tx, userID, stationID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		DELETE FROM user_station_access WHERE user_id = $1 AND station_id = $2
+	`, userID, stationID)
+	return err
+}
+
+// ListStationAccess returns the station IDs in the user's scope (empty
+// list means tenant-wide).
+func (r *UserRepo) ListStationAccess(ctx context.Context, userID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT station_id FROM user_station_access WHERE user_id = $1 ORDER BY granted_at
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var sid uuid.UUID
+		if err := rows.Scan(&sid); err != nil {
+			return nil, err
+		}
+		out = append(out, sid)
+	}
+	return out, rows.Err()
+}
+
+// ListRoles returns the role codes a user holds, for the admin UI.
+func (r *UserRepo) ListRoles(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ro.code
+		FROM user_roles ur
+		JOIN roles ro ON ro.id = ur.role_id
+		WHERE ur.user_id = $1
+		ORDER BY ro.code
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, err
+		}
+		out = append(out, code)
+	}
+	return out, rows.Err()
+}
+
+// RevokeRole removes a single role grant.
+func (r *UserRepo) RevokeRole(ctx context.Context, tx pgx.Tx, userID, roleID uuid.UUID) error {
+	_, err := tx.Exec(ctx, `
+		DELETE FROM user_roles WHERE user_id = $1 AND role_id = $2
+	`, userID, roleID)
+	return err
+}
+
+// RoleIDByCode resolves a system role to its uuid for grant/revoke ops.
+func (r *UserRepo) RoleIDByCode(ctx context.Context, code string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := r.pool.QueryRow(ctx,
+		`SELECT id FROM roles WHERE code = $1 AND is_system = true`,
+		code,
+	).Scan(&id)
+	return id, err
+}

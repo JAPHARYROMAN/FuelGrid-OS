@@ -35,13 +35,95 @@ export interface MePermissions {
   tenant_wide: boolean;
 }
 
+export interface Company {
+  id: string;
+  tenant_id: string;
+  name: string;
+  legal_name?: string;
+  registration_no?: string;
+  tax_id?: string;
+  currency: string;
+  timezone: string;
+  status: string;
+}
+
+export interface Region {
+  id: string;
+  tenant_id: string;
+  company_id: string;
+  name: string;
+  code?: string;
+  status: string;
+}
+
 export interface Station {
   id: string;
+  tenant_id: string;
+  company_id: string;
+  region_id?: string;
   name: string;
   code: string;
-  status: string;
+  address_line1?: string;
+  address_line2?: string;
   city?: string;
+  state?: string;
   country?: string;
+  latitude?: number;
+  longitude?: number;
+  timezone: string;
+  status: string;
+}
+
+export interface UserSummary {
+  id: string;
+  email: string;
+  full_name: string;
+  status: string;
+  mfa_enabled: boolean;
+  last_login_at?: string;
+  created_at: string;
+  roles: string[];
+  station_ids: string[];
+  tenant_wide: boolean;
+}
+
+export interface Role {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  is_system: boolean;
+  permissions: string[];
+}
+
+export interface Session {
+  id: string;
+  issued_at: string;
+  expires_at: string;
+  user_agent?: string;
+  is_current: boolean;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  tenant_id?: string;
+  actor_id?: string;
+  action: string;
+  entity_type: string;
+  entity_id?: string;
+  previous_value?: unknown;
+  new_value?: unknown;
+  reason?: string;
+  ip?: string;
+  user_agent?: string;
+  request_id?: string;
+  occurred_at: string;
+}
+
+export interface Paginated<T> {
+  items: T[];
+  count: number;
+  limit?: number;
 }
 
 export interface ApiError {

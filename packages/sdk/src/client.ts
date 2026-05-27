@@ -1,4 +1,17 @@
-import type { LoginRequest, LoginResponse, Me, MePermissions, Station } from './types';
+import type {
+  AuditLogEntry,
+  Company,
+  LoginRequest,
+  LoginResponse,
+  Me,
+  MePermissions,
+  Paginated,
+  Region,
+  Role,
+  Session,
+  Station,
+  UserSummary,
+} from './types';
 
 /**
  * SdkError carries the HTTP status alongside the parsed API error body so
@@ -143,10 +156,215 @@ export class Client {
     return this.request<MePermissions>('/api/v1/me/permissions', { signal });
   }
 
+  // ----------- Me (session management + password) -----------
+
+  listMySessions(signal?: AbortSignal): Promise<Paginated<Session>> {
+    return this.request<Paginated<Session>>('/api/v1/me/sessions', { signal });
+  }
+
+  revokeMySession(sessionID: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/me/sessions/${encodeURIComponent(sessionID)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  changeMyPassword(
+    req: { old_password: string; new_password: string },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.request<void>('/api/v1/me/password', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  // ----------- Companies -----------
+
+  listCompanies(signal?: AbortSignal): Promise<Paginated<Company>> {
+    return this.request<Paginated<Company>>('/api/v1/companies', { signal });
+  }
+
+  createCompany(req: Partial<Company> & { name: string }, signal?: AbortSignal): Promise<Company> {
+    return this.request<Company>('/api/v1/companies', { method: 'POST', body: req, signal });
+  }
+
+  updateCompany(id: string, req: Partial<Company>, signal?: AbortSignal): Promise<Company> {
+    return this.request<Company>(`/api/v1/companies/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteCompany(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/companies/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Regions -----------
+
+  listRegions(opts: { companyID?: string } = {}, signal?: AbortSignal): Promise<Paginated<Region>> {
+    const qs = opts.companyID ? `?company_id=${encodeURIComponent(opts.companyID)}` : '';
+    return this.request<Paginated<Region>>(`/api/v1/regions${qs}`, { signal });
+  }
+
+  createRegion(
+    req: { company_id: string; name: string; code?: string },
+    signal?: AbortSignal,
+  ): Promise<Region> {
+    return this.request<Region>('/api/v1/regions', { method: 'POST', body: req, signal });
+  }
+
+  updateRegion(id: string, req: Partial<Region>, signal?: AbortSignal): Promise<Region> {
+    return this.request<Region>(`/api/v1/regions/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteRegion(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/regions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
   // ----------- Stations -----------
+
+  listStations(
+    opts: { regionID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Station>> {
+    const qs = opts.regionID ? `?region_id=${encodeURIComponent(opts.regionID)}` : '';
+    return this.request<Paginated<Station>>(`/api/v1/stations${qs}`, { signal });
+  }
 
   getStation(stationID: string, signal?: AbortSignal): Promise<Station> {
     return this.request<Station>(`/api/v1/stations/${encodeURIComponent(stationID)}`, {
+      signal,
+    });
+  }
+
+  createStation(
+    req: Partial<Station> & { company_id: string; name: string; code: string },
+    signal?: AbortSignal,
+  ): Promise<Station> {
+    return this.request<Station>('/api/v1/stations', { method: 'POST', body: req, signal });
+  }
+
+  updateStation(id: string, req: Partial<Station>, signal?: AbortSignal): Promise<Station> {
+    return this.request<Station>(`/api/v1/stations/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteStation(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/stations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Users -----------
+
+  listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {
+    return this.request<Paginated<UserSummary>>('/api/v1/users', { signal });
+  }
+
+  inviteUser(
+    req: { email: string; full_name: string },
+    signal?: AbortSignal,
+  ): Promise<{ id: string; email: string; full_name: string }> {
+    return this.request('/api/v1/admin/users', { method: 'POST', body: req, signal });
+  }
+
+  updateUserStatus(
+    userID: string,
+    status: 'active' | 'suspended',
+    signal?: AbortSignal,
+  ): Promise<{ id: string; status: string }> {
+    return this.request(`/api/v1/admin/users/${encodeURIComponent(userID)}/status`, {
+      method: 'PATCH',
+      body: { status },
+      signal,
+    });
+  }
+
+  grantUserRole(
+    userID: string,
+    roleCode: string,
+    signal?: AbortSignal,
+  ): Promise<{ user_id: string; role_code: string }> {
+    return this.request(`/api/v1/admin/users/${encodeURIComponent(userID)}/roles`, {
+      method: 'POST',
+      body: { role_code: roleCode },
+      signal,
+    });
+  }
+
+  revokeUserRole(userID: string, roleCode: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/api/v1/admin/users/${encodeURIComponent(userID)}/roles/${encodeURIComponent(roleCode)}`,
+      { method: 'DELETE', signal },
+    );
+  }
+
+  grantStationAccess(
+    userID: string,
+    stationID: string,
+    signal?: AbortSignal,
+  ): Promise<{ user_id: string; station_id: string }> {
+    return this.request(`/api/v1/admin/users/${encodeURIComponent(userID)}/station-access`, {
+      method: 'POST',
+      body: { station_id: stationID },
+      signal,
+    });
+  }
+
+  revokeStationAccess(userID: string, stationID: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/api/v1/admin/users/${encodeURIComponent(userID)}/station-access/${encodeURIComponent(stationID)}`,
+      { method: 'DELETE', signal },
+    );
+  }
+
+  // ----------- Roles -----------
+
+  listRoles(signal?: AbortSignal): Promise<Paginated<Role>> {
+    return this.request<Paginated<Role>>('/api/v1/roles', { signal });
+  }
+
+  // ----------- Audit logs -----------
+
+  listAuditLogs(
+    opts: {
+      action?: string;
+      entityType?: string;
+      entityID?: string;
+      actorID?: string;
+      since?: string;
+      until?: string;
+      limit?: number;
+    } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<AuditLogEntry>> {
+    const qs = new URLSearchParams();
+    if (opts.action) qs.set('action', opts.action);
+    if (opts.entityType) qs.set('entity_type', opts.entityType);
+    if (opts.entityID) qs.set('entity_id', opts.entityID);
+    if (opts.actorID) qs.set('actor_id', opts.actorID);
+    if (opts.since) qs.set('since', opts.since);
+    if (opts.until) qs.set('until', opts.until);
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    const q = qs.toString();
+    return this.request<Paginated<AuditLogEntry>>(`/api/v1/audit-logs${q ? `?${q}` : ''}`, {
       signal,
     });
   }

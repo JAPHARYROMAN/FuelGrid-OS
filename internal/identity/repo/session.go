@@ -92,3 +92,50 @@ func (r *SessionRepo) TouchExpiry(ctx context.Context, id uuid.UUID, expiresAt t
 	`, id, expiresAt)
 	return err
 }
+
+// ListActiveForUser returns every non-revoked, non-expired session for
+// the user, ordered by issued_at desc. The /profile UI uses this to
+// show a "logged in on these devices" table.
+func (r *SessionRepo) ListActiveForUser(ctx context.Context, userID uuid.UUID) ([]SessionRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_id, tenant_id, issued_at, expires_at, revoked_at,
+		       coalesce(user_agent, '')
+		FROM sessions
+		WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		ORDER BY issued_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionRow
+	for rows.Next() {
+		var s SessionRow
+		if err := rows.Scan(
+			&s.ID, &s.UserID, &s.TenantID, &s.IssuedAt, &s.ExpiresAt, &s.RevokedAt, &s.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// FindActiveOwnedBy returns a session by id only if it belongs to the
+// given user and is still live. Used to gate the per-session revoke
+// endpoint so a user can only kill their own sessions.
+func (r *SessionRepo) FindActiveOwnedBy(ctx context.Context, sessionID, userID uuid.UUID) (*SessionRow, error) {
+	var s SessionRow
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, user_id, tenant_id, issued_at, expires_at, revoked_at,
+		       coalesce(user_agent, '')
+		FROM sessions
+		WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > now()
+	`, sessionID, userID).Scan(
+		&s.ID, &s.UserID, &s.TenantID, &s.IssuedAt, &s.ExpiresAt, &s.RevokedAt, &s.UserAgent,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
