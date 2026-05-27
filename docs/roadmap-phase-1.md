@@ -89,23 +89,24 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** Real users can sign in, sessions are revocable, password reset works, MFA is wired (even if optional).
 
-- [ ] Migration: add auth fields to `users` (email, password_hash, mfa_secret, mfa_enabled, last_login_at, locked_until)
-- [ ] Migration: `sessions` (id, user_id, tenant_id, device_id, ip, user_agent, issued_at, expires_at, revoked_at)
-- [ ] Migration: `devices` (id, user_id, label, fingerprint, last_seen_at)
-- [ ] Password hashing: argon2id with sane params; pepper from env
-- [ ] Endpoints:
+- [x] Migration: add auth fields to `users` (password_hash, mfa_secret, mfa_enabled, last_login_at, failed_login_count, locked_until, password_changed_at)
+- [x] Migration: `sessions` (token_hash, user_id, tenant_id, device_id, ip, user_agent, issued_at, last_seen_at, expires_at, revoked_at, revoke_reason)
+- [x] Migration: `devices` (id, user_id, tenant_id, label, fingerprint, last_seen_at)
+- [x] Password hashing: argon2id with sane params; pepper from env (HMAC-SHA256 pre-mix)
+- [x] Endpoints:
   - `POST /api/v1/auth/login` (email + password → session token)
   - `POST /api/v1/auth/logout` (revoke current session)
   - `POST /api/v1/auth/refresh` (extend session)
   - `POST /api/v1/auth/password-reset/request`
   - `POST /api/v1/auth/password-reset/confirm`
   - `POST /api/v1/auth/mfa/enroll` + `POST /api/v1/auth/mfa/verify`
-- [ ] Session store: Redis with TTL = session expiry; opaque token = random 32-byte b64url
-- [ ] Auth middleware: extract token → load session → inject `actor` into request context
-- [ ] Rate limiting on `/auth/*` (Redis sliding window — e.g., 5 attempts / 15 min / IP)
-- [ ] Audit hook: emit `UserLoggedIn`, `UserLoggedOut`, `PasswordChanged`, `MfaEnrolled` events (event infrastructure comes in Stage 7 — stub for now)
+  - `GET  /api/v1/me` (protected smoke endpoint)
+- [x] Session store: Redis with TTL = session expiry; opaque token = random 32-byte b64url (sha256 in Postgres for audit)
+- [x] Auth middleware: extract token → load session → inject `actor` into request context
+- [x] Rate limiting on `/auth/login` (Redis fixed window — default 5 attempts / 15 min / IP)
+- [x] Audit hook: log `UserLoggedIn`, `UserLoggedOut`, `UserLoginFailed`, `UserMfaFailed`, `UserMfaEnrolled`, `UserMfaActivated`, `UserPasswordChanged`, `UserPasswordResetRequested`, `UserPasswordReset` via slog. Stage 7 swaps these for outbox writes.
 
-**Done when:** A seeded user can log in via curl, hit a protected endpoint, log out, and the session is gone from Redis.
+**Done when:** A seeded user can log in via curl, hit a protected endpoint, log out, and the session is gone from Redis. ✅ Verified in CI (`migrations` job: login → token → /me → 204 logout → post-logout /me returns 401). Local Docker-based verification skipped (daemon was down).
 
 ---
 

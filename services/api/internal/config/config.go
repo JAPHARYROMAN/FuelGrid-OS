@@ -33,6 +33,18 @@ type Config struct {
 	DatabaseConnIdleTime time.Duration `envconfig:"DATABASE_CONN_MAX_IDLE_TIME" default:"5m"`
 
 	RedisURL string `envconfig:"REDIS_URL"`
+
+	// Auth. AUTH_PASSWORD_PEPPER is a base64-or-text secret mixed into
+	// every password hash. Empty in dev is fine; production deployments
+	// must set it from a secret store.
+	AuthPasswordPepper   string        `envconfig:"AUTH_PASSWORD_PEPPER"`
+	AuthSessionTTL       time.Duration `envconfig:"AUTH_SESSION_TTL" default:"12h"`
+	AuthRefreshTTL       time.Duration `envconfig:"AUTH_REFRESH_TTL" default:"720h"`
+	AuthLoginRateMax     int64         `envconfig:"AUTH_LOGIN_RATE_LIMIT" default:"5"`
+	AuthLoginRateWindow  time.Duration `envconfig:"AUTH_LOGIN_RATE_WINDOW" default:"15m"`
+	AuthLoginLockAfter   int           `envconfig:"AUTH_LOGIN_LOCK_AFTER" default:"10"`
+	AuthLoginLockFor     time.Duration `envconfig:"AUTH_LOGIN_LOCK_FOR" default:"30m"`
+	AuthPasswordResetTTL time.Duration `envconfig:"AUTH_PASSWORD_RESET_TTL" default:"1h"`
 }
 
 // Load reads environment variables and returns a populated Config.

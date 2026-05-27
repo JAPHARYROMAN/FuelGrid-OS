@@ -11,9 +11,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/japharyroman/fuelgrid-os/services/api/internal/cache"
+	"github.com/japharyroman/fuelgrid-os/internal/cache"
+	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/session"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
-	"github.com/japharyroman/fuelgrid-os/services/api/internal/database"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/logging"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/server"
 )
@@ -124,6 +129,41 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Info("redis connected")
 	} else {
 		logger.Warn("redis skipped — REDIS_URL is empty")
+	}
+
+	// Identity service requires both Postgres and Redis. If either is
+	// missing, the auth routes simply don't get wired (handy for tests
+	// that boot a thin API to hit /healthz).
+	if deps.DB != nil && deps.Redis != nil {
+		if cfg.AuthPasswordPepper == "" && cfg.Env != "development" {
+			logger.Warn("AUTH_PASSWORD_PEPPER is unset — production deployments must set this from a secret store")
+		}
+		hasher := password.New(password.DefaultParams, cfg.AuthPasswordPepper)
+		store := session.NewRedisStore(deps.Redis, "session:")
+		limiter := ratelimit.New(deps.Redis, "ratelimit:")
+		userRepo := repo.NewUserRepo(deps.DB)
+		sessionRepo := repo.NewSessionRepo(deps.DB)
+
+		deps.Identity = identity.NewService(
+			identity.ServiceConfig{
+				SessionTTL:       cfg.AuthSessionTTL,
+				LoginLockAfter:   cfg.AuthLoginLockAfter,
+				LoginLockFor:     cfg.AuthLoginLockFor,
+				LoginRateMax:     cfg.AuthLoginRateMax,
+				LoginRateWindow:  cfg.AuthLoginRateWindow,
+				PasswordResetTTL: cfg.AuthPasswordResetTTL,
+			},
+			hasher,
+			userRepo,
+			sessionRepo,
+			store,
+			limiter,
+			deps.Redis,
+			logger,
+		)
+		logger.Info("identity service wired")
+	} else {
+		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
 	}
 
 	return deps, cleanup, nil

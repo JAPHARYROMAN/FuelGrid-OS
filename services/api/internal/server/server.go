@@ -13,31 +13,35 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
-	"github.com/japharyroman/fuelgrid-os/services/api/internal/cache"
+	"github.com/japharyroman/fuelgrid-os/internal/cache"
+	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
-	"github.com/japharyroman/fuelgrid-os/services/api/internal/database"
 )
 
-// Deps groups the backing services the API depends on. Either may be nil
-// for thin smoke tests — the readiness probe skips probes for nil deps.
+// Deps groups the backing services the API depends on. DB and Redis may be
+// nil for thin smoke tests — the readiness probe skips probes for nil deps.
+// Identity must be non-nil whenever auth routes are reachable.
 type Deps struct {
-	DB    *database.Pool
-	Redis *cache.Client
+	DB       *database.Pool
+	Redis    *cache.Client
+	Identity *identity.Service
 }
 
 // Server owns the chi router and the embedded *http.Server. It is the
 // composition root for every middleware and route the API exposes.
 type Server struct {
-	cfg    config.Config
-	logger *slog.Logger
-	deps   Deps
-	http   *http.Server
+	cfg      config.Config
+	logger   *slog.Logger
+	deps     Deps
+	identity *identity.Service
+	http     *http.Server
 }
 
 // New wires the router, middleware stack, and route table for the API.
 // It does not start the listener — call Start for that.
 func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
-	s := &Server{cfg: cfg, logger: logger, deps: deps}
+	s := &Server{cfg: cfg, logger: logger, deps: deps, identity: deps.Identity}
 
 	r := chi.NewRouter()
 
@@ -65,6 +69,31 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 
 	r.Get("/healthz", s.handleHealthz)
 	r.Get("/readyz", s.handleReadyz)
+
+	r.Route("/api/v1", func(r chi.Router) {
+		if s.identity != nil {
+			r.Route("/auth", func(r chi.Router) {
+				r.Post("/login", s.handleLogin)
+				r.Post("/logout", s.handleLogout)
+				r.Post("/refresh", s.handleRefresh)
+				r.Post("/password-reset/request", s.handlePasswordResetRequest)
+				r.Post("/password-reset/confirm", s.handlePasswordResetConfirm)
+
+				// MFA enrollment is an authenticated action — the user
+				// must already be logged in (with or without MFA).
+				r.Group(func(r chi.Router) {
+					r.Use(s.requireAuth)
+					r.Post("/mfa/enroll", s.handleMfaEnroll)
+					r.Post("/mfa/verify", s.handleMfaVerify)
+				})
+			})
+
+			r.Group(func(r chi.Router) {
+				r.Use(s.requireAuth)
+				r.Get("/me", s.handleMe)
+			})
+		}
+	})
 
 	s.http = &http.Server{
 		Addr:              cfg.Addr(),

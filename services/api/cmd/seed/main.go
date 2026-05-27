@@ -1,11 +1,19 @@
 // Command seed inserts a small demo dataset into a fresh FuelGrid OS
-// database: one tenant, one company, one region, one station.
+// database: one tenant, one company, one region, one station, and one
+// demo user ready to log in.
 //
 // Idempotent: re-running it does nothing if the demo slug already exists.
 //
 // Usage:
 //
 //	DATABASE_URL=postgres://... go run ./services/api/cmd/seed
+//
+// Environment overrides (all optional):
+//
+//	DEMO_TENANT_SLUG   default "demo"
+//	DEMO_USER_EMAIL    default "demo@fuelgrid.local"
+//	DEMO_USER_PASSWORD default "fuelgrid-demo-password-1234"
+//	AUTH_PASSWORD_PEPPER must match the API to allow logins
 package main
 
 import (
@@ -17,10 +25,17 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/japharyroman/fuelgrid-os/services/api/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 )
 
-const demoTenantSlug = "demo"
+const (
+	defaultTenantSlug = "demo"
+	defaultUserEmail  = "demo@fuelgrid.local"
+	// defaultUserPassword is a dev-only convenience for `make seed`. Override
+	// in any non-development environment via DEMO_USER_PASSWORD.
+	defaultUserPassword = "fuelgrid-demo-password-1234" //nolint:gosec // G101: development-only default, override in prod
+)
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -38,7 +53,18 @@ func run() error {
 		return errors.New("DATABASE_URL is required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	tenantSlug := envOr("DEMO_TENANT_SLUG", defaultTenantSlug)
+	userEmail := envOr("DEMO_USER_EMAIL", defaultUserEmail)
+	userPassword := envOr("DEMO_USER_PASSWORD", defaultUserPassword)
+	pepper := os.Getenv("AUTH_PASSWORD_PEPPER")
+
+	hasher := password.New(password.DefaultParams, pepper)
+	passwordHash, err := hasher.Hash(userPassword)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	pool, err := database.Connect(ctx, database.Config{URL: url})
@@ -53,26 +79,26 @@ func run() error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var existing string
+	var existingTenantID string
 	err = tx.QueryRow(ctx,
 		`SELECT id FROM tenants WHERE slug = $1`,
-		demoTenantSlug,
-	).Scan(&existing)
+		tenantSlug,
+	).Scan(&existingTenantID)
 	if err == nil {
-		slog.Info("demo tenant already present, skipping", "tenant_id", existing)
+		slog.Info("demo tenant already present, skipping", "tenant_id", existingTenantID)
 		return nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 
-	var tenantID, companyID, regionID, stationID string
+	var tenantID, companyID, regionID, stationID, userID string
 
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug)
 		VALUES ('FuelGrid Demo Co.', $1)
 		RETURNING id
-	`, demoTenantSlug).Scan(&tenantID); err != nil {
+	`, tenantSlug).Scan(&tenantID); err != nil {
 		return err
 	}
 
@@ -102,15 +128,34 @@ func run() error {
 		return err
 	}
 
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (tenant_id, email, full_name, status,
+		                  password_hash, password_changed_at)
+		VALUES ($1, $2, 'Demo Operator', 'active', $3, now())
+		RETURNING id
+	`, tenantID, userEmail, passwordHash).Scan(&userID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 
 	slog.Info("seeded demo data",
 		"tenant_id", tenantID,
+		"tenant_slug", tenantSlug,
 		"company_id", companyID,
 		"region_id", regionID,
 		"station_id", stationID,
+		"user_id", userID,
+		"user_email", userEmail,
 	)
 	return nil
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
