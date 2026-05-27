@@ -49,18 +49,18 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** `services/api` runs, serves `/healthz`, logs structured JSON, shuts down gracefully.
 
-- [ ] `go mod init github.com/japharyroman/fuelgrid-os`
-- [ ] Layout: `services/api/cmd/api/main.go`, `services/api/internal/server`, shared `internal/` modules per architecture doc
-- [ ] HTTP server using chi with middleware stack: request ID, recoverer, logger, CORS, timeout
-- [ ] Config struct loaded via envconfig with sensible defaults
-- [ ] `slog` JSON handler wired to log writer
-- [ ] `/healthz` (liveness) and `/readyz` (deps reachable) endpoints
-- [ ] Graceful shutdown on SIGTERM/SIGINT with context cancellation
-- [ ] `Dockerfile` (multi-stage, distroless final image)
-- [ ] `services/api/Makefile` with `run`, `build`, `test`, `lint` targets
-- [ ] golangci-lint config + CI step
+- [x] `go mod init github.com/japharyroman/fuelgrid-os`
+- [x] Layout: `services/api/cmd/api/main.go`, `services/api/internal/server`, shared `internal/` modules per architecture doc
+- [x] HTTP server using chi with middleware stack: request ID, recoverer, logger, CORS, timeout
+- [x] Config struct loaded via envconfig with sensible defaults
+- [x] `slog` JSON handler wired to log writer
+- [x] `/healthz` (liveness) and `/readyz` (deps reachable) endpoints
+- [x] Graceful shutdown on SIGTERM/SIGINT with context cancellation
+- [x] `Dockerfile` (multi-stage, distroless final image)
+- [x] `services/api/Makefile` with `run`, `build`, `test`, `lint` targets
+- [x] golangci-lint config + CI step
 
-**Done when:** `docker build` + `docker run` boots the API, `/healthz` returns 200, logs are structured.
+**Done when:** `docker build` + `docker run` boots the API, `/healthz` returns 200, logs are structured. ✅ Verified — `go run ./cmd/api` boots locally; `/healthz` and `/readyz` return 200 with JSON; `X-Request-Id` echoed in responses; CI `docker` job runs the image and smoke-tests both endpoints.
 
 ---
 
