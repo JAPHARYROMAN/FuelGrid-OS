@@ -32,16 +32,16 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** Anyone can clone, `pnpm install`, and have lint/format/typecheck/CI all working before a single feature is written.
 
-- [ ] Initialize pnpm workspace (`pnpm-workspace.yaml` covering `apps/*`, `services/*`, `packages/*`)
-- [ ] Root `package.json` with shared scripts (`lint`, `typecheck`, `test`, `build`, `dev`)
-- [ ] `packages/config` — shared `tsconfig.base.json`, `eslint-config`, `prettier-config`, `tailwind-preset`
-- [ ] Husky + lint-staged for pre-commit lint/format
-- [ ] `.editorconfig` and `.nvmrc` (Node 20 LTS)
-- [ ] `.env.example` at repo root documenting all env vars used anywhere
-- [ ] CONTRIBUTING.md with branch / commit conventions (Conventional Commits)
-- [ ] GitHub Actions workflow: lint + typecheck on every PR
+- [x] Initialize pnpm workspace (`pnpm-workspace.yaml` covering `apps/*`, `services/*`, `packages/*`)
+- [x] Root `package.json` with shared scripts (`lint`, `typecheck`, `test`, `build`, `dev`)
+- [x] `packages/config` — shared `tsconfig.base.json`, `eslint-config`, `prettier-config`, `tailwind-preset`
+- [x] Husky + lint-staged for pre-commit lint/format
+- [x] `.editorconfig` and `.nvmrc` (Node 22 LTS)
+- [x] `.env.example` at repo root documenting all env vars used anywhere
+- [x] CONTRIBUTING.md with branch / commit conventions (Conventional Commits)
+- [x] GitHub Actions workflow: lint + typecheck on every PR
 
-**Done when:** A fresh clone passes `pnpm install && pnpm lint && pnpm typecheck` with zero code.
+**Done when:** A fresh clone passes `pnpm install && pnpm lint && pnpm typecheck` with zero code. ✅ Verified — `format:check`, `lint`, `typecheck`, `test`, `build` all green.
 
 ---
 
