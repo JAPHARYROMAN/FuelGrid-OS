@@ -1,0 +1,8 @@
+{
+  "extends": "@fuelgrid/config/tsconfig/base",
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "noEmit": true
+  },
+  "include": ["src/**/*"]
+}

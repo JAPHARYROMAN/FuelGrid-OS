@@ -1,0 +1,106 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens. Variables drive both light and dark themes; the `.dark`
+ * class on <html> flips them. Names follow shadcn/ui conventions so any
+ * future component we copy in from there picks up the right tokens.
+ *
+ * Brand surfaces (navy, electric blue, fuel product colors) come from
+ * docs/ui-ux.md §5.
+ */
+
+@layer base {
+  :root {
+    /* Surface */
+    --color-background: 0 0% 100%;
+    --color-foreground: 222 47% 11%;
+    --color-card: 0 0% 100%;
+    --color-card-foreground: 222 47% 11%;
+    --color-muted: 220 14% 96%;
+    --color-muted-foreground: 215 16% 47%;
+    --color-border: 220 13% 91%;
+    --color-ring: 217 91% 60%;
+
+    /* Brand */
+    --color-accent: 217 91% 60%;
+    --color-accent-foreground: 0 0% 100%;
+    --color-secondary: 220 14% 96%;
+    --color-secondary-foreground: 222 47% 11%;
+
+    /* Status */
+    --color-success: 158 64% 40%;
+    --color-warning: 38 92% 50%;
+    --color-danger: 0 72% 51%;
+    --color-danger-foreground: 0 0% 100%;
+    --color-info: 199 89% 48%;
+  }
+
+  .dark {
+    /* Deep navy command-center palette per docs/ui-ux.md §5.4 */
+    --color-background: 222 47% 7%;
+    --color-foreground: 210 40% 96%;
+    --color-card: 220 39% 11%;
+    --color-card-foreground: 210 40% 96%;
+    --color-muted: 217 33% 17%;
+    --color-muted-foreground: 215 20% 65%;
+    --color-border: 217 33% 20%;
+    --color-ring: 217 91% 60%;
+
+    --color-accent: 217 91% 60%;
+    --color-accent-foreground: 0 0% 100%;
+    --color-secondary: 217 33% 17%;
+    --color-secondary-foreground: 210 40% 96%;
+
+    --color-success: 158 64% 52%;
+    --color-warning: 38 92% 50%;
+    --color-danger: 0 72% 51%;
+    --color-danger-foreground: 0 0% 100%;
+    --color-info: 199 89% 48%;
+  }
+}
+
+@theme {
+  /* Bind CSS variables to Tailwind utility classes. */
+  --color-background: hsl(var(--color-background));
+  --color-foreground: hsl(var(--color-foreground));
+  --color-card: hsl(var(--color-card));
+  --color-card-foreground: hsl(var(--color-card-foreground));
+  --color-muted: hsl(var(--color-muted));
+  --color-muted-foreground: hsl(var(--color-muted-foreground));
+  --color-border: hsl(var(--color-border));
+  --color-ring: hsl(var(--color-ring));
+  --color-accent: hsl(var(--color-accent));
+  --color-accent-foreground: hsl(var(--color-accent-foreground));
+  --color-secondary: hsl(var(--color-secondary));
+  --color-secondary-foreground: hsl(var(--color-secondary-foreground));
+  --color-success: hsl(var(--color-success));
+  --color-warning: hsl(var(--color-warning));
+  --color-danger: hsl(var(--color-danger));
+  --color-danger-foreground: hsl(var(--color-danger-foreground));
+  --color-info: hsl(var(--color-info));
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
+    monospace;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background-color: hsl(var(--color-background));
+    color: hsl(var(--color-foreground));
+  }
+
+  /* Tabular numerals for any numeric class — money/liters per UI/UX §6.3. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

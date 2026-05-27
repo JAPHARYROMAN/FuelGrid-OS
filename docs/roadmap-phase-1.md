@@ -166,20 +166,22 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 **Goal:** A logged-in user lands on an empty Command Center with the full app chrome — sidebar, topbar, right panel, theme — even though most modules are stubs.
 
-- [ ] Scaffold `apps/web` with Next.js 15 (App Router), TS, Tailwind, shadcn/ui
-- [ ] Design tokens in `packages/ui` per UI/UX doc §5–7: colors, typography (incl. tabular numerals for money/liters), spacing, radius, shadows
-- [ ] Theme: dark mode default for executive views, light mode toggle
-- [ ] App layout component: left sidebar (collapsible, role-aware), top command bar, main workspace, right insight panel
-- [ ] Auth pages: `/login`, `/forgot-password`, `/reset-password`, `/mfa`
-- [ ] Protected route wrapper that redirects to `/login` and preserves `?next=`
-- [ ] `packages/sdk` — typed API client (generated from OpenAPI spec emitted by the Go server, OR hand-written initially)
-- [ ] TanStack Query provider, default options (staleTime, retry policy)
-- [ ] Permission hook: `usePermission("station.read")` driven by `/me/permissions` response
-- [ ] Zustand stores: `useAuth`, `useTenantContext` (active company/region/station)
-- [ ] Empty/loading/error state components in `packages/ui` (referenced as a quality gate per UI/UX §18.4)
-- [ ] Command palette skeleton (cmdk) bound to ⌘K/Ctrl+K — wired to global search later
+- [x] Scaffold `apps/web` with Next.js 15 (App Router), TS, Tailwind v4, shadcn-style primitives in `packages/ui`
+- [x] Design tokens in `packages/ui` + `apps/web/app/globals.css` per UI/UX doc §5–7: HSL CSS variables, light/dark surfaces, fuel product colors, tabular numerals utility
+- [x] Theme: dark mode default for executive views, light mode toggle in the topbar via `next-themes`
+- [x] App layout component: collapsible left sidebar (15 nav entries from the architecture doc), top command bar with search + theme + logout, main workspace, right insight panel
+- [x] Auth pages: `/login` (functional), `/forgot-password`/`/reset-password`/`/mfa` (thin placeholders pointing at the Stage-4 backend endpoints they will eventually drive)
+- [x] Protected route wrapper that waits for store hydration, then redirects to `/login` with `?next=` preserved
+- [x] `packages/sdk` — hand-written typed Client (login/logout/refresh/password-reset/me/me-permissions/get-station). OpenAPI generation deferred to Stage 10.
+- [x] TanStack Query provider with sensible defaults (30s staleTime, 5m gcTime, no retries on 4xx, no refetch-on-focus)
+- [x] `usePermission(code, { stationID })` hook that mirrors the backend `policy.Can()` logic for UX hints (backend remains authoritative)
+- [x] Zustand stores: `useAuthStore` (token + expiresAt + hydrated flag, persisted to localStorage) and `useTenantStore` (active company/region/station, persisted)
+- [x] `EmptyState` / `LoadingState` / `ErrorState` components in `packages/ui` — the quality gate from UI/UX §18.4
+- [x] Command palette skeleton (cmdk + Radix Dialog) bound to ⌘K/Ctrl+K. Empty state today; concrete commands plug in once data layers ship.
 
-**Done when:** Logging in lands on `/command-center` showing an empty premium-looking shell; logging out returns to `/login`; refreshing the page preserves the session.
+**Done when:** Logging in lands on `/command-center` showing an empty premium-looking shell; logging out returns to `/login`; refreshing the page preserves the session. ✅ Web build is green (`pnpm --filter @fuelgrid/web build` → 9 static routes, no errors); dev server returns 200 on `/`, `/login`, `/command-center`, and the placeholder auth routes. Token persistence is via Zustand's persist middleware against localStorage with an `hydrated` flag so the protected guard waits for rehydration before deciding whether to redirect.
+
+**Posture notes:** Tokens live in `localStorage` (per the Stage 8 decision question — XSS surface acknowledged, migration to HttpOnly cookies tracked for a future stage). `experimental.typedRoutes` was disabled because the `?next=` redirect target is a user-controlled string the typed-routes checker can't accept; revisit when route shapes stabilize.
 
 ---
 
