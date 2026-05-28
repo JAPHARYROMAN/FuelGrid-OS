@@ -169,6 +169,23 @@ func run() error {
 		return err
 	}
 
+	// Tanks. Two at MIK-01 (PMS + AGO, 30,000L each), one at MSA-01
+	// (PMS, 25,000L). Products are resolved by code within the tenant.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO tanks
+		    (tenant_id, station_id, product_id, name, code,
+		     capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres)
+		VALUES
+		    ($1, $2, (SELECT id FROM products WHERE tenant_id = $1 AND code = 'PMS'),
+		        'PMS Tank 1', 'T1', 30000.000, 3000.000, 28500.000, 500.000),
+		    ($1, $2, (SELECT id FROM products WHERE tenant_id = $1 AND code = 'AGO'),
+		        'AGO Tank 1', 'T2', 30000.000, 3000.000, 28500.000, 500.000),
+		    ($1, $3, (SELECT id FROM products WHERE tenant_id = $1 AND code = 'PMS'),
+		        'PMS Tank 1', 'T1', 25000.000, 2500.000, 23750.000, 500.000)
+	`, tenantID, station1ID, station2ID); err != nil {
+		return err
+	}
+
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO users (tenant_id, email, full_name, status,
 		                  password_hash, password_changed_at)
@@ -237,6 +254,7 @@ func run() error {
 		"station2_id", station2ID,
 		"station2_code", "MSA-01",
 		"products", "PMS, AGO, KERO",
+		"tanks", "MIK-01: T1(PMS), T2(AGO); MSA-01: T1(PMS)",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

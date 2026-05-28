@@ -89,6 +89,24 @@ export interface Product {
   status: string;
 }
 
+export interface Tank {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  product_id: string;
+  name: string;
+  code: string;
+  capacity_litres: number;
+  safe_min_litres: number;
+  safe_max_litres: number;
+  dead_stock_litres: number;
+  has_water_sensor: boolean;
+  has_temp_sensor: boolean;
+  status: string;
+  installation_date?: string;
+  decommission_date?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

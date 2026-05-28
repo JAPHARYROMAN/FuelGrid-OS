@@ -11,6 +11,7 @@ import type {
   Role,
   Session,
   Station,
+  Tank,
   UserSummary,
 } from './types';
 
@@ -334,6 +335,45 @@ export class Client {
 
   deleteProduct(id: string, signal?: AbortSignal): Promise<void> {
     return this.request<void>(`/api/v1/products/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Tanks -----------
+
+  listTanks(opts: { stationID?: string } = {}, signal?: AbortSignal): Promise<Paginated<Tank>> {
+    const qs = opts.stationID ? `?station_id=${encodeURIComponent(opts.stationID)}` : '';
+    return this.request<Paginated<Tank>>(`/api/v1/tanks${qs}`, { signal });
+  }
+
+  getTank(id: string, signal?: AbortSignal): Promise<Tank> {
+    return this.request<Tank>(`/api/v1/tanks/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createTank(
+    req: Partial<Tank> & {
+      station_id: string;
+      product_id: string;
+      name: string;
+      code: string;
+      capacity_litres: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<Tank> {
+    return this.request<Tank>('/api/v1/tanks', { method: 'POST', body: req, signal });
+  }
+
+  updateTank(id: string, req: Partial<Tank>, signal?: AbortSignal): Promise<Tank> {
+    return this.request<Tank>(`/api/v1/tanks/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteTank(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/tanks/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       signal,
     });

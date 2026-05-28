@@ -1,0 +1,197 @@
+// Package tanks is the data layer for the `tanks` table — physical tank
+// inventory bound to a station and a product.
+package tanks
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/japharyroman/fuelgrid-os/internal/database"
+)
+
+type Tank struct {
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	StationID        uuid.UUID
+	ProductID        uuid.UUID
+	Name             string
+	Code             string
+	CapacityLitres   float64
+	SafeMinLitres    float64
+	SafeMaxLitres    float64
+	DeadStockLitres  float64
+	HasWaterSensor   bool
+	HasTempSensor    bool
+	Status           string
+	InstallationDate *time.Time
+	DecommissionDate *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+type CreateInput struct {
+	StationID        uuid.UUID
+	ProductID        uuid.UUID
+	Name             string
+	Code             string
+	CapacityLitres   float64
+	SafeMinLitres    float64
+	SafeMaxLitres    float64
+	DeadStockLitres  float64
+	HasWaterSensor   bool
+	HasTempSensor    bool
+	InstallationDate *time.Time
+}
+
+type UpdateInput struct {
+	ProductID        *uuid.UUID
+	Name             *string
+	Code             *string
+	CapacityLitres   *float64
+	SafeMinLitres    *float64
+	SafeMaxLitres    *float64
+	DeadStockLitres  *float64
+	HasWaterSensor   *bool
+	HasTempSensor    *bool
+	Status           *string
+	InstallationDate *time.Time
+	DecommissionDate *time.Time
+}
+
+type Repo struct{ pool *database.Pool }
+
+func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
+
+const columns = `
+    id, tenant_id, station_id, product_id, name, code,
+    capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres,
+    has_water_sensor, has_temp_sensor, status,
+    installation_date, decommission_date, created_at, updated_at
+`
+
+func scan(row pgx.Row, t *Tank) error {
+	return row.Scan(
+		&t.ID, &t.TenantID, &t.StationID, &t.ProductID, &t.Name, &t.Code,
+		&t.CapacityLitres, &t.SafeMinLitres, &t.SafeMaxLitres, &t.DeadStockLitres,
+		&t.HasWaterSensor, &t.HasTempSensor, &t.Status,
+		&t.InstallationDate, &t.DecommissionDate, &t.CreatedAt, &t.UpdatedAt,
+	)
+}
+
+func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, stationID *uuid.UUID) ([]Tank, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if stationID != nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+columns+`
+			FROM tanks
+			WHERE tenant_id = $1 AND station_id = $2 AND status <> 'deleted'
+			ORDER BY code
+		`, tenantID, *stationID)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+columns+`
+			FROM tanks
+			WHERE tenant_id = $1 AND status <> 'deleted'
+			ORDER BY code
+		`, tenantID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Tank
+	for rows.Next() {
+		var t Tank
+		if err := scan(rows, &t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Tank, error) {
+	var t Tank
+	if err := scan(r.pool.QueryRow(ctx, `
+		SELECT `+columns+`
+		FROM tanks WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'
+	`, id, tenantID), &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Repo) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*Tank, error) {
+	var t Tank
+	if err := scan(tx.QueryRow(ctx, `
+		INSERT INTO tanks
+		    (tenant_id, station_id, product_id, name, code,
+		     capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres,
+		     has_water_sensor, has_temp_sensor, installation_date)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		RETURNING `+columns,
+		tenantID, in.StationID, in.ProductID, in.Name, in.Code,
+		in.CapacityLitres, in.SafeMinLitres, in.SafeMaxLitres, in.DeadStockLitres,
+		in.HasWaterSensor, in.HasTempSensor, in.InstallationDate,
+	), &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Repo) Update(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in UpdateInput) (*Tank, error) {
+	var t Tank
+	err := scan(tx.QueryRow(ctx, `
+		UPDATE tanks
+		SET product_id        = COALESCE($3,  product_id),
+		    name              = COALESCE($4,  name),
+		    code              = COALESCE($5,  code),
+		    capacity_litres   = COALESCE($6,  capacity_litres),
+		    safe_min_litres   = COALESCE($7,  safe_min_litres),
+		    safe_max_litres   = COALESCE($8,  safe_max_litres),
+		    dead_stock_litres = COALESCE($9,  dead_stock_litres),
+		    has_water_sensor  = COALESCE($10, has_water_sensor),
+		    has_temp_sensor   = COALESCE($11, has_temp_sensor),
+		    status            = COALESCE($12, status),
+		    installation_date = COALESCE($13, installation_date),
+		    decommission_date = COALESCE($14, decommission_date)
+		WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'
+		RETURNING `+columns,
+		id, tenantID,
+		in.ProductID, in.Name, in.Code,
+		in.CapacityLitres, in.SafeMinLitres, in.SafeMaxLitres, in.DeadStockLitres,
+		in.HasWaterSensor, in.HasTempSensor, in.Status,
+		in.InstallationDate, in.DecommissionDate,
+	), &t)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (r *Repo) SoftDelete(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE tanks SET status = 'deleted'
+		WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'
+	`, id, tenantID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+var ErrNotFound = errors.New("tanks: not found")

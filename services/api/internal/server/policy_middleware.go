@@ -32,6 +32,29 @@ func stationFromURLParam(param string) stationExtractor {
 	}
 }
 
+// authorizeStation runs a station-scoped permission check from inside a
+// handler, for the cases the URL-param middleware can't cover: the station
+// id lives in the request body (create) or on the target row (update /
+// delete), so it's only known after decoding or loading. Returns true when
+// the actor is allowed; otherwise it writes the error response and returns
+// false.
+func (s *Server) authorizeStation(w http.ResponseWriter, r *http.Request, actor identity.Actor, perm string, stationID uuid.UUID) bool {
+	err := s.policy.Can(r.Context(), actor, perm, policy.AtStation(stationID))
+	if err == nil {
+		return true
+	}
+	switch {
+	case errors.Is(err, policy.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, identity.ErrUnauthenticated):
+		writeError(w, http.StatusUnauthorized, "authentication required")
+	default:
+		s.logger.Error("policy check", "error", err, "permission", perm)
+		writeError(w, http.StatusInternalServerError, "authorization error")
+	}
+	return false
+}
+
 // requirePermission builds a middleware enforcing a single permission.
 // extract may be nil for tenant-wide permissions.
 func (s *Server) requirePermission(perm string, extract stationExtractor) func(http.Handler) http.Handler {

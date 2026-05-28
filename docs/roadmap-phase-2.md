@@ -51,13 +51,13 @@ The catalog operators install. Pure CRUD + wiring; no operational state yet.
 
 **Goal:** Every station has a tank inventory bound to products, with capacity limits the loss/overfill engine can reason against.
 
-- [ ] Migration `0010_tanks`: `tanks` (id, tenant_id, station_id, product_id, name, code, capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres, has_water_sensor, has_temp_sensor, status, installation_date, decommission_date, timestamps)
-- [ ] CHECK: `safe_min_litres <= safe_max_litres <= capacity_litres` and `dead_stock_litres >= 0`
-- [ ] Permission `tanks.manage` (station-scoped). `station.read` already covers list/get.
-- [ ] Repo + handlers + SDK methods, filter by `station_id`
-- [ ] `/settings/tanks` admin page: station picker → tanks table. Create dialog binds to a product, captures all limits.
-- [ ] Seed: two tanks on `MIK-01` (PMS 30,000L; AGO 30,000L), one on `MSA-01` (PMS 25,000L)
-- [ ] Audit + outbox for every mutation
+- [x] Migration `0010_tanks`: `tanks` (id, tenant_id, station_id, product_id, name, code, capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres, has_water_sensor, has_temp_sensor, status, installation_date, decommission_date, timestamps)
+- [x] CHECK: `safe_min_litres <= safe_max_litres <= capacity_litres` and `dead_stock_litres >= 0`
+- [x] Permission `tanks.manage` (station-scoped). `station.read` already covers list/get.
+- [x] Repo + handlers + SDK methods, filter by `station_id`
+- [x] `/settings/tanks` admin page: station picker → tanks table. Create dialog binds to a product, captures all limits.
+- [x] Seed: two tanks on `MIK-01` (PMS 30,000L; AGO 30,000L), one on `MSA-01` (PMS 25,000L)
+- [x] Audit + outbox for every mutation
 
 **Done when:** The seeded admin can attach a new tank to a station and see the product's color reflected in the row chip.
 

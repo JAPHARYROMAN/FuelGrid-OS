@@ -23,6 +23,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
+	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
 )
 
@@ -52,6 +53,7 @@ type Server struct {
 	regions     *regions.Repo
 	stations    *stations.Repo
 	products    *products.Repo
+	tanks       *tanks.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -77,6 +79,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
 		s.products = products.New(deps.DB)
+		s.tanks = tanks.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -193,6 +196,17 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Patch("/products/{id}", s.handleUpdateProduct)
 							r.Delete("/products/{id}", s.handleDeleteProduct)
 						})
+
+						// Tanks: reads ride tenant-wide station.read; writes are
+						// station-scoped (tanks.manage) and authorized in-handler
+						// against the station from the body or the target row.
+						r.With(s.requirePermission("station.read", nil)).Group(func(r chi.Router) {
+							r.Get("/tanks", s.handleListTanks)
+							r.Get("/tanks/{id}", s.handleGetTank)
+						})
+						r.Post("/tanks", s.handleCreateTank)
+						r.Patch("/tanks/{id}", s.handleUpdateTank)
+						r.Delete("/tanks/{id}", s.handleDeleteTank)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)

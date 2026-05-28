@@ -15,5 +15,6 @@ export type {
   Role,
   Session,
   Station,
+  Tank,
   UserSummary,
 } from './types';
