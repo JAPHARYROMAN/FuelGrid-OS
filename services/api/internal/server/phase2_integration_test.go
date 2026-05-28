@@ -221,6 +221,7 @@ func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID)
 		`DELETE FROM outbox_events WHERE tenant_id = $1`,
 		`DELETE FROM audit_logs WHERE tenant_id = $1`,
 		`DELETE FROM stock_movements WHERE tenant_id = $1`,
+		`DELETE FROM deliveries WHERE tenant_id = $1`,
 		`DELETE FROM tank_dip_readings WHERE tenant_id = $1`,
 		`DELETE FROM shifts WHERE tenant_id = $1`,
 		`DELETE FROM operating_days WHERE tenant_id = $1`,

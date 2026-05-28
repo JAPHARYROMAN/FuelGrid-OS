@@ -270,6 +270,81 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 	}
 }
 
+func TestPhase4_Delivery(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	_, slug, admin := h.adminContext(t, ctx)
+	op := h.login(t, slug, h.ids.opEmail)
+
+	tank := "/api/v1/tanks/" + h.ids.tankAGO.String()
+
+	// Open the tank, then receive 10,000 L with no dips.
+	if code, _ := h.invPostJSON(t, tank+"/opening-balance", admin, map[string]any{"litres": 8000}); code != http.StatusCreated {
+		t.Fatalf("set opening: status %d", code)
+	}
+	code, body := h.invPostJSON(t, tank+"/deliveries", admin,
+		map[string]any{"volume_litres": 10000, "supplier_ref": "Oryx"})
+	if code != http.StatusCreated {
+		t.Fatalf("receive delivery: status %d: %v", code, body)
+	}
+	if body["dip_mismatch"].(bool) {
+		t.Fatalf("no-dip delivery should not flag a mismatch")
+	}
+	mv := body["movement"].(map[string]any)
+	if mv["movement_type"] != "delivery" || mv["litres"].(float64) != 10000 || mv["balance_after"].(float64) != 18000 {
+		t.Fatalf("delivery movement = %v", mv)
+	}
+
+	// Book balance rose by the delivered volume.
+	if code, b := h.getJSON(t, tank+"/book-balance", admin); code != http.StatusOK || b["book_balance"].(float64) != 18000 {
+		t.Fatalf("book balance after delivery = %v (status %d)", b["book_balance"], code)
+	}
+
+	// Declared volume that disagrees with the dip change is flagged (AGO's
+	// loss tolerance is 0, so any gap mismatches).
+	code, body = h.invPostJSON(t, tank+"/deliveries", admin, map[string]any{
+		"volume_litres": 10000, "dip_before_litres": 18000, "dip_after_litres": 27500,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("receive delivery w/ dips: status %d: %v", code, body)
+	}
+	if !body["dip_mismatch"].(bool) {
+		t.Fatalf("declared 10000 vs dip delta 9500 should flag a mismatch")
+	}
+	if v := body["delivery"].(map[string]any)["dip_variance_litres"].(float64); v != 500 {
+		t.Fatalf("dip_variance_litres = %v, want 500", v)
+	}
+
+	// Matching dips do not flag.
+	code, body = h.invPostJSON(t, tank+"/deliveries", admin, map[string]any{
+		"volume_litres": 10000, "dip_before_litres": 27500, "dip_after_litres": 37500,
+	})
+	if code != http.StatusCreated || body["dip_mismatch"].(bool) {
+		t.Fatalf("matching dips should not flag (status %d, mismatch %v)", code, body["dip_mismatch"])
+	}
+
+	// Tank and station listings both return the three deliveries.
+	if code, b := h.getJSON(t, tank+"/deliveries", admin); code != http.StatusOK || b["count"].(float64) != 3 {
+		t.Fatalf("tank deliveries count = %v (status %d)", b["count"], code)
+	}
+	if code, b := h.getJSON(t, "/api/v1/stations/"+h.ids.station1.String()+"/deliveries", admin); code != http.StatusOK || b["count"].(float64) != 3 {
+		t.Fatalf("station deliveries count = %v (status %d)", b["count"], code)
+	}
+
+	// A delivery into a tank with no opening balance is rejected.
+	msaTank := "/api/v1/tanks/" + h.ids.tankMSA.String() + "/deliveries"
+	if code, _ := h.invPostJSON(t, msaTank, admin, map[string]any{"volume_litres": 5000}); code != http.StatusConflict {
+		t.Fatalf("delivery before opening: status %d, want 409", code)
+	}
+
+	// The station1-scoped operator cannot receive into a station2 tank.
+	if code, _ := h.invPostJSON(t, msaTank, op, map[string]any{"volume_litres": 5000}); code != http.StatusForbidden {
+		t.Fatalf("operator cross-station delivery: status %d, want 403", code)
+	}
+}
+
 // seedFirstDip inserts the operating-day -> shift -> chart -> dip chain needed
 // to give a tank a first dip reading at the given volume.
 func seedFirstDip(t *testing.T, ctx context.Context, h *harness, recordedBy, tankID uuid.UUID, volume float64) {

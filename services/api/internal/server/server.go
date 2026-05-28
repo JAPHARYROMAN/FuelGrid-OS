@@ -275,6 +275,14 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						// reuse the station-scoped stock.adjust, authorized in-handler.
 						r.Post("/tanks/{id}/opening-balance", s.handleSetTankOpeningBalance)
 
+						// Deliveries (Phase 4, Stage 3): receive posts a +volume
+						// 'delivery' movement; reads ride inventory.read. Receive is
+						// station-scoped (delivery.receive), authorized in-handler.
+						r.Get("/tanks/{id}/deliveries", s.handleListTankDeliveries)
+						r.Post("/tanks/{id}/deliveries", s.handleReceiveDelivery)
+						r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/deliveries", s.handleListStationDeliveries)
+
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
 						// (pumps.calibrate), status changes fold into pumps.manage
