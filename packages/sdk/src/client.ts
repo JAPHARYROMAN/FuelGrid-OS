@@ -2807,6 +2807,39 @@ export class Client {
     });
   }
 
+  // ----------- Risk tuning & governance (Phase 10) -----------
+
+  getRiskGovernance(signal?: AbortSignal): Promise<Record<string, number>> {
+    return this.request('/api/v1/risk/governance', { signal });
+  }
+
+  listRiskSuppressions(signal?: AbortSignal): Promise<{ items: unknown[]; count: number }> {
+    return this.request('/api/v1/risk/suppressions', { signal });
+  }
+
+  createRiskSuppression(
+    req: { alert_type: string; entity_id?: string; reason: string; expires_at?: string },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request('/api/v1/risk/suppressions', { method: 'POST', body: req, signal });
+  }
+
+  tuneRiskRule(
+    id: string,
+    req: { threshold?: string; lookback_days?: number; severity?: string },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request(`/api/v1/risk/rules/${encodeURIComponent(id)}/tune`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  pauseRiskEngine(signal?: AbortSignal): Promise<{ paused_rules: number }> {
+    return this.request('/api/v1/risk/engine/pause', { method: 'POST', signal });
+  }
+
   // ----------- Users -----------
 
   listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {

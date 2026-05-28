@@ -224,6 +224,8 @@ func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID)
 		`DELETE FROM investigation_case_comments WHERE tenant_id = $1`,
 		`DELETE FROM investigation_case_alerts WHERE tenant_id = $1`,
 		`DELETE FROM investigation_cases WHERE tenant_id = $1`,
+		`DELETE FROM risk_feedback WHERE tenant_id = $1`,
+		`DELETE FROM risk_suppressions WHERE tenant_id = $1`,
 		`DELETE FROM risk_scores WHERE tenant_id = $1`,
 		`DELETE FROM risk_alerts WHERE tenant_id = $1`,
 		`DELETE FROM risk_rules WHERE tenant_id = $1`,

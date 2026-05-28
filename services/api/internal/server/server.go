@@ -601,6 +601,17 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/investigations/{id}/status", s.handleSetCaseStatus)
 						})
 
+						// Tuning, governance & trust (Stages 14-15).
+						r.With(s.requirePermissionHeld("risk_governance.admin")).Group(func(r chi.Router) {
+							r.Get("/risk/governance", s.handleRiskGovernance)
+							r.Get("/risk/suppressions", s.handleListSuppressions)
+							r.Post("/risk/engine/pause", s.handlePauseAllRiskRules)
+						})
+						r.With(s.requirePermission("risk_rule.tune", nil)).
+							Post("/risk/rules/{id}/tune", s.handleTuneRiskRule)
+						r.With(s.requirePermission("risk_alert.suppress", nil)).
+							Post("/risk/suppressions", s.handleCreateSuppression)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

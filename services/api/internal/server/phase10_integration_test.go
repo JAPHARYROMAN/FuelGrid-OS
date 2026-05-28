@@ -175,3 +175,53 @@ func TestPhase10_Investigations(t *testing.T) {
 		t.Fatalf("resolve case = %d %v", code, res)
 	}
 }
+
+// TestPhase10_Governance covers Category E: alert suppression silencing
+// detection, rule tuning, the governance summary, and the engine pause switch.
+func TestPhase10_Governance(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
+	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
+		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
+	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
+		t.Fatalf("seed cash recon: %v", err)
+	}
+
+	// Suppress cash_shortage before detecting; the alert must not be raised.
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/suppressions", admin, map[string]any{
+		"alert_type": "cash_shortage", "reason": "known cash pickup timing",
+	}); code != http.StatusCreated {
+		t.Fatalf("create suppression: %d", code)
+	}
+	if code, det := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK || det["alerts_created"].(float64) != 0 {
+		t.Fatalf("detect should be suppressed: %v", det)
+	}
+	if code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=cash_shortage", admin); code != http.StatusOK || len(alerts["items"].([]any)) != 0 {
+		t.Fatalf("expected no cash_shortage alerts: %v", alerts)
+	}
+
+	// Rule tuning.
+	code, rule := h.invPostJSON(t, "/api/v1/risk/rules", admin, map[string]any{"code": "cs", "name": "Cash short"})
+	if code != http.StatusCreated {
+		t.Fatalf("create rule: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules/"+rule["id"].(string)+"/tune", admin, map[string]any{"threshold": "1000", "lookback_days": 14, "severity": "high"}); code != http.StatusOK {
+		t.Fatalf("tune rule: %d", code)
+	}
+
+	// Governance summary + engine pause.
+	code, gov := h.getJSON(t, "/api/v1/risk/governance", admin)
+	if code != http.StatusOK || gov["active_suppressions"].(float64) < 1 {
+		t.Fatalf("governance = %d %v", code, gov)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/engine/pause", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("pause engine: %d", code)
+	}
+}

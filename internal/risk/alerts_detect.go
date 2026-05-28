@@ -46,18 +46,24 @@ func (r *Repo) RunDetection(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) 
 		         'stock variance over tolerance: ' || tr.variance_litres || ' L', 70
 		  FROM tank_reconciliations tr JOIN tanks t ON t.id = tr.tank_id AND t.tenant_id = tr.tenant_id
 		  WHERE tr.tenant_id = $1 AND tr.status = 'exception'
+		    AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = tr.tenant_id AND sup.alert_type = 'fuel_loss'
+		                    AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = t.station_id))
 		  ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`},
 		// Cash shortage: posted cash reconciliations with a negative variance.
 		{`INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, amount, score)
 		  SELECT tenant_id, 'cash_shortage', 'cash_shortage', 'medium', station_id, 'cash_reconciliation', id,
 		         'counted cash short by ' || abs(variance), abs(variance), 55
 		  FROM cash_reconciliations WHERE tenant_id = $1 AND status = 'posted' AND variance < 0
+		    AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = cash_reconciliations.tenant_id AND sup.alert_type = 'cash_shortage'
+		                    AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = cash_reconciliations.station_id))
 		  ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`},
 		// Delivery discrepancy: open procurement discrepancies.
 		{`INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, subject_type, subject_id, detail, amount, score)
 		  SELECT tenant_id, 'delivery_discrepancy', 'delivery_discrepancy', 'medium', 'procurement_discrepancy', id,
 		         'open procurement discrepancy', variance_amount, 50
 		  FROM procurement_discrepancies WHERE tenant_id = $1 AND status = 'open'
+		    AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = procurement_discrepancies.tenant_id AND sup.alert_type = 'delivery_discrepancy'
+		                    AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND sup.entity_id IS NULL)
 		  ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`},
 	}
 	for _, p := range packs {
