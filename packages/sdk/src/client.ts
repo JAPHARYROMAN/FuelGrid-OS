@@ -40,8 +40,10 @@ export interface ClientConfig {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
-  /** Force the request to skip the Authorization header (e.g. login). */
+  /** Force the request to skip the session Authorization header (e.g. login). */
   unauthenticated?: boolean;
+  /** Extra headers merged last — used to pass a non-session bearer. */
+  headers?: Record<string, string>;
   signal?: AbortSignal;
 }
 
@@ -77,6 +79,10 @@ export class Client {
       body = JSON.stringify(opts.body);
     }
 
+    if (opts.headers) {
+      Object.assign(headers, opts.headers);
+    }
+
     const res = await this.fetchImpl(url, {
       method: opts.method ?? 'GET',
       headers,
@@ -101,6 +107,34 @@ export class Client {
     }
 
     return parsed as T;
+  }
+
+  // ----------- Platform (operator/IaC, not user sessions) -----------
+
+  /**
+   * Provision a new tenant + its first admin user. Requires the static
+   * PLATFORM_ADMIN_TOKEN bearer, passed explicitly here rather than via
+   * the client's session token. Returns a one-time password-reset token
+   * the new admin uses to set their password.
+   */
+  createTenant(
+    platformToken: string,
+    req: { name: string; slug: string; admin_email: string; admin_full_name: string },
+    signal?: AbortSignal,
+  ): Promise<{
+    tenant_id: string;
+    tenant_slug: string;
+    admin_user_id: string;
+    admin_email: string;
+    password_reset_token: string;
+  }> {
+    return this.request('/api/v1/platform/tenants', {
+      method: 'POST',
+      body: req,
+      unauthenticated: true,
+      headers: { Authorization: `Bearer ${platformToken}` },
+      signal,
+    });
   }
 
   // ----------- Auth -----------

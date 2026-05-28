@@ -224,15 +224,37 @@ These are picked to start fast. They can be revisited later, but treat them as f
 
 ## Phase 1 acceptance criteria
 
+> **Status (2026-05-28):** An external audit found five Phase-1 foundation
+> gaps that the original "complete" claim had glossed over — they have
+> since been fixed (commits on `main`): session revocation made
+> authoritative, tenant-bound composite FKs + write guards,
+> auth events wired into audit+outbox, the platform tenant-creation
+> endpoint, and a failing OpenAPI CI job. The criteria below are now
+> genuinely met. Don't re-declare a phase "complete" without re-checking
+> each criterion against the running system, not just the happy path.
+
 Phase 1 is complete when **all** of the following are true:
 
-1. A new tenant can be created via API, configured fully via the admin UI, and have users invited.
-2. Users can log in with MFA, sessions are revocable, and password reset works end-to-end.
-3. Every API endpoint enforces tenant isolation and permission scoping; tests prove it.
-4. Every write produces an outbox event in the same transaction; sensitive writes also produce an audit log entry.
+1. A new tenant can be created via API (`POST /api/v1/platform/tenants`, gated by `PLATFORM_ADMIN_TOKEN`), configured fully via the admin UI, and have users invited. ✅ Provisioning returns a reset token the new admin uses to set their password; CI exercises the full provision → reset → login → permissions path.
+2. Users can log in with MFA, sessions are revocable (authoritatively — revoking a session deletes the live Redis entry, not just the durable row), and password reset works end-to-end including the web `/forgot-password` + `/reset-password` forms.
+3. Every API endpoint enforces tenant isolation and permission scoping; hierarchy and user-scope writes are tenant-bound at the DB layer via composite `(tenant_id, id)` FKs (migration 0008) **and** app-layer guards. CI proves cross-tenant links are rejected.
+4. Every sensitive write — including auth (login, logout, password change/reset, MFA enroll/activate) — produces an audit log row + outbox event in the same transaction. CI asserts the auth events land in `audit_logs` + `outbox_events`.
 5. The web app shell is visually consistent with the UI/UX doc's design tokens — premium feel, dark + light modes, sidebar + topbar + right panel + command palette all functional.
-6. CI is green on `main`; api Docker images build automatically; observability signals are in place.
+6. CI is green on `main` (Node, OpenAPI, Go, Migrations, Docker); api Docker images build + tag automatically; observability signals (`/metrics`, OTel, Sentry hooks) are in place.
 7. A demo Phase 2 developer can clone the repo, run `pnpm install && docker compose up && pnpm dev`, and start building fuel infrastructure features against a working platform.
+
+### Audit remediation log (2026-05-28)
+
+| # | Severity | Finding | Fix |
+|---|---|---|---|
+| 1 | Critical | Session revocation trusted Redis only; Postgres-side revoke left live sessions valid until TTL | Redis reverse-id index + `DeleteByID`; `RevokeSession` / password-reset revoke all delete the live entry. CI regression guard. |
+| 2 | Critical | Hierarchy writes accepted parent ids without tenant binding; FKs pointed only at `id` | Composite `(tenant_id, id)` UNIQUE + FKs (migration 0008); app-layer parent-in-tenant guards. CI asserts FK rejection. |
+| 3 | High | User role/scope mutations had tenant holes | `userInTenant` guard on revoke-role + station-access grant/revoke; composite FK on `user_roles` / `user_station_access`. |
+| 4 | High | Auth/session/password/MFA writes were slog-only, not audit+outbox | `database.Querier` lets repo writes join a tx; every identity mutation now writes audit + outbox. CI asserts. |
+| 5 | High | No tenant-creation API | `POST /api/v1/platform/tenants` gated by `PLATFORM_ADMIN_TOKEN`; SDK `createTenant`; CI end-to-end. |
+| 6 | Medium | OpenAPI CI job failed (unquoted commas in flow-style tag maps) | Tags converted to block style; `redocly.yaml` silences aspirational warnings. Lint exits 0. |
+| 7 | Medium | Password reset not end-to-end in web | `/forgot-password` + `/reset-password` forms built against the live endpoints. |
+| 8 | Low | Login `?next=` allowed protocol-relative open redirects | `safeRedirect()` rejects `//` and `/\` prefixes. |
 
 ---
 

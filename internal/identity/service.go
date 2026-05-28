@@ -570,6 +570,22 @@ func (s *Service) VerifyMfa(ctx context.Context, userID, tenantID uuid.UUID, cod
 	})
 }
 
+// IssueResetToken mints a password-reset token for a known user id and
+// stores it in Redis under the same key scheme as RequestPasswordReset.
+// Used by tenant provisioning so a freshly created admin can set their
+// initial password via the normal /auth/password-reset/confirm flow.
+func (s *Service) IssueResetToken(ctx context.Context, userID uuid.UUID) (string, error) {
+	raw, hash, err := session.NewToken()
+	if err != nil {
+		return "", err
+	}
+	key := s.cfg.PasswordResetPrefix + base64Hash(hash)
+	if err := s.redis.Set(ctx, key, userID.String(), s.cfg.PasswordResetTTL).Err(); err != nil {
+		return "", err
+	}
+	return raw, nil
+}
+
 // base64Hash returns the URL-safe base64 form of a token hash, suitable
 // for use as a Redis key.
 func base64Hash(b []byte) string {

@@ -74,6 +74,43 @@ paths:
           content:
             text/plain: { schema: { type: string } }
 
+  /api/v1/platform/tenants:
+    post:
+      tags: [Platform]
+      summary: Provision a new tenant + its first admin user
+      description: >
+        Requires the static PLATFORM_ADMIN_TOKEN bearer (not a user
+        session). Returns a one-time password-reset token the new admin
+        uses to set their password. 404 when the token is unconfigured.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug, admin_email, admin_full_name]
+              properties:
+                name: { type: string }
+                slug: { type: string }
+                admin_email: { type: string, format: email }
+                admin_full_name: { type: string }
+      responses:
+        '201':
+          description: Tenant provisioned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tenant_id: { type: string, format: uuid }
+                  tenant_slug: { type: string }
+                  admin_user_id: { type: string, format: uuid }
+                  admin_email: { type: string, format: email }
+                  password_reset_token: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Slug already in use }
+
   /api/v1/auth/login:
     post:
       tags: [Auth]

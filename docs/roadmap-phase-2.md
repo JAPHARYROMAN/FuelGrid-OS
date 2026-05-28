@@ -35,7 +35,7 @@ The catalog operators install. Pure CRUD + wiring; no operational state yet.
 
 **Goal:** Every tenant has a product catalogue that the rest of the OS references by id.
 
-- [ ] Migration `0008_products`: `products` (id, tenant_id, code, name, category, unit, default_price, tax_rate, density_kg_m3, loss_tolerance_percent, color, status, timestamps)
+- [ ] Migration `0009_products`: `products` (id, tenant_id, code, name, category, unit, default_price, tax_rate, density_kg_m3, loss_tolerance_percent, color, status, timestamps)
 - [ ] Seed system permissions: `products.manage` (tenant-wide)
 - [ ] Repo `internal/products` with the standard CRUD shape from Phase 1
 - [ ] Handlers + SDK methods: list / get / create / update / delete
@@ -51,7 +51,7 @@ The catalog operators install. Pure CRUD + wiring; no operational state yet.
 
 **Goal:** Every station has a tank inventory bound to products, with capacity limits the loss/overfill engine can reason against.
 
-- [ ] Migration `0009_tanks`: `tanks` (id, tenant_id, station_id, product_id, name, code, capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres, has_water_sensor, has_temp_sensor, status, installation_date, decommission_date, timestamps)
+- [ ] Migration `0010_tanks`: `tanks` (id, tenant_id, station_id, product_id, name, code, capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres, has_water_sensor, has_temp_sensor, status, installation_date, decommission_date, timestamps)
 - [ ] CHECK: `safe_min_litres <= safe_max_litres <= capacity_litres` and `dead_stock_litres >= 0`
 - [ ] Permission `tanks.manage` (station-scoped). `station.read` already covers list/get.
 - [ ] Repo + handlers + SDK methods, filter by `station_id`
@@ -67,7 +67,7 @@ The catalog operators install. Pure CRUD + wiring; no operational state yet.
 
 **Goal:** The dispensing layer is fully configured: every nozzle pulls from one tank and dispenses one product at a configurable price.
 
-- [ ] Migration `0010_pumps_nozzles`:
+- [ ] Migration `0011_pumps_nozzles`:
   - `pumps` (id, tenant_id, station_id, number, name, manufacturer, model, serial_number, status, installation_date, timestamps)
   - `nozzles` (id, tenant_id, station_id, pump_id, tank_id, product_id, number, default_price, meter_decimal_places, status, timestamps)
   - Triggers / DB-level CHECK enforce: `nozzle.product_id = tank.product_id` and `nozzle.station_id = pump.station_id = tank.station_id`
@@ -89,7 +89,7 @@ How we trust the numbers the operational layers will start producing in Phase 3.
 
 **Goal:** Given a dip reading in millimetres, the API returns the corresponding volume in litres. Charts are versioned so a re-strap doesn't lose history.
 
-- [ ] Migration `0011_tank_calibration`:
+- [ ] Migration `0012_tank_calibration`:
   - `tank_calibration_charts` (id, tenant_id, tank_id, name, effective_from, effective_until, status, source, timestamps)
   - `tank_calibration_entries` (id, chart_id, dip_mm, volume_litres) — sparse rows; lookups interpolate
   - Constraint: at most one `status='active'` chart per tank at a time (partial unique index)
@@ -113,7 +113,7 @@ How we trust the numbers the operational layers will start producing in Phase 3.
 
 **Goal:** Pump calibration events are a first-class audit record, and pump/tank lifecycle transitions go through the same audit + outbox pipeline as every other sensitive write.
 
-- [ ] Migration `0012_pump_cal_and_incidents`:
+- [ ] Migration `0013_pump_cal_and_incidents`:
   - `pump_calibrations` (id, tenant_id, pump_id, performed_at, performed_by, notes, tolerance_percent, status, timestamps)
   - `incidents` (id, tenant_id, station_id, related_entity_type, related_entity_id, type, severity, description, status, opened_at, opened_by, resolved_at, resolved_by, timestamps)
 - [ ] Permissions: `pumps.calibrate`, `incidents.manage`

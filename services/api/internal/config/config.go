@@ -46,6 +46,12 @@ type Config struct {
 	AuthLoginLockFor     time.Duration `envconfig:"AUTH_LOGIN_LOCK_FOR" default:"30m"`
 	AuthPasswordResetTTL time.Duration `envconfig:"AUTH_PASSWORD_RESET_TTL" default:"1h"`
 
+	// Platform admin. A static bearer used by the tenant-provisioning
+	// endpoint (POST /api/v1/platform/tenants). Empty disables the route
+	// entirely. Distinct from user sessions — it's an operator/IaC token,
+	// not a logged-in principal.
+	PlatformAdminToken string `envconfig:"PLATFORM_ADMIN_TOKEN"`
+
 	// Outbox publisher.
 	OutboxPollInterval time.Duration `envconfig:"OUTBOX_POLL_INTERVAL" default:"2s"`
 	OutboxBatchSize    int           `envconfig:"OUTBOX_BATCH_SIZE" default:"100"`

@@ -100,6 +100,11 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Get("/metrics", s.handleMetrics)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Platform provisioning — its own static-token auth, not user
+		// sessions. Mounted regardless of identity wiring; the middleware
+		// 404s when PLATFORM_ADMIN_TOKEN is unset.
+		r.With(s.requirePlatformAdmin).Post("/platform/tenants", s.handleCreateTenant)
+
 		if s.identity != nil {
 			r.Route("/auth", func(r chi.Router) {
 				r.Post("/login", s.handleLogin)

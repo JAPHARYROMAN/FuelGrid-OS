@@ -512,6 +512,75 @@ jobs:
           echo "audit-logs: $logs"
           echo "$logs" | grep -q '"action":"user.role.granted"'
 
+      - name: Platform provisioning — create a tenant end-to-end (audit #5)
+        env:
+          AUTH_PASSWORD_PEPPER: ci-test-pepper
+          PLATFORM_ADMIN_TOKEN: ci-platform-token
+        run: |
+          pkill -f /tmp/api || true
+          /tmp/api &
+          API_PID=$!
+          trap "kill $API_PID 2>/dev/null || true" EXIT
+          for i in $(seq 1 20); do
+            if curl -sS -f http://127.0.0.1:8080/healthz > /dev/null; then break; fi
+            sleep 0.5
+          done
+
+          # Without the platform token the route 404s (not advertised).
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            http://127.0.0.1:8080/api/v1/platform/tenants \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Acme","slug":"acme","admin_email":"a@acme.test","admin_full_name":"A"}')
+          if [ "$status" != "401" ]; then
+            echo "platform route without token returned $status, expected 401"; exit 1
+          fi
+
+          # With the token: provision a tenant + admin, get a reset token.
+          prov=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/platform/tenants \
+            -H 'Authorization: Bearer ci-platform-token' \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Acme Fuel","slug":"acme","admin_email":"admin@acme.test","admin_full_name":"Acme Admin"}')
+          echo "provision: $prov"
+          reset_token=$(echo "$prov" | python3 -c 'import json,sys; print(json.load(sys.stdin)["password_reset_token"])')
+          if [ -z "$reset_token" ]; then
+            echo "no reset token in provision response"; exit 1
+          fi
+
+          # The new admin sets a password via the standard reset flow.
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            http://127.0.0.1:8080/api/v1/auth/password-reset/confirm \
+            -H 'Content-Type: application/json' \
+            -d "{\"token\":\"$reset_token\",\"new_password\":\"acme-admin-password-1\"}")
+          if [ "$status" != "204" ]; then
+            echo "password-reset confirm returned $status, expected 204"; exit 1
+          fi
+
+          # And can now log into the freshly provisioned tenant.
+          login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"tenant_slug":"acme","email":"admin@acme.test","password":"acme-admin-password-1"}')
+          token=$(echo "$login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          if [ -z "$token" ]; then
+            echo "provisioned admin could not log in: $login"; exit 1
+          fi
+
+          # The provisioned admin is system_admin (tenant-wide).
+          perms=$(curl -sS http://127.0.0.1:8080/api/v1/me/permissions -H "Authorization: Bearer $token")
+          echo "acme admin perms: $perms"
+          echo "$perms" | grep -q '"tenant_wide":true'
+          echo "$perms" | grep -q '"users.assign_roles"'
+
+          # Slug reuse is rejected with 409.
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            http://127.0.0.1:8080/api/v1/platform/tenants \
+            -H 'Authorization: Bearer ci-platform-token' \
+            -H 'Content-Type: application/json' \
+            -d '{"name":"Dup","slug":"acme","admin_email":"d@acme.test","admin_full_name":"D"}')
+          if [ "$status" != "409" ]; then
+            echo "duplicate slug returned $status, expected 409"; exit 1
+          fi
+          echo "platform tenant provisioning works end-to-end"
+
       - name: Verify seeded rows
         run: |
           docker run --rm --network host postgres:16-alpine \
