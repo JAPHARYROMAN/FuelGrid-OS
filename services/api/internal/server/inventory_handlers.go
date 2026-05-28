@@ -1,14 +1,17 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/inventory"
 )
@@ -104,4 +107,108 @@ func (s *Server) handleGetTankBookBalance(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tank_id": tankID, "book_balance": bal})
+}
+
+type setOpeningBalanceRequest struct {
+	// FromDip seeds the opening from the tank's first dip reading; otherwise
+	// Litres is used.
+	FromDip bool     `json:"from_dip"`
+	Litres  *float64 `json:"litres,omitempty"`
+	Notes   *string  `json:"notes,omitempty"`
+}
+
+func (s *Server) handleSetTankOpeningBalance(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid tank id")
+		return
+	}
+	var req setOpeningBalanceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	ctx := r.Context()
+	tank, err := s.tanks.Get(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "tank not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Manual stock writes reuse the station-scoped stock.adjust permission.
+	if !s.authorizeStation(w, r, actor, "stock.adjust", tank.StationID) {
+		return
+	}
+
+	// Resolve the opening litres: the tank's first dip, or an explicit value.
+	var litres float64
+	srcType := "opening"
+	if req.FromDip {
+		dip, err := s.readings.FirstDipForTank(ctx, actor.TenantID, tank.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusUnprocessableEntity, "tank has no dip reading to seed an opening balance")
+			return
+		}
+		if err != nil {
+			s.logger.Error("opening balance: first dip", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		litres = dip.VolumeLitres
+		srcType = "opening"
+	} else {
+		if req.Litres == nil || *req.Litres < 0 {
+			writeError(w, http.StatusBadRequest, "litres must be provided and non-negative, or set from_dip")
+			return
+		}
+		litres = *req.Litres
+	}
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	m, err := s.inventory.SetOpeningBalance(ctx, tx, actor.TenantID, inventory.OpeningInput{
+		TankID: tank.ID, Litres: litres, SourceRefType: &srcType,
+		RecordedBy: actor.UserID, Notes: req.Notes,
+	})
+	if errors.Is(err, inventory.ErrOpeningExists) {
+		writeError(w, http.StatusConflict, "opening balance already set for this tank")
+		return
+	}
+	if err != nil {
+		s.logger.Error("set opening balance", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "opening_balance.set", EventType: "OpeningBalanceSet",
+		EntityType: "stock_movement", EntityID: m.ID.String(),
+		NewValue: toStockMovementDTO(m),
+		IP:       clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		s.logger.Error("set opening balance: audit", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toStockMovementDTO(m))
 }

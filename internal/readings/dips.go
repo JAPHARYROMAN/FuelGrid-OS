@@ -91,6 +91,23 @@ func (r *Repo) GetDip(ctx context.Context, tenantID, id uuid.UUID) (*DipReading,
 	return &d, nil
 }
 
+// FirstDipForTank returns the tank's earliest active dip reading — the
+// physical level its stock ledger opens from. Returns pgx.ErrNoRows when the
+// tank has never been dipped.
+func (r *Repo) FirstDipForTank(ctx context.Context, tenantID, tankID uuid.UUID) (*DipReading, error) {
+	var d DipReading
+	if err := scanDip(r.pool.QueryRow(ctx, `
+		SELECT `+dipColumns+`
+		FROM tank_dip_readings
+		WHERE tenant_id = $1 AND tank_id = $2 AND status = 'active'
+		ORDER BY recorded_at, created_at
+		LIMIT 1
+	`, tenantID, tankID), &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 func (r *Repo) CaptureDip(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CaptureDipInput) (*DipReading, error) {
 	var d DipReading
 	if err := scanDip(tx.QueryRow(ctx, `

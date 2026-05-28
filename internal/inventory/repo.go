@@ -46,7 +46,26 @@ var (
 	// ErrAlreadyReversed is returned when reversing a movement that has
 	// already been reversed.
 	ErrAlreadyReversed = errors.New("inventory: movement already reversed")
+	// ErrNoOpeningBalance is returned when a flow movement (delivery/sales/
+	// transfer) is posted to a tank that has no opening balance yet.
+	ErrNoOpeningBalance = errors.New("inventory: tank has no opening balance")
+	// ErrOpeningExists is returned when setting an opening balance on a tank
+	// that already has one.
+	ErrOpeningExists = errors.New("inventory: opening balance already set")
 )
+
+// requiresOpening reports whether a movement type may only post after the
+// tank has an opening balance. Opening and adjustment movements are exempt —
+// the opening establishes the ledger, and adjustments (incl. reversal
+// contras) can correct it.
+func requiresOpening(movementType string) bool {
+	switch movementType {
+	case TypeDelivery, TypeSales, TypeTransfer:
+		return true
+	default:
+		return false
+	}
+}
 
 // Movement is one row of a tank's stock ledger.
 type Movement struct {
@@ -102,6 +121,15 @@ func scan(row pgx.Row, m *Movement) error {
 // movement's litres, in the same statement, so it stays consistent with
 // CurrentBalance even when several movements post in one transaction.
 func (r *Repo) PostMovement(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in PostInput) (*Movement, error) {
+	if requiresOpening(in.MovementType) {
+		has, err := r.hasOpeningTx(ctx, tx, tenantID, in.TankID)
+		if err != nil {
+			return nil, err
+		}
+		if !has {
+			return nil, ErrNoOpeningBalance
+		}
+	}
 	var m Movement
 	if err := scan(tx.QueryRow(ctx, `
 		INSERT INTO stock_movements
@@ -206,5 +234,82 @@ func (r *Repo) ReverseMovement(ctx context.Context, tx pgx.Tx, tenantID, movemen
 		SupersedesID:  &orig.ID,
 		RecordedBy:    recordedBy,
 		Notes:         notes,
+	})
+}
+
+// OpeningInput is the data needed to seed a tank's opening balance.
+type OpeningInput struct {
+	TankID uuid.UUID
+	Litres float64
+	// SourceRefType records what produced the opening: "opening" for a
+	// manual/first-dip seed, "reconciliation" when a sealed day's physical
+	// figure carries forward (Stage 6). Defaults to "opening" when nil.
+	SourceRefType *string
+	RecordedBy    uuid.UUID
+	Notes         *string
+}
+
+// hasOpeningPredicate matches a tank's genuine opening movement — a posted
+// 'opening' that is not itself a reversal contra.
+const hasOpeningPredicate = `
+	tenant_id = $1 AND tank_id = $2 AND movement_type = 'opening' AND status = 'posted'
+	AND (source_ref_type IS NULL OR source_ref_type <> 'correction')
+`
+
+func (r *Repo) hasOpeningTx(ctx context.Context, tx pgx.Tx, tenantID, tankID uuid.UUID) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM stock_movements WHERE`+hasOpeningPredicate+`)`,
+		tenantID, tankID).Scan(&exists)
+	return exists, err
+}
+
+// HasOpeningBalance reports whether a tank's ledger has been opened.
+func (r *Repo) HasOpeningBalance(ctx context.Context, tenantID, tankID uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM stock_movements WHERE`+hasOpeningPredicate+`)`,
+		tenantID, tankID).Scan(&exists)
+	return exists, err
+}
+
+// OpeningBalance returns the tank's current opening movement, or
+// ErrNoOpeningBalance.
+func (r *Repo) OpeningBalance(ctx context.Context, tenantID, tankID uuid.UUID) (*Movement, error) {
+	var m Movement
+	err := scan(r.pool.QueryRow(ctx, `
+		SELECT `+columns+` FROM stock_movements WHERE`+hasOpeningPredicate+`
+		ORDER BY seq DESC LIMIT 1
+	`, tenantID, tankID), &m)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNoOpeningBalance
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// SetOpeningBalance seeds a tank's opening balance inside the caller's tx,
+// posting the genesis 'opening' movement. A tank that already has an opening
+// yields ErrOpeningExists.
+func (r *Repo) SetOpeningBalance(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in OpeningInput) (*Movement, error) {
+	has, err := r.hasOpeningTx(ctx, tx, tenantID, in.TankID)
+	if err != nil {
+		return nil, err
+	}
+	if has {
+		return nil, ErrOpeningExists
+	}
+	srcType := in.SourceRefType
+	if srcType == nil {
+		s := "opening"
+		srcType = &s
+	}
+	return r.PostMovement(ctx, tx, tenantID, PostInput{
+		TankID:        in.TankID,
+		MovementType:  TypeOpening,
+		SourceRefType: srcType,
+		Litres:        in.Litres,
+		RecordedBy:    in.RecordedBy,
+		Notes:         in.Notes,
 	})
 }

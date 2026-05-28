@@ -270,6 +270,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						// against the tank's station.
 						r.Get("/tanks/{id}/ledger", s.handleListTankLedger)
 						r.Get("/tanks/{id}/book-balance", s.handleGetTankBookBalance)
+						// Opening balance (Phase 4, Stage 2): seed a tank's ledger
+						// from its first dip or a manual figure. Manual stock writes
+						// reuse the station-scoped stock.adjust, authorized in-handler.
+						r.Post("/tanks/{id}/opening-balance", s.handleSetTankOpeningBalance)
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped

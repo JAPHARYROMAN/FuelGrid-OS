@@ -10,14 +10,43 @@ package server_test
 // when either is unset.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/japharyroman/fuelgrid-os/internal/inventory"
 )
+
+// adminContext logs in as the tenant-wide admin and returns its user id, the
+// tenant slug, and a bearer token — the shared preamble for Phase 4 tests.
+func (h *harness) adminContext(t *testing.T, ctx context.Context) (adminID uuid.UUID, slug, token string) {
+	t.Helper()
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, h.ids.adminEmail).Scan(&adminID); err != nil {
+		t.Fatalf("lookup admin id: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT slug FROM tenants WHERE id = $1`, h.ids.tenantID).Scan(&slug); err != nil {
+		t.Fatalf("lookup slug: %v", err)
+	}
+	return adminID, slug, h.login(t, slug, h.ids.adminEmail)
+}
+
+// invPostJSON POSTs a JSON body and decodes the response. Named distinctly
+// from other suites' helpers so this file stays self-contained.
+func (h *harness) invPostJSON(t *testing.T, path, token string, body any) (int, map[string]any) {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	code, out := h.do(t, http.MethodPost, path, token, bytes.NewReader(raw), "application/json")
+	var m map[string]any
+	if len(out) > 0 {
+		_ = json.Unmarshal(out, &m)
+	}
+	return code, m
+}
 
 func TestPhase4_StockLedger(t *testing.T) {
 	h, cleanup := setupHarness(t)
@@ -148,5 +177,126 @@ func TestPhase4_StockLedger(t *testing.T) {
 	code, _ = h.getJSON(t, "/api/v1/tanks/"+h.ids.tankMSA.String()+"/book-balance", op)
 	if code != http.StatusForbidden {
 		t.Fatalf("operator read out-of-scope tank: status %d, want 403", code)
+	}
+}
+
+func TestPhase4_OpeningBalance(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	repo := inventory.New(h.pool)
+	adminID, slug, admin := h.adminContext(t, ctx)
+	op := h.login(t, slug, h.ids.opEmail)
+
+	// A delivery cannot post before the tank has an opening balance.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	_, err = repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
+		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
+	})
+	_ = tx.Rollback(ctx)
+	if err != inventory.ErrNoOpeningBalance {
+		t.Fatalf("delivery before opening err = %v, want ErrNoOpeningBalance", err)
+	}
+
+	// Manual opening balance.
+	code, body := h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/opening-balance", admin,
+		map[string]any{"litres": 8000})
+	if code != http.StatusCreated {
+		t.Fatalf("set opening: status %d: %v", code, body)
+	}
+	if body["movement_type"] != "opening" || body["litres"].(float64) != 8000 {
+		t.Fatalf("opening movement = %v", body)
+	}
+
+	code, body = h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin)
+	if code != http.StatusOK || body["book_balance"].(float64) != 8000 {
+		t.Fatalf("book balance after opening = %v (status %d)", body["book_balance"], code)
+	}
+
+	// Now a delivery posts cleanly: balance rises to 13000.
+	tx, err = h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin delivery: %v", err)
+	}
+	if _, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
+		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("delivery after opening: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit delivery: %v", err)
+	}
+	code, body = h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin)
+	if code != http.StatusOK || body["book_balance"].(float64) != 13000 {
+		t.Fatalf("book balance after delivery = %v", body["book_balance"])
+	}
+
+	// Re-setting the opening is rejected.
+	code, _ = h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/opening-balance", admin,
+		map[string]any{"litres": 1000})
+	if code != http.StatusConflict {
+		t.Fatalf("re-set opening: status %d, want 409", code)
+	}
+
+	// from_dip: seed a first dip on the PMS tank, then open from it.
+	const dipVolume = 17500.0
+	seedFirstDip(t, ctx, h, adminID, h.ids.tankPMS, dipVolume)
+	code, body = h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankPMS.String()+"/opening-balance", admin,
+		map[string]any{"from_dip": true})
+	if code != http.StatusCreated {
+		t.Fatalf("set opening from dip: status %d: %v", code, body)
+	}
+	if body["litres"].(float64) != dipVolume {
+		t.Fatalf("opening from dip litres = %v, want %v", body["litres"], dipVolume)
+	}
+
+	// from_dip with no dip is a 422.
+	code, _ = h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankMSA.String()+"/opening-balance", admin,
+		map[string]any{"from_dip": true})
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("from_dip without dip: status %d, want 422", code)
+	}
+
+	// The station1-scoped operator cannot open a station2 tank.
+	code, _ = h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankMSA.String()+"/opening-balance", op,
+		map[string]any{"litres": 500})
+	if code != http.StatusForbidden {
+		t.Fatalf("operator open out-of-scope tank: status %d, want 403", code)
+	}
+}
+
+// seedFirstDip inserts the operating-day -> shift -> chart -> dip chain needed
+// to give a tank a first dip reading at the given volume.
+func seedFirstDip(t *testing.T, ctx context.Context, h *harness, recordedBy, tankID uuid.UUID, volume float64) {
+	t.Helper()
+	var dayID, shiftID, chartID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
+		VALUES ($1, $2, $3, $4) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, time.Now().Format("2006-01-02"), recordedBy).Scan(&dayID); err != nil {
+		t.Fatalf("seed operating day: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by)
+		VALUES ($1, $2, $3, 'Day', $4) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, dayID, recordedBy).Scan(&shiftID); err != nil {
+		t.Fatalf("seed shift: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO tank_calibration_charts (tenant_id, tank_id, name)
+		VALUES ($1, $2, 'Chart') RETURNING id
+	`, h.ids.tenantID, tankID).Scan(&chartID); err != nil {
+		t.Fatalf("seed chart: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO tank_dip_readings (tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres, chart_id, recorded_by)
+		VALUES ($1, $2, $3, 'opening', 1500, $4, $5, $6)
+	`, h.ids.tenantID, shiftID, tankID, volume, chartID, recordedBy); err != nil {
+		t.Fatalf("seed dip: %v", err)
 	}
 }
