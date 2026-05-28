@@ -2594,6 +2594,38 @@ export class Client {
     );
   }
 
+  // ----------- Consolidated finance & reports (Phase 9) -----------
+
+  getConsolidatedFinance(
+    opts: { from?: string; to?: string; asOf?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{
+    from: string;
+    to: string;
+    as_of: string;
+    income_statement: { revenue: string; expenses: string; net_profit: string };
+    balance_sheet: { assets: string; liabilities: string; equity: string };
+    by_station: StationRank[];
+  }> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    if (opts.asOf) qs.set('as_of', opts.asOf);
+    const q = qs.toString();
+    return this.request(`/api/v1/enterprise/finance/consolidated${q ? `?${q}` : ''}`, { signal });
+  }
+
+  exportStationKPIs(
+    opts: { from?: string; to?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ from: string; to: string; row_count: number; checksum: string; csv: string }> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    const q = qs.toString();
+    return this.request(`/api/v1/enterprise/reports/station-kpis${q ? `?${q}` : ''}`, { signal });
+  }
+
   // ----------- Users -----------
 
   listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {

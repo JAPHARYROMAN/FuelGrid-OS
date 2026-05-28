@@ -223,3 +223,62 @@ func (h *harness) do2(t *testing.T, method, path, token string) (int, map[string
 	}
 	return code, out
 }
+
+// TestPhase9_ConsolidatedFinance covers Category D: consolidated finance tying
+// the Phase-7 P&L/balance sheet to a per-station revenue breakdown, and the
+// station-KPI CSV export.
+func TestPhase9_ConsolidatedFinance(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin, map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/journal-entries", admin, map[string]any{
+		"entry_date": "2026-06-12", "memo": "cash sale",
+		"lines": []map[string]any{
+			{"system_key": "cash_on_hand", "debit": "5000", "credit": "0"},
+			{"system_key": "sales_revenue", "debit": "0", "credit": "5000"},
+		},
+	}); code != http.StatusCreated {
+		t.Fatalf("post entry: %d", code)
+	}
+
+	// Seed a revenue day and rebuild the projection for the per-station view.
+	var nozzleID uuid.UUID
+	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
+	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-12", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO revenue_days (tenant_id, station_id, operating_day_id, business_date, gross_revenue, net_revenue, cogs_total, margin_total, status)
+		VALUES ($1, $2, $3, '2026-06-12', 5000, 5000, 3500, 1500, 'locked')
+	`, h.ids.tenantID, h.ids.station1, day); err != nil {
+		t.Fatalf("seed revenue day: %v", err)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/enterprise/projections/rebuild", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("rebuild: %d", code)
+	}
+
+	// Consolidated finance reconciles tenant P&L to the per-station breakdown.
+	code, cons := h.getJSON(t, "/api/v1/enterprise/finance/consolidated?from=2026-06-01&to=2026-06-30&as_of=2026-06-30", admin)
+	if code != http.StatusOK {
+		t.Fatalf("consolidated = %d %v", code, cons)
+	}
+	is := cons["income_statement"].(map[string]any)
+	if is["revenue"] != "5000.00" || is["net_profit"] != "5000.00" {
+		t.Fatalf("consolidated P&L = %v", is)
+	}
+	if len(cons["by_station"].([]any)) < 1 {
+		t.Fatalf("consolidated by_station empty: %v", cons["by_station"])
+	}
+
+	// Station-KPI export returns CSV + checksum.
+	code, exp := h.getJSON(t, "/api/v1/enterprise/reports/station-kpis?from=2026-06-01&to=2026-06-30", admin)
+	if code != http.StatusOK || exp["checksum"] == "" || exp["row_count"].(float64) < 1 {
+		t.Fatalf("station-kpi export = %d %v", code, exp)
+	}
+}

@@ -541,6 +541,12 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("stock_transfer.receive", nil)).
 							Post("/stock-transfers/{id}/receive", s.handleReceiveTransfer)
 
+						// Consolidated finance & reports (Stages 10-11).
+						r.With(s.requirePermissionHeld("finance.read")).
+							Get("/enterprise/finance/consolidated", s.handleConsolidatedFinance)
+						r.With(s.requirePermission("finance.export", nil)).
+							Get("/enterprise/reports/station-kpis", s.handleStationKPIExport)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)
