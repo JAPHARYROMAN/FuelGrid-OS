@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { SdkError, type MyShiftNozzle } from '@fuelgrid/sdk';
+import { SdkError, type MyShiftNozzle, type MyShiftTank } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -35,6 +35,8 @@ export default function MyShiftPage() {
 
   // Per-nozzle reading inputs, keyed by `${nozzleId}:${type}`.
   const [readingInputs, setReadingInputs] = useState<Record<string, string>>({});
+  // Per-tank dip inputs (mm), keyed by `${tankId}:${type}`.
+  const [dipInputs, setDipInputs] = useState<Record<string, string>>({});
   const [cash, setCash] = useState({ cash: '', mobile: '', card: '', credit: '' });
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -55,6 +57,23 @@ export default function MyShiftPage() {
       qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not save reading'),
+  });
+
+  const captureDip = useMutation({
+    mutationFn: ({
+      tankID,
+      type,
+      dipMM,
+    }: {
+      tankID: string;
+      type: 'opening' | 'closing';
+      dipMM: number;
+    }) => api.captureDipReading(shiftID, { tank_id: tankID, reading_type: type, dip_mm: dipMM }),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: QUERY_KEY });
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not save dip'),
   });
 
   const submitCash = useMutation({
@@ -140,6 +159,52 @@ export default function MyShiftPage() {
     );
   }
 
+  function dipRow(t: MyShiftTank, type: 'opening' | 'closing') {
+    const key = `${t.tank_id}:${type}`;
+    const captured = type === 'opening' ? t.opening_dip_mm : t.closing_dip_mm;
+    const volume = type === 'opening' ? t.opening_volume_litres : t.closing_volume_litres;
+    return (
+      <div className="flex items-center justify-between gap-2">
+        <span className="w-16 text-sm capitalize text-muted-foreground">{type}</span>
+        {captured != null ? (
+          <span className="flex-1 text-right font-mono text-sm tabular-nums">
+            {captured.toLocaleString()} mm
+            {volume != null ? (
+              <span className="ml-2 text-muted-foreground">
+                {volume.toLocaleString(undefined, { maximumFractionDigits: 0 })} L
+              </span>
+            ) : null}
+          </span>
+        ) : isOpen ? (
+          <>
+            <Input
+              className="h-12 flex-1 text-right text-base"
+              type="number"
+              inputMode="decimal"
+              step="1"
+              min="0"
+              value={dipInputs[key] ?? ''}
+              onChange={(e) => setDipInputs((p) => ({ ...p, [key]: e.target.value }))}
+              placeholder="mm"
+            />
+            <Button
+              className="h-12"
+              size="sm"
+              disabled={!dipInputs[key] || captureDip.isPending}
+              onClick={() =>
+                captureDip.mutate({ tankID: t.tank_id, type, dipMM: Number(dipInputs[key]) })
+              }
+            >
+              Save
+            </Button>
+          </>
+        ) : (
+          <span className="flex-1 text-right text-muted-foreground">—</span>
+        )}
+      </div>
+    );
+  }
+
   const expected = data.expected_cash ?? 0;
   const cashTotal =
     (Number(cash.cash) || 0) +
@@ -201,6 +266,33 @@ export default function MyShiftPage() {
           ))
         )}
       </section>
+
+      {/* Assigned tanks + dips */}
+      {data.assigned_tanks.length > 0 ? (
+        <section className="flex flex-col gap-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            My tanks
+          </h2>
+          {data.assigned_tanks.map((t) => (
+            <Card key={t.tank_id}>
+              <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <span
+                    className="inline-block size-3 rounded-full border border-border"
+                    style={{ backgroundColor: t.product_color }}
+                    aria-hidden
+                  />
+                  Tank {t.tank_code}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {dipRow(t, 'opening')}
+                {dipRow(t, 'closing')}
+              </CardContent>
+            </Card>
+          ))}
+        </section>
+      ) : null}
 
       {/* Cash submission (after close) */}
       {isClosed ? (

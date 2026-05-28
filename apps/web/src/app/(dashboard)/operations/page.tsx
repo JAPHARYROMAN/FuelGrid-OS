@@ -13,6 +13,7 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
+  Input,
   LoadingState,
 } from '@fuelgrid/ui';
 
@@ -36,6 +37,7 @@ export default function OperationsPage() {
   const qc = useQueryClient();
   const [stationID, setStationID] = useState<string>('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [newShiftName, setNewShiftName] = useState('');
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -74,6 +76,35 @@ export default function OperationsPage() {
     },
     onError: (e) =>
       setActionError(e instanceof SdkError ? e.message : 'Could not resolve exception'),
+  });
+
+  const openDay = useMutation({
+    mutationFn: () => api.openOperatingDay(stationID, {}),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: overviewKey });
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not open day'),
+  });
+
+  const openShift = useMutation({
+    mutationFn: (dayID: string) =>
+      api.openShift(stationID, { operating_day_id: dayID, name: newShiftName.trim() }),
+    onSuccess: () => {
+      setActionError(null);
+      setNewShiftName('');
+      qc.invalidateQueries({ queryKey: overviewKey });
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not open shift'),
+  });
+
+  const closeShift = useMutation({
+    mutationFn: (shiftID: string) => api.closeShift(shiftID),
+    onSuccess: () => {
+      setActionError(null);
+      qc.invalidateQueries({ queryKey: overviewKey });
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not close shift'),
   });
 
   return (
@@ -141,6 +172,11 @@ export default function OperationsPage() {
         <EmptyState
           title="No active operating day"
           description="Open a day for this station to start running shifts."
+          action={
+            <Button disabled={openDay.isPending} onClick={() => openDay.mutate()}>
+              {openDay.isPending ? 'Opening…' : 'Open operating day'}
+            </Button>
+          }
         />
       ) : (
         <>
@@ -153,10 +189,29 @@ export default function OperationsPage() {
                 {overview.data.day.status}
               </Badge>
             </CardHeader>
-            <CardContent className="text-sm text-muted-foreground">
-              {overview.data.shifts.length} shift
-              {overview.data.shifts.length === 1 ? '' : 's'} · opened{' '}
-              {new Date(overview.data.day.opened_at).toLocaleString()}
+            <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
+              <span>
+                {overview.data.shifts.length} shift
+                {overview.data.shifts.length === 1 ? '' : 's'} · opened{' '}
+                {new Date(overview.data.day.opened_at).toLocaleString()}
+              </span>
+              {overview.data.day.status === 'open' ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    className="h-9 flex-1"
+                    placeholder="New shift name (e.g. Morning)"
+                    value={newShiftName}
+                    onChange={(e) => setNewShiftName(e.target.value)}
+                  />
+                  <Button
+                    size="sm"
+                    disabled={!newShiftName.trim() || openShift.isPending}
+                    onClick={() => openShift.mutate(overview.data.day!.id)}
+                  >
+                    {openShift.isPending ? 'Opening…' : 'Open shift'}
+                  </Button>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
 
@@ -170,8 +225,10 @@ export default function OperationsPage() {
                   shift={shift}
                   onApprove={() => approve.mutate(shift.id)}
                   onResolve={(id) => resolve.mutate(id)}
+                  onClose={() => closeShift.mutate(shift.id)}
                   approving={approve.isPending}
                   resolving={resolve.isPending}
+                  closing={closeShift.isPending}
                 />
               ))}
             </div>
@@ -186,14 +243,18 @@ function ShiftCard({
   shift,
   onApprove,
   onResolve,
+  onClose,
   approving,
   resolving,
+  closing,
 }: {
   shift: OperationsShift;
   onApprove: () => void;
   onResolve: (exceptionID: string) => void;
+  onClose: () => void;
   approving: boolean;
   resolving: boolean;
+  closing: boolean;
 }) {
   const cash = shift.cash_submission;
   const canApprove = shift.status === 'closed' && shift.open_exception_count === 0;
@@ -276,7 +337,12 @@ function ShiftCard({
           </div>
         ) : null}
 
-        {/* Approve */}
+        {/* Lifecycle actions */}
+        {shift.status === 'open' ? (
+          <Button className="h-10" disabled={closing} onClick={onClose}>
+            {closing ? 'Closing…' : 'Close shift'}
+          </Button>
+        ) : null}
         {shift.status === 'closed' ? (
           <Button className="h-10" disabled={!canApprove || approving} onClick={onApprove}>
             {approving

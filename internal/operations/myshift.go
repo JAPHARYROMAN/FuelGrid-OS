@@ -15,6 +15,7 @@ type AssignedNozzleDetail struct {
 	NozzleNumber       int
 	ProductName        string
 	ProductColor       string
+	TankID             uuid.UUID
 	TankCode           string
 	DefaultPrice       float64
 	MeterDecimalPlaces int
@@ -43,7 +44,7 @@ func (r *Repo) ActiveShiftForAttendant(ctx context.Context, tenantID, userID uui
 // shift.
 func (r *Repo) AssignedNozzleDetails(ctx context.Context, tenantID, shiftID, attendantID uuid.UUID) ([]AssignedNozzleDetail, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT n.id, p.number, n.number, pr.name, pr.color, t.code,
+		SELECT n.id, p.number, n.number, pr.name, pr.color, t.id, t.code,
 		       n.default_price, n.meter_decimal_places
 		FROM shift_nozzle_assignments sna
 		JOIN nozzles n  ON n.id  = sna.nozzle_id
@@ -61,7 +62,7 @@ func (r *Repo) AssignedNozzleDetails(ctx context.Context, tenantID, shiftID, att
 	for rows.Next() {
 		var d AssignedNozzleDetail
 		if err := rows.Scan(&d.NozzleID, &d.PumpNumber, &d.NozzleNumber, &d.ProductName,
-			&d.ProductColor, &d.TankCode, &d.DefaultPrice, &d.MeterDecimalPlaces); err != nil {
+			&d.ProductColor, &d.TankID, &d.TankCode, &d.DefaultPrice, &d.MeterDecimalPlaces); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

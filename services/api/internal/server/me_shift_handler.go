@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/readings"
 )
 
 type myNozzleDTO struct {
@@ -16,6 +17,7 @@ type myNozzleDTO struct {
 	NozzleNumber       int       `json:"nozzle_number"`
 	ProductName        string    `json:"product_name"`
 	ProductColor       string    `json:"product_color"`
+	TankID             uuid.UUID `json:"tank_id"`
 	TankCode           string    `json:"tank_code"`
 	DefaultPrice       float64   `json:"default_price"`
 	MeterDecimalPlaces int       `json:"meter_decimal_places"`
@@ -23,9 +25,20 @@ type myNozzleDTO struct {
 	ClosingReading     *float64  `json:"closing_reading,omitempty"`
 }
 
+type myTankDTO struct {
+	TankID        uuid.UUID `json:"tank_id"`
+	TankCode      string    `json:"tank_code"`
+	ProductColor  string    `json:"product_color"`
+	OpeningDipMM  *float64  `json:"opening_dip_mm,omitempty"`
+	OpeningVolume *float64  `json:"opening_volume_litres,omitempty"`
+	ClosingDipMM  *float64  `json:"closing_dip_mm,omitempty"`
+	ClosingVolume *float64  `json:"closing_volume_litres,omitempty"`
+}
+
 type myShiftDTO struct {
 	Shift           *shiftDTO          `json:"shift"`
 	AssignedNozzles []myNozzleDTO      `json:"assigned_nozzles"`
+	AssignedTanks   []myTankDTO        `json:"assigned_tanks"`
 	ExpectedCash    *float64           `json:"expected_cash,omitempty"`
 	CashSubmission  *cashSubmissionDTO `json:"cash_submission,omitempty"`
 }
@@ -84,7 +97,8 @@ func (s *Server) handleMyActiveShift(w http.ResponseWriter, r *http.Request) {
 		d := details[i]
 		n := myNozzleDTO{
 			NozzleID: d.NozzleID, PumpNumber: d.PumpNumber, NozzleNumber: d.NozzleNumber,
-			ProductName: d.ProductName, ProductColor: d.ProductColor, TankCode: d.TankCode,
+			ProductName: d.ProductName, ProductColor: d.ProductColor,
+			TankID: d.TankID, TankCode: d.TankCode,
 			DefaultPrice: d.DefaultPrice, MeterDecimalPlaces: d.MeterDecimalPlaces,
 		}
 		if e := byNozzle[d.NozzleID]; e != nil {
@@ -94,8 +108,51 @@ func (s *Server) handleMyActiveShift(w http.ResponseWriter, r *http.Request) {
 		nozzles = append(nozzles, n)
 	}
 
+	// Assigned tanks (unique, in nozzle order) with any captured dips, so the
+	// attendant can record dips without the station-scoped dip-list endpoint.
+	dipRows, err := s.readings.ListDipsForShift(ctx, actor.TenantID, shift.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	type dipEnds struct{ opening, closing *readings.DipReading }
+	dipByTank := map[uuid.UUID]*dipEnds{}
+	for i := range dipRows {
+		e := dipByTank[dipRows[i].TankID]
+		if e == nil {
+			e = &dipEnds{}
+			dipByTank[dipRows[i].TankID] = e
+		}
+		if dipRows[i].ReadingType == "opening" {
+			e.opening = &dipRows[i]
+		} else {
+			e.closing = &dipRows[i]
+		}
+	}
+	tanks := make([]myTankDTO, 0)
+	seenTank := map[uuid.UUID]bool{}
+	for i := range details {
+		d := details[i]
+		if seenTank[d.TankID] {
+			continue
+		}
+		seenTank[d.TankID] = true
+		td := myTankDTO{TankID: d.TankID, TankCode: d.TankCode, ProductColor: d.ProductColor}
+		if e := dipByTank[d.TankID]; e != nil {
+			if e.opening != nil {
+				td.OpeningDipMM = &e.opening.DipMM
+				td.OpeningVolume = &e.opening.VolumeLitres
+			}
+			if e.closing != nil {
+				td.ClosingDipMM = &e.closing.DipMM
+				td.ClosingVolume = &e.closing.VolumeLitres
+			}
+		}
+		tanks = append(tanks, td)
+	}
+
 	sd := toShiftDTO(shift)
-	out := myShiftDTO{Shift: &sd, AssignedNozzles: nozzles}
+	out := myShiftDTO{Shift: &sd, AssignedNozzles: nozzles, AssignedTanks: tanks}
 
 	// Once closed, surface expected cash and any submission for the cash form.
 	if shift.Status == "closed" {

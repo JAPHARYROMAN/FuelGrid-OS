@@ -254,4 +254,6 @@ The Phase 3 audit (`docs/phase-3-audit-report.md`) found two release blockers an
 
 **P3 — Decimal precision (deferred to Phase 4).** Phase 3 moves litres/cash through `float64`/JS `number`, which is fine for operational workflow but not accounting-grade. Phase 4 will parse and store ledger-grade values as decimals before the stock ledger posts — see the Phase 4 roadmap.
 
-Still open from the audit and tracked separately: full Phase 3 OpenAPI coverage, DB-backed Phase 3 integration tests, and the remaining `/operations` (open day/shift, assign, close) and `/my-shift` (dip capture) UI actions.
+**Audit follow-ups now closed.** Full Phase 3 OpenAPI coverage (redocly-valid) and a DB-backed Phase 3 integration suite (full day workflow + self-scope/post-close/zero-assignment/cross-station/cascade failure cases) are in. `/my-shift` gained tank-dip capture; `/operations` gained open-day, open-shift, and close-shift actions; the dead `/shifts` nav entry was removed.
+
+**Still open:** the attendant/nozzle **assignment** UI on `/operations` — the backend + SDK support it, but the picker needs a user-list source a supervisor (who may lack `users.manage`) can read. Browser QA of the new UI wasn't possible in this environment; pages compile in a production build and the API paths are covered by the integration suite.

@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  Activity,
   AlertCircle,
   AlertTriangle,
   BarChart3,
@@ -37,7 +36,6 @@ const navItems: NavItem[] = [
   { label: 'Stations', href: '/stations', icon: Building2 },
   { label: 'Tanks', href: '/tanks', icon: Database },
   { label: 'Pumps', href: '/pumps', icon: Fuel },
-  { label: 'Shifts', href: '/shifts', icon: Activity },
   { label: 'Sales', href: '/sales', icon: BarChart3 },
   { label: 'Inventory', href: '/inventory', icon: Droplet },
   { label: 'Deliveries', href: '/deliveries', icon: Truck },

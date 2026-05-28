@@ -355,6 +355,7 @@ export interface MyShiftNozzle {
   nozzle_number: number;
   product_name: string;
   product_color: string;
+  tank_id: string;
   tank_code: string;
   default_price: number;
   meter_decimal_places: number;
@@ -362,9 +363,20 @@ export interface MyShiftNozzle {
   closing_reading?: number;
 }
 
+export interface MyShiftTank {
+  tank_id: string;
+  tank_code: string;
+  product_color: string;
+  opening_dip_mm?: number;
+  opening_volume_litres?: number;
+  closing_dip_mm?: number;
+  closing_volume_litres?: number;
+}
+
 export interface MyShift {
   shift: Shift | null;
   assigned_nozzles: MyShiftNozzle[];
+  assigned_tanks: MyShiftTank[];
   expected_cash?: number;
   cash_submission?: CashSubmission | null;
 }

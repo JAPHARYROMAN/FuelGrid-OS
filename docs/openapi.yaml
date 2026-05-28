@@ -1969,18 +1969,30 @@ components:
         nozzle_number:        { type: integer }
         product_name:         { type: string }
         product_color:        { type: string }
+        tank_id:              { type: string, format: uuid }
         tank_code:            { type: string }
         default_price:        { type: number }
         meter_decimal_places: { type: integer }
         opening_reading:      { type: number }
         closing_reading:      { type: number }
+    MyShiftTank:
+      type: object
+      properties:
+        tank_id:               { type: string, format: uuid }
+        tank_code:             { type: string }
+        product_color:         { type: string }
+        opening_dip_mm:        { type: number }
+        opening_volume_litres: { type: number }
+        closing_dip_mm:        { type: number }
+        closing_volume_litres: { type: number }
     MyShift:
       type: object
       properties:
-        shift:           { oneOf: [{ $ref: '#/components/schemas/Shift' }, { type: 'null' }] }
+        shift:            { oneOf: [{ $ref: '#/components/schemas/Shift' }, { type: 'null' }] }
         assigned_nozzles: { type: array, items: { $ref: '#/components/schemas/MyShiftNozzle' } }
-        expected_cash:   { type: number }
-        cash_submission: { oneOf: [{ $ref: '#/components/schemas/CashSubmission' }, { type: 'null' }] }
+        assigned_tanks:   { type: array, items: { $ref: '#/components/schemas/MyShiftTank' } }
+        expected_cash:    { type: number }
+        cash_submission:  { oneOf: [{ $ref: '#/components/schemas/CashSubmission' }, { type: 'null' }] }
 
     OperationsAttendant:
       type: object

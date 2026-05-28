@@ -19,6 +19,7 @@ export type {
   MeterReadingList,
   MyShift,
   MyShiftNozzle,
+  MyShiftTank,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
