@@ -18,10 +18,20 @@ type pumpWithNozzlesDTO struct {
 	Nozzles []nozzleDTO `json:"nozzles"`
 }
 
+// shiftSummaryDTO is the dashboard view of an open shift: the shift plus its
+// attendants and nozzle assignments, so the Shifts strip can render who is
+// on and what they're running without extra calls.
+type shiftSummaryDTO struct {
+	shiftDTO
+	Attendants        []attendantDTO        `json:"attendants"`
+	NozzleAssignments []nozzleAssignmentDTO `json:"nozzle_assignments"`
+}
+
 type stationOverviewDTO struct {
 	Station       stationDTO           `json:"station"`
 	Tanks         []tankDTO            `json:"tanks"`
 	Pumps         []pumpWithNozzlesDTO `json:"pumps"`
+	OpenShifts    []shiftSummaryDTO    `json:"open_shifts"`
 	OpenIncidents []incidentDTO        `json:"open_incidents"`
 }
 
@@ -79,6 +89,12 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	openShiftRows, err := s.operations.ListOpenShiftsForStation(ctx, actor.TenantID, id)
+	if err != nil {
+		s.logger.Error("station overview: shifts", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
 	nozzlesByPump := make(map[uuid.UUID][]nozzleDTO, len(pumpRows))
 	for i := range nozzleRows {
@@ -106,10 +122,40 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 		incidents = append(incidents, toIncidentDTO(&incidentRows[i]))
 	}
 
+	openShifts := make([]shiftSummaryDTO, 0, len(openShiftRows))
+	for i := range openShiftRows {
+		sh := openShiftRows[i]
+		summary := shiftSummaryDTO{
+			shiftDTO:          toShiftDTO(&sh),
+			Attendants:        []attendantDTO{},
+			NozzleAssignments: []nozzleAssignmentDTO{},
+		}
+		atts, err := s.operations.ListAttendants(ctx, actor.TenantID, sh.ID)
+		if err != nil {
+			s.logger.Error("station overview: shift attendants", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		for j := range atts {
+			summary.Attendants = append(summary.Attendants, toAttendantDTO(&atts[j]))
+		}
+		nas, err := s.operations.ListNozzleAssignments(ctx, actor.TenantID, sh.ID)
+		if err != nil {
+			s.logger.Error("station overview: shift nozzle assignments", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		for j := range nas {
+			summary.NozzleAssignments = append(summary.NozzleAssignments, toNozzleAssignmentDTO(&nas[j]))
+		}
+		openShifts = append(openShifts, summary)
+	}
+
 	writeJSON(w, http.StatusOK, stationOverviewDTO{
 		Station:       toStationDTO(station),
 		Tanks:         tanks,
 		Pumps:         pumps,
+		OpenShifts:    openShifts,
 		OpenIncidents: incidents,
 	})
 }

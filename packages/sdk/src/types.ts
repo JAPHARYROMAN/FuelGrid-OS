@@ -196,6 +196,7 @@ export interface StationOverview {
   station: Station;
   tanks: Tank[];
   pumps: PumpWithNozzles[];
+  open_shifts: ShiftSummary[];
   open_incidents: Incident[];
 }
 
@@ -212,6 +213,47 @@ export interface OperatingDay {
   locked_by?: string;
   locked_at?: string;
   notes?: string;
+}
+
+export interface Shift {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  operating_day_id: string;
+  name: string;
+  status: string;
+  opened_by: string;
+  opened_at: string;
+  closed_by?: string;
+  closed_at?: string;
+  approved_by?: string;
+  approved_at?: string;
+  notes?: string;
+}
+
+export interface ShiftAttendant {
+  shift_id: string;
+  user_id: string;
+  assigned_by: string;
+  assigned_at: string;
+}
+
+export interface NozzleAssignment {
+  id: string;
+  shift_id: string;
+  nozzle_id: string;
+  attendant_id: string;
+  assigned_at: string;
+}
+
+export interface ShiftDetail extends Shift {
+  attendants: ShiftAttendant[];
+  nozzle_assignments: NozzleAssignment[];
+}
+
+export interface ShiftSummary extends Shift {
+  attendants: ShiftAttendant[];
+  nozzle_assignments: NozzleAssignment[];
 }
 
 export interface UserSummary {

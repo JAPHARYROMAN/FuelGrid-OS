@@ -10,6 +10,10 @@ import { SdkError, type Tank } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
   EmptyState,
   ErrorState,
   LoadingState,
@@ -82,7 +86,14 @@ export default function StationDashboardPage() {
     );
   }
 
-  const { station, tanks, pumps, open_incidents: incidents } = overview.data;
+  const { station, tanks, pumps, open_shifts: shifts, open_incidents: incidents } = overview.data;
+
+  // Label assigned nozzles as "P{pump}·N{nozzle}" using the pumps already in
+  // the overview.
+  const nozzleLabel = new Map<string, string>();
+  for (const p of pumps) {
+    for (const n of p.nozzles) nozzleLabel.set(n.id, `P${p.number}·N${n.number}`);
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -104,6 +115,49 @@ export default function StationDashboardPage() {
           ) : null}
         </div>
       </header>
+
+      {/* Shifts strip */}
+      <section className="flex flex-col gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          Active shifts
+        </h2>
+        {shifts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No open shifts at this station.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {shifts.map((shift) => (
+              <Card key={shift.id}>
+                <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
+                  <CardTitle className="text-base">{shift.name}</CardTitle>
+                  <Badge tone={shift.status === 'open' ? 'success' : 'neutral'}>
+                    {shift.status}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    {shift.attendants.length} attendant
+                    {shift.attendants.length === 1 ? '' : 's'} · {shift.nozzle_assignments.length}{' '}
+                    nozzle
+                    {shift.nozzle_assignments.length === 1 ? '' : 's'} assigned
+                  </span>
+                  {shift.nozzle_assignments.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {shift.nozzle_assignments.map((na) => (
+                        <span
+                          key={na.id}
+                          className="rounded-full bg-muted px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+                        >
+                          {nozzleLabel.get(na.nozzle_id) ?? 'nozzle'}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Tanks strip */}
       <section className="flex flex-col gap-3">

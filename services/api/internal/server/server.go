@@ -280,6 +280,20 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Patch("/operating-days/{id}/status", s.handleUpdateOperatingDayStatus)
 						r.Patch("/operating-days/{id}/lock", s.handleLockOperatingDay)
 
+						// Shifts (Phase 3, Stage 2). Open/list are station-nested
+						// (shift.open / station.read via the URL); get/close and the
+						// assignment routes are id-based and authorized in-handler.
+						r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/shifts", s.handleListShifts)
+						r.With(s.requirePermission("shift.open", stationFromURLParam("stationID"))).
+							Post("/stations/{stationID}/shifts", s.handleOpenShift)
+						r.Get("/shifts/{id}", s.handleGetShift)
+						r.Patch("/shifts/{id}/status", s.handleUpdateShiftStatus)
+						r.Post("/shifts/{id}/attendants", s.handleAssignAttendant)
+						r.Delete("/shifts/{id}/attendants/{userID}", s.handleUnassignAttendant)
+						r.Post("/shifts/{id}/nozzle-assignments", s.handleAssignNozzle)
+						r.Delete("/shifts/{id}/nozzle-assignments/{assignmentID}", s.handleUnassignNozzle)
+
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)
 						r.With(s.requirePermission("users.invite", nil)).

@@ -295,10 +295,35 @@ func run() error {
 
 	// An open operating day for MIK-01 on today's date, so Phase-3 shift
 	// flows have a day to hang off out of the box.
-	if _, err := tx.Exec(ctx, `
+	var operatingDayID string
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
-		VALUES ($1, $2, CURRENT_DATE, $3)
-	`, tenantID, station1ID, adminUserID); err != nil {
+		VALUES ($1, $2, CURRENT_DATE, $3) RETURNING id
+	`, tenantID, station1ID, adminUserID).Scan(&operatingDayID); err != nil {
+		return err
+	}
+
+	// An open shift in that day with the demo operator assigned to MIK-01's
+	// two PMS nozzles (pump 1).
+	var shiftID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by)
+		VALUES ($1, $2, $3, 'Morning', $4) RETURNING id
+	`, tenantID, station1ID, operatingDayID, adminUserID).Scan(&shiftID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO shift_attendants (shift_id, user_id, tenant_id, assigned_by)
+		VALUES ($1, $2, $3, $4)
+	`, shiftID, userID, tenantID, adminUserID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO shift_nozzle_assignments (tenant_id, shift_id, nozzle_id, attendant_id, assigned_by)
+		SELECT $1, $2, n.id, $3, $4
+		FROM nozzles n
+		WHERE n.tenant_id = $1 AND n.pump_id = $5
+	`, tenantID, shiftID, userID, adminUserID, pump1ID); err != nil {
 		return err
 	}
 
@@ -320,6 +345,7 @@ func run() error {
 		"pumps", "MIK-01: Pump 1 (2x PMS), Pump 2 (2x AGO)",
 		"calibration", "MIK-01 PMS tank: 51-point chart (0..3000mm)",
 		"operating_day", "MIK-01: open for today",
+		"shift", "MIK-01: Morning (operator on 2 PMS nozzles)",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

@@ -222,8 +222,18 @@ func (s *Server) handleUpdateOperatingDayStatus(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "already "+req.Status)
 		return
 	}
-	// NOTE (Stage 2): closing will also be refused while the day has open
-	// shifts, once the shifts table exists.
+	// A day can't close while it still has open shifts.
+	if req.Status == "closed" {
+		open, err := s.operations.OpenShiftCountForDay(ctx, actor.TenantID, before.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if open > 0 {
+			writeError(w, http.StatusConflict, "close the day's open shifts first")
+			return
+		}
+	}
 
 	action, event := "operating_day.reopened", "OperatingDayReopened"
 	if req.Status == "closed" {
@@ -306,8 +316,14 @@ func (s *Server) handleLockOperatingDay(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "only a closed day can be locked")
 		return
 	}
-	// NOTE (Stage 2): locking will also require every shift in the day to be
-	// approved, once the shifts table exists.
+	// A day can't lock until every shift in it is approved.
+	if unapproved, err := s.operations.UnapprovedShiftCountForDay(ctx, actor.TenantID, before.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if unapproved > 0 {
+		writeError(w, http.StatusConflict, "all shifts must be approved before locking the day")
+		return
+	}
 
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {

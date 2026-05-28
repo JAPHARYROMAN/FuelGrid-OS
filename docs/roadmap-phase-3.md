@@ -46,7 +46,7 @@ The temporal skeleton: when work happens. Pure lifecycle + assignment; no readin
 - [x] Composite tenant FKs to `stations` and `users`; expose `uq_operating_days_tenant_id (tenant_id, id)` as the FK target for shifts
 - [x] Permission `operations.manage_day` (station-scoped) — open/close/lock a day.
 - [x] Repo + handlers + SDK: list, get, open, `PATCH …/status` (close/reopen), `PATCH …/lock`
-- [ ] Guard: a day can't be **closed** while it has open shifts; can't be **locked** until every shift is approved *(deferred to Stage 2 — needs the shifts table; lifecycle transitions + locked-terminal enforced now)*
+- [x] Guard: a day can't be **closed** while it has open shifts; can't be **locked** until every shift is approved *(wired in Stage 2 once the shifts table existed)*
 - [x] Audit + outbox: `operating_day.opened`, `operating_day.closed`, `operating_day.locked`
 - [x] Seed: an `open` operating day for `MIK-01` on the demo tenant's "today"
 
@@ -58,20 +58,21 @@ The temporal skeleton: when work happens. Pure lifecycle + assignment; no readin
 
 **Goal:** Within an open day, supervisors open shifts and assign attendants to the nozzles they'll operate, so every reading and sale traces to a person.
 
-- [ ] Migration `0015_shifts`:
+- [x] Migration `0015_shifts`:
   - `shifts` (id, tenant_id, station_id, operating_day_id, name, status, opened_by, opened_at, closed_by, closed_at, approved_by, approved_at, notes, timestamps)
   - `shift_attendants` (shift_id, user_id, tenant_id, assigned_by, assigned_at) — who is on this shift
   - `shift_nozzle_assignments` (id, tenant_id, shift_id, nozzle_id, attendant_id, assigned_at) — which attendant runs which nozzle
   - Composite tenant FKs throughout; `shift.operating_day_id → operating_days(tenant_id, id)`, `nozzle_id → nozzles`, `attendant_id → users`
   - CHECK: `shift.status IN ('open', 'closed', 'approved')`
-- [ ] Permissions: reuse `shift.open`, `shift.close`, `shift.approve`. Add `shift.assign` (station-scoped) for managing attendant/nozzle assignments.
-- [ ] Repo + handlers + SDK: list shifts (by day/station), get, open, close, assign/unassign attendant, assign/unassign nozzle
-- [ ] Guards: a shift can only open inside an `open` day; a nozzle can be assigned to at most one attendant per shift; assignments are frozen once the shift is `closed`
-- [ ] `/stations/{id}` dashboard gains a **Shifts** strip (active shift, attendants, assignment summary)
-- [ ] Audit + outbox: `shift.opened`, `shift.closed`, `shift.attendant_assigned`, `shift.nozzle_assigned`
-- [ ] Seed: one `open` shift on the demo day with the demo operator assigned to `MIK-01`'s PMS nozzles
+- [x] Permissions: reuse `shift.open`, `shift.close`, `shift.approve`. Add `shift.assign` (station-scoped) for managing attendant/nozzle assignments.
+- [x] Repo + handlers + SDK: list shifts (by day/station), get, open, close, assign/unassign attendant, assign/unassign nozzle
+- [x] Guards: a shift can only open inside an `open` day; a nozzle can be assigned to at most one attendant per shift; assignments are frozen once the shift is `closed`
+- [x] Also wires the deferred Stage-1 day guards: a day can't close with open shifts; can't lock until every shift is approved
+- [x] `/stations/{id}` dashboard gains a **Shifts** strip (active shift, attendants, assignment summary)
+- [x] Audit + outbox: `shift.opened`, `shift.closed`, `shift.attendant_assigned`, `shift.nozzle_assigned`
+- [x] Seed: one `open` shift on the demo day with the demo operator assigned to `MIK-01`'s PMS nozzles
 
-**Done when:** A supervisor opens a shift in the seeded day, assigns the demo operator to two nozzles, and the assignments show on the station dashboard; opening a shift in a `closed` day returns 409.
+**Done when:** A supervisor opens a shift in the seeded day, assigns the demo operator to two nozzles, and the assignments show on the station dashboard; opening a shift in a `closed` day returns 409. *(All verified live.)*
 
 ---
 

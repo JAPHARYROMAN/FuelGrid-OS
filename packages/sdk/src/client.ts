@@ -10,6 +10,7 @@ import type {
   Me,
   MePermissions,
   Nozzle,
+  NozzleAssignment,
   OperatingDay,
   Paginated,
   Product,
@@ -18,6 +19,8 @@ import type {
   Region,
   Role,
   Session,
+  Shift,
+  ShiftDetail,
   Station,
   StationOverview,
   Tank,
@@ -658,6 +661,79 @@ export class Client {
       body: { reason },
       signal,
     });
+  }
+
+  // ----------- Shifts -----------
+
+  listShifts(
+    stationID: string,
+    opts: { operatingDayID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Shift>> {
+    const qs = opts.operatingDayID
+      ? `?operating_day_id=${encodeURIComponent(opts.operatingDayID)}`
+      : '';
+    return this.request<Paginated<Shift>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/shifts${qs}`,
+      { signal },
+    );
+  }
+
+  getShift(id: string, signal?: AbortSignal): Promise<ShiftDetail> {
+    return this.request<ShiftDetail>(`/api/v1/shifts/${encodeURIComponent(id)}`, { signal });
+  }
+
+  openShift(
+    stationID: string,
+    req: { operating_day_id: string; name: string; notes?: string },
+    signal?: AbortSignal,
+  ): Promise<Shift> {
+    return this.request<Shift>(`/api/v1/stations/${encodeURIComponent(stationID)}/shifts`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  closeShift(id: string, signal?: AbortSignal): Promise<Shift> {
+    return this.request<Shift>(`/api/v1/shifts/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: { status: 'closed' },
+      signal,
+    });
+  }
+
+  assignAttendant(shiftID: string, userID: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/attendants`, {
+      method: 'POST',
+      body: { user_id: userID },
+      signal,
+    });
+  }
+
+  unassignAttendant(shiftID: string, userID: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/attendants/${encodeURIComponent(userID)}`,
+      { method: 'DELETE', signal },
+    );
+  }
+
+  assignNozzle(
+    shiftID: string,
+    req: { nozzle_id: string; attendant_id: string },
+    signal?: AbortSignal,
+  ): Promise<NozzleAssignment> {
+    return this.request<NozzleAssignment>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/nozzle-assignments`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  unassignNozzle(shiftID: string, assignmentID: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/nozzle-assignments/${encodeURIComponent(assignmentID)}`,
+      { method: 'DELETE', signal },
+    );
   }
 
   // ----------- Users -----------

@@ -200,3 +200,13 @@ func isUniqueViolation(err error) bool {
 	}
 	return false
 }
+
+// isForeignKeyViolation reports whether err is a Postgres foreign-key
+// violation (SQLSTATE 23503) — e.g. referencing a row outside the tenant.
+func isForeignKeyViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if errors.As(err, &pgErr) {
+		return pgErr.SQLState() == "23503"
+	}
+	return false
+}
