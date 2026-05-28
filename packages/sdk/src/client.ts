@@ -6,6 +6,7 @@ import type {
   Company,
   DipReading,
   Incident,
+  InventoryOverview,
   LoginRequest,
   LoginResponse,
   Me,
@@ -21,6 +22,8 @@ import type {
   Product,
   Pump,
   PumpCalibration,
+  Reconciliation,
+  ReconciliationOverview,
   Region,
   Role,
   CashSubmission,
@@ -874,6 +877,63 @@ export class Client {
     return this.request<ShiftException>(
       `/api/v1/shift-exceptions/${encodeURIComponent(exceptionID)}/status`,
       { method: 'PATCH', body: { status: 'resolved' }, signal },
+    );
+  }
+
+  // ----------- Inventory & reconciliation -----------
+
+  /** Per-tank book vs physical, fill, days-of-stock, variance trend (Stage 7). */
+  getInventoryOverview(stationID: string, signal?: AbortSignal): Promise<InventoryOverview> {
+    return this.request<InventoryOverview>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/inventory-overview`,
+      { signal },
+    );
+  }
+
+  /** The day's per-tank reconciliations for the review console (Stage 8). */
+  getReconciliationOverview(
+    stationID: string,
+    opts: { operatingDayID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<ReconciliationOverview> {
+    const qs = opts.operatingDayID
+      ? `?operating_day_id=${encodeURIComponent(opts.operatingDayID)}`
+      : '';
+    return this.request<ReconciliationOverview>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/reconciliation-overview${qs}`,
+      { signal },
+    );
+  }
+
+  /** Compute + persist a draft reconciliation for a tank/day. */
+  runReconciliation(
+    tankID: string,
+    operatingDayID: string,
+    signal?: AbortSignal,
+  ): Promise<Reconciliation> {
+    return this.request<Reconciliation>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/reconciliations`,
+      { method: 'POST', body: { operating_day_id: operatingDayID }, signal },
+    );
+  }
+
+  /** Record a reasoned stock adjustment and recompute the draft. */
+  adjustReconciliation(
+    reconciliationID: string,
+    req: { litres: number; reason: string },
+    signal?: AbortSignal,
+  ): Promise<Reconciliation> {
+    return this.request<Reconciliation>(
+      `/api/v1/reconciliations/${encodeURIComponent(reconciliationID)}/adjustments`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /** Seal a reconciliation, freezing it and carrying physical forward. */
+  sealReconciliation(reconciliationID: string, signal?: AbortSignal): Promise<Reconciliation> {
+    return this.request<Reconciliation>(
+      `/api/v1/reconciliations/${encodeURIComponent(reconciliationID)}/seal`,
+      { method: 'POST', signal },
     );
   }
 

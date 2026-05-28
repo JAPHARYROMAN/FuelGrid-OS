@@ -403,6 +403,68 @@ export interface OperationsOverview {
   shifts: OperationsShift[];
 }
 
+export interface Reconciliation {
+  /** Present on a persisted reconciliation; absent on a live preview. */
+  id?: string;
+  tank_id: string;
+  operating_day_id: string;
+  opening_book: number;
+  deliveries_total: number;
+  sales_total: number;
+  adjustments_total: number;
+  closing_book: number;
+  closing_physical: number;
+  variance_litres: number;
+  variance_percent: number;
+  tolerance_percent: number;
+  over_tolerance: boolean;
+  /** draft | exception | sealed (preview reports the would-be draft/exception). */
+  status: string;
+  sealed_by?: string;
+  sealed_at?: string;
+}
+
+export interface RecentVariance {
+  operating_day_id: string;
+  business_date: string;
+  variance_litres: number;
+  variance_percent: number;
+  tolerance_percent: number;
+  over_tolerance: boolean;
+  status: string;
+  sealed_at?: string;
+}
+
+export interface InventoryOverviewTank {
+  tank: Tank;
+  book_balance: number;
+  latest_physical?: number;
+  latest_physical_at?: string;
+  fill_percent: number;
+  days_of_stock?: number;
+  last_reconciliation?: RecentVariance;
+  recent_variances: RecentVariance[];
+}
+
+export interface InventoryOverview {
+  station: Station;
+  tanks: InventoryOverviewTank[];
+}
+
+export interface ReconciliationOverviewTank {
+  tank: Tank;
+  book_balance: number;
+  latest_physical?: number;
+  reconciliation?: Reconciliation;
+}
+
+export interface ReconciliationOverview {
+  station: Station;
+  day: OperatingDay | null;
+  all_shifts_approved: boolean;
+  tanks: ReconciliationOverviewTank[];
+}
+
 export interface UserSummary {
   id: string;
   email: string;

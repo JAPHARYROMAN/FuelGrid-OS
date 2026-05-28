@@ -50,3 +50,24 @@ func (r *Repo) MaxSeqForTank(ctx context.Context, q database.Querier, tenantID, 
 	`, tenantID, tankID).Scan(&seq)
 	return seq, err
 }
+
+// AverageDailySales returns a tank's mean daily litres sold over the last
+// `days` days — a rough sales rate the inventory dashboard divides book stock
+// by for a days-of-stock estimate. Sales litres are stored negative, so the
+// sum is negated to a positive throughput.
+func (r *Repo) AverageDailySales(ctx context.Context, tenantID, tankID uuid.UUID, days int) (float64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	var total float64
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(-SUM(litres), 0)
+		FROM stock_movements
+		WHERE tenant_id = $1 AND tank_id = $2 AND movement_type = 'sales'
+		  AND recorded_at >= now() - make_interval(days => $3)
+	`, tenantID, tankID, days).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total / float64(days), nil
+}

@@ -167,6 +167,49 @@ func (r *Repo) ListForStationDay(ctx context.Context, tenantID, stationID, dayID
 	return out, rows.Err()
 }
 
+// RecentReconciliation is a lightweight reconciliation row joined to its
+// operating day's business date — the variance history the inventory
+// dashboard renders.
+type RecentReconciliation struct {
+	OperatingDayID   uuid.UUID
+	BusinessDate     time.Time
+	VarianceLitres   float64
+	VariancePercent  float64
+	TolerancePercent float64
+	ClosingBook      float64
+	Status           string
+	SealedAt         *time.Time
+}
+
+// RecentForTank returns a tank's most recent reconciliations (newest business
+// date first, up to limit) with their business dates — the first element is
+// the last reconciliation, the slice is the recent variance trend.
+func (r *Repo) RecentForTank(ctx context.Context, tenantID, tankID uuid.UUID, limit int) ([]RecentReconciliation, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT rec.operating_day_id, od.business_date, rec.variance_litres, rec.variance_percent,
+		       rec.tolerance_percent, rec.closing_book, rec.status, rec.sealed_at
+		FROM tank_reconciliations rec
+		JOIN operating_days od ON od.id = rec.operating_day_id AND od.tenant_id = rec.tenant_id
+		WHERE rec.tenant_id = $1 AND rec.tank_id = $2
+		ORDER BY od.business_date DESC, rec.created_at DESC
+		LIMIT $3
+	`, tenantID, tankID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RecentReconciliation
+	for rows.Next() {
+		var rr RecentReconciliation
+		if err := rows.Scan(&rr.OperatingDayID, &rr.BusinessDate, &rr.VarianceLitres, &rr.VariancePercent,
+			&rr.TolerancePercent, &rr.ClosingBook, &rr.Status, &rr.SealedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, rr)
+	}
+	return out, rows.Err()
+}
+
 const prefixedColumns = `
     rec.id, rec.tenant_id, rec.tank_id, rec.operating_day_id, rec.opening_book, rec.deliveries_total,
     rec.sales_total, rec.adjustments_total, rec.closing_book, rec.closing_physical,

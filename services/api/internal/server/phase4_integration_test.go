@@ -560,6 +560,90 @@ func TestPhase4_Reconciliation(t *testing.T) {
 	}
 }
 
+func TestPhase4_Overviews(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// PMS gets a 5% tolerance so the seeded variance is within tolerance.
+	if _, err := h.pool.Exec(ctx, `UPDATE products SET loss_tolerance_percent = 5.0 WHERE id = $1`, h.ids.pmsProduct); err != nil {
+		t.Fatalf("set tolerance: %v", err)
+	}
+	pms := "/api/v1/tanks/" + h.ids.tankPMS.String()
+	if code, _ := h.invPostJSON(t, pms+"/opening-balance", admin, map[string]any{"litres": 30000}); code != http.StatusCreated {
+		t.Fatalf("open: %d", code)
+	}
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	chartID := seedChart(t, ctx, h, h.ids.tankPMS)
+
+	// A day selling 4,200 L; physical 25,000 (800 L variance, within 5%). Approve,
+	// reconcile, and seal so the overviews have a sealed reconciliation to report.
+	day, shift := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-25", 4200)
+	seedClosingDip(t, ctx, h, shift, h.ids.tankPMS, chartID, adminID, 25000)
+	if code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shift.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json"); code != http.StatusOK {
+		t.Fatalf("approve: %d %s", code, raw)
+	}
+	code, recon := h.invPostJSON(t, pms+"/reconciliations", admin, map[string]any{"operating_day_id": day.String()})
+	if code != http.StatusCreated || recon["status"] != "draft" {
+		t.Fatalf("persist recon: %d %v", code, recon)
+	}
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/reconciliations/"+recon["id"].(string)+"/seal", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("seal: %d %s", code, raw)
+	}
+
+	// --- inventory-overview ---
+	code, inv := h.getJSON(t, "/api/v1/stations/"+h.ids.station1.String()+"/inventory-overview", admin)
+	if code != http.StatusOK {
+		t.Fatalf("inventory-overview: %d %v", code, inv)
+	}
+	pmsInv := findTankEntry(t, inv["tanks"].([]any), h.ids.tankPMS.String())
+	if pmsInv["book_balance"].(float64) != 25000 {
+		t.Fatalf("inventory book_balance = %v, want 25000 (post-seal)", pmsInv["book_balance"])
+	}
+	if pmsInv["latest_physical"].(float64) != 25000 {
+		t.Fatalf("inventory latest_physical = %v, want 25000", pmsInv["latest_physical"])
+	}
+	lastRecon := pmsInv["last_reconciliation"].(map[string]any)
+	if lastRecon["over_tolerance"].(bool) {
+		t.Fatalf("last reconciliation should be within tolerance")
+	}
+
+	// --- reconciliation-overview ---
+	code, rec := h.getJSON(t, "/api/v1/stations/"+h.ids.station1.String()+"/reconciliation-overview", admin)
+	if code != http.StatusOK {
+		t.Fatalf("reconciliation-overview: %d %v", code, rec)
+	}
+	if !rec["all_shifts_approved"].(bool) {
+		t.Fatalf("all_shifts_approved should be true")
+	}
+	pmsRec := findTankEntry(t, rec["tanks"].([]any), h.ids.tankPMS.String())
+	if pmsRec["reconciliation"] == nil {
+		t.Fatalf("PMS tank should carry a reconciliation")
+	}
+	if pmsRec["reconciliation"].(map[string]any)["status"] != "sealed" {
+		t.Fatalf("PMS reconciliation status = %v, want sealed", pmsRec["reconciliation"])
+	}
+}
+
+// findTankEntry returns the overview tank entry whose nested tank.id matches.
+func findTankEntry(t *testing.T, tanks []any, tankID string) map[string]any {
+	t.Helper()
+	for _, raw := range tanks {
+		entry := raw.(map[string]any)
+		if entry["tank"].(map[string]any)["id"] == tankID {
+			return entry
+		}
+	}
+	t.Fatalf("tank %s not found in overview", tankID)
+	return nil
+}
+
 // seedClosedDayShift inserts an operating day (on the given business date) and
 // a closed shift on station1 with a single frozen close line on the nozzle, so
 // the approval path has metered sales to draw down. Returns (dayID, shiftID).

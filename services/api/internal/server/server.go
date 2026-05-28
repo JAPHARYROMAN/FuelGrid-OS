@@ -297,6 +297,13 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("reconciliation.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/reconciliations", s.handleListStationReconciliations)
 
+						// Category D overviews (Phase 4, Stages 7-8): one-call
+						// dashboards for the /inventory and /reconciliation screens.
+						r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/inventory-overview", s.handleInventoryOverview)
+						r.With(s.requirePermission("reconciliation.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/reconciliation-overview", s.handleReconciliationOverview)
+
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
 						// (pumps.calibrate), status changes fold into pumps.manage
