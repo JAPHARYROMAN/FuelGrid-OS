@@ -282,3 +282,25 @@ func TestPhase9_ConsolidatedFinance(t *testing.T) {
 		t.Fatalf("station-kpi export = %d %v", code, exp)
 	}
 }
+
+// TestPhase9_ExceptionQueue covers Category E: the enterprise exception
+// aggregate that feeds the command queue.
+func TestPhase9_ExceptionQueue(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	// A pending approval should appear in the queue total.
+	if code, _ := h.invPostJSON(t, "/api/v1/approval-requests", admin, map[string]any{"workflow_type": "central_price", "amount": "100"}); code != http.StatusCreated {
+		t.Fatalf("raise request: %d", code)
+	}
+	code, ex := h.getJSON(t, "/api/v1/enterprise/exceptions", admin)
+	if code != http.StatusOK {
+		t.Fatalf("exceptions = %d %v", code, ex)
+	}
+	checks, _ := ex["checks"].(map[string]any)
+	if checks["approvals_waiting"].(float64) < 1 || ex["total"].(float64) < 1 {
+		t.Fatalf("expected at least one waiting approval in exceptions: %v", ex)
+	}
+}

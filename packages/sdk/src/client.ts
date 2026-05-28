@@ -2626,6 +2626,12 @@ export class Client {
     return this.request(`/api/v1/enterprise/reports/station-kpis${q ? `?${q}` : ''}`, { signal });
   }
 
+  getEnterpriseExceptions(
+    signal?: AbortSignal,
+  ): Promise<{ checks: Record<string, number>; total: number }> {
+    return this.request('/api/v1/enterprise/exceptions', { signal });
+  }
+
   // ----------- Users -----------
 
   listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {

@@ -547,6 +547,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("finance.export", nil)).
 							Get("/enterprise/reports/station-kpis", s.handleStationKPIExport)
 
+						// Enterprise operations UX — exception command queue (Stage 12).
+						r.With(s.requirePermissionHeld("enterprise.read")).
+							Get("/enterprise/exceptions", s.handleEnterpriseExceptions)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)
