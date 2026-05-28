@@ -41,6 +41,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
+	"github.com/japharyroman/fuelgrid-os/internal/risk"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
@@ -92,6 +93,7 @@ type Server struct {
 	receivables    *receivables.Repo
 	reconciliation *reconciliation.Repo
 	revenue        *revenue.Repo
+	risk           *risk.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
 
@@ -137,6 +139,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.receivables = receivables.New(deps.DB)
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.revenue = revenue.New(deps.DB)
+		s.risk = risk.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -550,6 +553,31 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						// Enterprise operations UX — exception command queue (Stage 12).
 						r.With(s.requirePermissionHeld("enterprise.read")).
 							Get("/enterprise/exceptions", s.handleEnterpriseExceptions)
+
+						// ===== Phase 10: Risk, Fraud & Intelligence =====
+						// Signals, rules, detection, alerts (Stages 1-8).
+						r.With(s.requirePermissionHeld("risk.read")).Group(func(r chi.Router) {
+							r.Get("/risk/signals", s.handleListSignals)
+							r.Get("/risk/rules", s.handleListRiskRules)
+						})
+						r.With(s.requirePermissionHeld("risk_alert.read")).Group(func(r chi.Router) {
+							r.Get("/risk/alerts", s.handleListRiskAlerts)
+							r.Get("/risk/alerts/{id}", s.handleGetRiskAlert)
+						})
+						r.With(s.requirePermission("risk_signal.admin", nil)).
+							Post("/risk/signals/backfill", s.handleBackfillSignals)
+						r.With(s.requirePermission("risk_rule.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/risk/rules", s.handleCreateRiskRule)
+							r.Post("/risk/rules/{id}/status", s.handleSetRiskRuleStatus)
+						})
+						r.With(s.requirePermission("risk_alert.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/risk/detect", s.handleRunDetection)
+							r.Post("/risk/alerts/{id}/acknowledge", s.handleTransitionRiskAlert("acknowledged"))
+							r.Post("/risk/alerts/{id}/investigate", s.handleTransitionRiskAlert("investigating"))
+							r.Post("/risk/alerts/{id}/resolve", s.handleTransitionRiskAlert("resolved"))
+							r.Post("/risk/alerts/{id}/dismiss", s.handleTransitionRiskAlert("dismissed"))
+							r.Post("/risk/alerts/{id}/escalate", s.handleTransitionRiskAlert("escalated"))
+						})
 
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {

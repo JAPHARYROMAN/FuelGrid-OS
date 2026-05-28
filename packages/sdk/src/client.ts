@@ -6,6 +6,7 @@ import type {
   ApprovalRequest,
   CentralPriceRollout,
   EnterpriseOverview,
+  RiskAlert,
   StationGroup,
   StationRank,
   StockTransfer,
@@ -2630,6 +2631,83 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<{ checks: Record<string, number>; total: number }> {
     return this.request('/api/v1/enterprise/exceptions', { signal });
+  }
+
+  // ----------- Risk, fraud & intelligence (Phase 10) -----------
+
+  backfillRiskSignals(signal?: AbortSignal): Promise<{ created: number }> {
+    return this.request('/api/v1/risk/signals/backfill', { method: 'POST', signal });
+  }
+
+  listRiskSignals(
+    opts: { type?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ items: unknown[]; count: number }> {
+    const qs = opts.type ? `?type=${encodeURIComponent(opts.type)}` : '';
+    return this.request(`/api/v1/risk/signals${qs}`, { signal });
+  }
+
+  listRiskRules(signal?: AbortSignal): Promise<{ items: unknown[]; count: number }> {
+    return this.request('/api/v1/risk/rules', { signal });
+  }
+
+  createRiskRule(
+    req: {
+      code: string;
+      name: string;
+      rule_type?: string;
+      severity?: string;
+      description?: string;
+      threshold?: string;
+      lookback_days?: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request('/api/v1/risk/rules', { method: 'POST', body: req, signal });
+  }
+
+  setRiskRuleStatus(
+    id: string,
+    status: 'draft' | 'active' | 'paused' | 'retired',
+    signal?: AbortSignal,
+  ): Promise<{ id: string; status: string }> {
+    return this.request(`/api/v1/risk/rules/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: { status },
+      signal,
+    });
+  }
+
+  runRiskDetection(signal?: AbortSignal): Promise<{ alerts_created: number }> {
+    return this.request('/api/v1/risk/detect', { method: 'POST', signal });
+  }
+
+  listRiskAlerts(
+    opts: { status?: string; type?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<RiskAlert>> {
+    const qs = new URLSearchParams();
+    if (opts.status) qs.set('status', opts.status);
+    if (opts.type) qs.set('type', opts.type);
+    const q = qs.toString();
+    return this.request<Paginated<RiskAlert>>(`/api/v1/risk/alerts${q ? `?${q}` : ''}`, { signal });
+  }
+
+  getRiskAlert(id: string, signal?: AbortSignal): Promise<RiskAlert> {
+    return this.request<RiskAlert>(`/api/v1/risk/alerts/${encodeURIComponent(id)}`, { signal });
+  }
+
+  transitionRiskAlert(
+    id: string,
+    action: 'acknowledge' | 'investigate' | 'resolve' | 'dismiss' | 'escalate',
+    req: { disposition?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<RiskAlert> {
+    return this.request<RiskAlert>(`/api/v1/risk/alerts/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   // ----------- Users -----------

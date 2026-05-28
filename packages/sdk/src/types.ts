@@ -938,6 +938,20 @@ export interface StockTransfer {
   status: string;
 }
 
+export interface RiskAlert {
+  id: string;
+  rule_code?: string;
+  alert_type: string;
+  severity: string;
+  status: string;
+  station_id?: string;
+  subject_type?: string;
+  subject_id?: string;
+  detail?: string;
+  amount?: string;
+  score: number;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;
