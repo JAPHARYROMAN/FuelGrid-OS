@@ -12,6 +12,7 @@ import type {
   MePermissions,
   MeterReading,
   MeterReadingList,
+  MyShift,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
@@ -213,6 +214,11 @@ export class Client {
 
   mePermissions(signal?: AbortSignal): Promise<MePermissions> {
     return this.request<MePermissions>('/api/v1/me/permissions', { signal });
+  }
+
+  /** The actor's own current shift + assigned nozzles (attendant console). */
+  myActiveShift(signal?: AbortSignal): Promise<MyShift> {
+    return this.request<MyShift>('/api/v1/me/active-shift', { signal });
   }
 
   // ----------- Me (session management + password) -----------

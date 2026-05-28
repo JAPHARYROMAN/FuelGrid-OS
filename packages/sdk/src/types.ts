@@ -345,6 +345,26 @@ export interface ShiftException {
   resolved_at?: string;
 }
 
+export interface MyShiftNozzle {
+  nozzle_id: string;
+  pump_number: number;
+  nozzle_number: number;
+  product_name: string;
+  product_color: string;
+  tank_code: string;
+  default_price: number;
+  meter_decimal_places: number;
+  opening_reading?: number;
+  closing_reading?: number;
+}
+
+export interface MyShift {
+  shift: Shift | null;
+  assigned_nozzles: MyShiftNozzle[];
+  expected_cash?: number;
+  cash_submission?: CashSubmission | null;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

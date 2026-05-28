@@ -173,13 +173,14 @@ The daily UX for the people actually running the forecourt.
 
 **Goal:** An attendant opens a dead-simple, mobile-first "My Shift" screen and does only what they need: see assigned nozzles, enter readings, submit cash.
 
-- [ ] Route `/my-shift` (mobile-first, single column): current shift, assigned nozzles, opening/closing reading entry, cash submission form, shift status
-- [ ] Big-touch-target reading inputs that enforce the nozzle's decimal precision client-side (server still authoritative)
-- [ ] "Submit cash" flow with the tender breakdown and a live expected-vs-submitted preview
-- [ ] Strictly scoped: an attendant sees only their own assignments and only `shift.open`/`reading.edit`/`cash.submit` actions (no admin surfaces)
-- [ ] Empty/locked states: "no active shift", "shift already closed", "awaiting approval"
+- [x] Route `/my-shift` (mobile-first, single column): current shift, assigned nozzles, opening/closing reading entry, cash submission form, shift status. Backed by a self-scoped `GET /api/v1/me/active-shift` (denormalised, auth-only) so the attendant needs no station-wide read.
+- [x] Big-touch-target reading inputs that enforce the nozzle's decimal precision client-side (server still authoritative)
+- [x] "Submit cash" flow with the tender breakdown and a live expected-vs-submitted preview
+- [x] Strictly scoped: an attendant sees only their own assignments. Migration `0020` grants the attendant role `reading.edit` (it already had `cash.submit` from 0018) so real attendants can use the console.
+- [x] Empty/locked states: "no active shift", approved-shift banner, closed-shift cash form
+- [x] Sidebar "My Shift" entry
 
-**Done when:** The demo operator logs in, sees only their assigned `MIK-01` nozzles, enters readings, and submits cash from a phone-width screen — with no access to settings or other stations.
+**Done when:** The demo operator logs in, sees only their assigned `MIK-01` nozzles, enters readings, and submits cash from a phone-width screen — with no access to settings or other stations. *(Endpoint returns the operator's own shift + 2 nozzles verified live; the page compiles in a production build — the phone-width rendering wasn't browser-confirmed in this environment.)*
 
 ---
 

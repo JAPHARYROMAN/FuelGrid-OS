@@ -12,6 +12,7 @@ import {
   DollarSign,
   Droplet,
   Fuel,
+  Gauge,
   LayoutDashboard,
   Settings,
   ShieldCheck,
@@ -30,6 +31,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Command Center', href: '/command-center', icon: LayoutDashboard },
+  { label: 'My Shift', href: '/my-shift', icon: Gauge },
   { label: 'Stations', href: '/stations', icon: Building2 },
   { label: 'Tanks', href: '/tanks', icon: Database },
   { label: 'Pumps', href: '/pumps', icon: Fuel },

@@ -149,6 +149,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireAuth)
 				r.Get("/me", s.handleMe)
+				if s.operations != nil {
+					// Self-scoped: returns only the actor's own shift + assignments.
+					r.Get("/me/active-shift", s.handleMyActiveShift)
+				}
 				if s.policy != nil {
 					r.Get("/me/permissions", s.handleMePermissions)
 				}
