@@ -84,21 +84,21 @@ What the meters and dips actually say. These stages consume Phase 2's calibratio
 
 **Goal:** Every nozzle's opening and closing meter is captured per shift, validated against the nozzle's configured precision, and turned into litres dispensed.
 
-- [ ] Migration `0016_meter_readings`: `meter_readings` (id, tenant_id, shift_id, nozzle_id, reading_type, reading, recorded_by, recorded_at, supersedes_id, status, timestamps)
+- [x] Migration `0016_meter_readings`: `meter_readings` (id, tenant_id, shift_id, nozzle_id, reading_type, reading, recorded_by, recorded_at, supersedes_id, status, timestamps)
   - `reading_type IN ('opening', 'closing')`; `reading numeric(14, 3)`
   - Partial unique: at most one active opening and one active closing per `(shift_id, nozzle_id)`
   - Composite tenant FKs to `shifts` and `nozzles`; `supersedes_id` self-FK for corrections
-- [ ] Reuse permission `reading.edit` (station-scoped) for capture and correction
-- [ ] `internal/readings` package: `LitresDispensed(opening, closing) (litres, error)` (rejects closing < opening — meter rollover handled explicitly), and a precision validator against `nozzle.meter_decimal_places`
-- [ ] Endpoints:
+- [x] Reuse permission `reading.edit` (station-scoped) for capture and correction
+- [x] `internal/readings` package: `LitresDispensed(opening, closing) (litres, error)` (rejects closing < opening — meter rollover handled explicitly), and a precision validator against `nozzle.meter_decimal_places`
+- [x] Endpoints:
   - `POST /api/v1/shifts/{id}/meter-readings` — capture an opening/closing reading (precision-validated)
   - `GET /api/v1/shifts/{id}/meter-readings` — list, with computed litres per nozzle where both ends exist
   - `POST …/meter-readings/{id}/correct` — supersede a reading (audited)
-- [ ] Reject (422) a reading whose decimal scale doesn't match the nozzle's `meter_decimal_places`
-- [ ] Audit + outbox: `meter_reading.captured`, `meter_reading.corrected`
-- [ ] Seed: opening meter readings for the demo shift's assigned nozzles
+- [x] Reject (422) a reading whose decimal scale doesn't match the nozzle's `meter_decimal_places`
+- [x] Audit + outbox: `meter_reading.captured`, `meter_reading.corrected`
+- [x] Seed: opening meter readings for the demo shift's assigned nozzles
 
-**Done when:** Capturing a closing reading with the wrong decimal scale is rejected 422; a valid opening+closing pair yields `litres_dispensed = closing − opening` in the list response.
+**Done when:** Capturing a closing reading with the wrong decimal scale is rejected 422; a valid opening+closing pair yields `litres_dispensed = closing − opening` in the list response. *(All verified live; correction supersedes + recomputes.)*
 
 ---
 

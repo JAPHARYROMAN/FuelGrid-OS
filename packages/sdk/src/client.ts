@@ -9,6 +9,8 @@ import type {
   LoginResponse,
   Me,
   MePermissions,
+  MeterReading,
+  MeterReadingList,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
@@ -733,6 +735,38 @@ export class Client {
     return this.request<void>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/nozzle-assignments/${encodeURIComponent(assignmentID)}`,
       { method: 'DELETE', signal },
+    );
+  }
+
+  // ----------- Meter readings -----------
+
+  listMeterReadings(shiftID: string, signal?: AbortSignal): Promise<MeterReadingList> {
+    return this.request<MeterReadingList>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/meter-readings`,
+      { signal },
+    );
+  }
+
+  captureMeterReading(
+    shiftID: string,
+    req: { nozzle_id: string; reading_type: 'opening' | 'closing'; reading: number },
+    signal?: AbortSignal,
+  ): Promise<MeterReading> {
+    return this.request<MeterReading>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/meter-readings`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  correctMeterReading(
+    shiftID: string,
+    readingID: string,
+    reading: number,
+    signal?: AbortSignal,
+  ): Promise<MeterReading> {
+    return this.request<MeterReading>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/meter-readings/${encodeURIComponent(readingID)}/correct`,
+      { method: 'POST', body: { reading }, signal },
     );
   }
 

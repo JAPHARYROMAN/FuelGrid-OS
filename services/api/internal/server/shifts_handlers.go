@@ -190,10 +190,8 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 }
 
 // shiftForWrite loads a shift, authorizes the actor for the given permission
-// against its station, and (when mutating assignments/close) checks it's
-// still open. Returns the shift + ok; writes the error response on failure.
-//
-//nolint:unparam // requireOpen is true for every Stage-2 caller; Stage-6 approve will pass false.
+// against its station, and (when requireOpen) checks it's still open.
+// Returns the shift + ok; writes the error response on failure.
 func (s *Server) shiftForWrite(w http.ResponseWriter, r *http.Request, actor identity.Actor, perm string, requireOpen bool) (*operations.Shift, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

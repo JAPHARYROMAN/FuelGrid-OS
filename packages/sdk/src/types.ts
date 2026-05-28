@@ -256,6 +256,32 @@ export interface ShiftSummary extends Shift {
   nozzle_assignments: NozzleAssignment[];
 }
 
+export interface MeterReading {
+  id: string;
+  tenant_id: string;
+  shift_id: string;
+  nozzle_id: string;
+  reading_type: 'opening' | 'closing';
+  reading: number;
+  recorded_by: string;
+  recorded_at: string;
+  supersedes_id?: string;
+  status: string;
+}
+
+export interface MeterDispensed {
+  nozzle_id: string;
+  opening: number;
+  closing: number;
+  litres_dispensed: number;
+}
+
+export interface MeterReadingList {
+  items: MeterReading[];
+  count: number;
+  dispensed: MeterDispensed[];
+}
+
 export interface UserSummary {
   id: string;
   email: string;

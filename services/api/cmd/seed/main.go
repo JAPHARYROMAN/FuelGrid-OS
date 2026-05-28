@@ -327,6 +327,17 @@ func run() error {
 		return err
 	}
 
+	// Opening meter readings for those assigned nozzles, so Stage-3 flows
+	// have an opening to close against.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO meter_readings (tenant_id, shift_id, nozzle_id, reading_type, reading, recorded_by)
+		SELECT $1, $2, n.id, 'opening', 10000.000, $3
+		FROM nozzles n
+		WHERE n.tenant_id = $1 AND n.pump_id = $4
+	`, tenantID, shiftID, userID, pump1ID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -346,6 +357,7 @@ func run() error {
 		"calibration", "MIK-01 PMS tank: 51-point chart (0..3000mm)",
 		"operating_day", "MIK-01: open for today",
 		"shift", "MIK-01: Morning (operator on 2 PMS nozzles)",
+		"meter_readings", "MIK-01 Morning: opening 10000 on 2 nozzles",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

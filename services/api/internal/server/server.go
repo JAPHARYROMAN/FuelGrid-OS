@@ -26,6 +26,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/pumps"
+	"github.com/japharyroman/fuelgrid-os/internal/readings"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
@@ -64,6 +65,7 @@ type Server struct {
 	calibration *calibration.Repo
 	incidents   *incidents.Repo
 	operations  *operations.Repo
+	readings    *readings.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -95,6 +97,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.calibration = calibration.New(deps.DB)
 		s.incidents = incidents.New(deps.DB)
 		s.operations = operations.New(deps.DB)
+		s.readings = readings.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -293,6 +296,13 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Delete("/shifts/{id}/attendants/{userID}", s.handleUnassignAttendant)
 						r.Post("/shifts/{id}/nozzle-assignments", s.handleAssignNozzle)
 						r.Delete("/shifts/{id}/nozzle-assignments/{assignmentID}", s.handleUnassignNozzle)
+
+						// Pump meter readings (Phase 3, Stage 3). All id-based on
+						// the shift; reads authorize station.read in-handler, writes
+						// reuse reading.edit via shiftForWrite.
+						r.Get("/shifts/{id}/meter-readings", s.handleListMeterReadings)
+						r.Post("/shifts/{id}/meter-readings", s.handleCaptureMeterReading)
+						r.Post("/shifts/{id}/meter-readings/{readingID}/correct", s.handleCorrectMeterReading)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)
