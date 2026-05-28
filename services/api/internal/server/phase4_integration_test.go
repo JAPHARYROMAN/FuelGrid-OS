@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/japharyroman/fuelgrid-os/internal/inventory"
+	"github.com/japharyroman/fuelgrid-os/internal/operations"
 )
 
 // adminContext logs in as the tenant-wide admin and returns its user id, the
@@ -343,6 +344,138 @@ func TestPhase4_Delivery(t *testing.T) {
 	if code, _ := h.invPostJSON(t, msaTank, op, map[string]any{"volume_litres": 5000}); code != http.StatusForbidden {
 		t.Fatalf("operator cross-station delivery: status %d, want 403", code)
 	}
+}
+
+func TestPhase4_SalesOnApproval(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+	invRepo := inventory.New(h.pool)
+	opsRepo := operations.New(h.pool)
+
+	pmsTank := "/api/v1/tanks/" + h.ids.tankPMS.String()
+
+	// Open the PMS tank to 30,000 L.
+	if code, _ := h.invPostJSON(t, pmsTank+"/opening-balance", admin, map[string]any{"litres": 30000}); code != http.StatusCreated {
+		t.Fatalf("set opening: %d", code)
+	}
+
+	// Seed a closed shift that sold 4,200 L through the PMS nozzle.
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id = $1 AND tank_id = $2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("lookup nozzle: %v", err)
+	}
+	shiftID := seedClosedShiftWithSale(t, ctx, h, adminID, nozzleID, 4200)
+
+	// Aggregation rolls the close line up to the tank.
+	rows, err := opsRepo.LitresSoldPerTankForShift(ctx, h.ids.tenantID, shiftID)
+	if err != nil {
+		t.Fatalf("aggregate sales: %v", err)
+	}
+	if len(rows) != 1 || rows[0].TankID != h.ids.tankPMS || rows[0].LitresSold != 4200 {
+		t.Fatalf("per-tank sales = %v, want [{tankPMS 4200}]", rows)
+	}
+
+	// Approving the shift posts a -4,200 sales movement and drops book stock.
+	code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shiftID.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json")
+	if code != http.StatusOK {
+		t.Fatalf("approve shift: status %d: %s", code, raw)
+	}
+
+	code, body := h.getJSON(t, pmsTank+"/book-balance", admin)
+	if code != http.StatusOK || body["book_balance"].(float64) != 25800 {
+		t.Fatalf("book balance after sales = %v (status %d), want 25800", body["book_balance"], code)
+	}
+
+	// The ledger carries the sales movement keyed to the shift.
+	_, ledger := h.getJSON(t, pmsTank+"/ledger", admin)
+	var sale map[string]any
+	for _, it := range ledger["items"].([]any) {
+		m := it.(map[string]any)
+		if m["movement_type"] == "sales" {
+			sale = m
+		}
+	}
+	if sale == nil {
+		t.Fatalf("no sales movement in ledger: %v", ledger["items"])
+	}
+	if sale["litres"].(float64) != -4200 || sale["source_ref_type"] != "shift" || sale["source_ref_id"] != shiftID.String() {
+		t.Fatalf("sales movement = %v", sale)
+	}
+
+	// Idempotency: re-posting the same shift's sales is a no-op, balance holds.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	posted, skipped, err := invRepo.PostSalesForShift(ctx, tx, h.ids.tenantID, shiftID, adminID,
+		[]inventory.SaleLine{{TankID: h.ids.tankPMS, LitresSold: 4200}})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("re-post sales: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if len(posted) != 0 || len(skipped) != 0 {
+		t.Fatalf("re-post should be a no-op, got posted=%d skipped=%d", len(posted), len(skipped))
+	}
+	if code, b := h.getJSON(t, pmsTank+"/book-balance", admin); b["book_balance"].(float64) != 25800 {
+		t.Fatalf("book balance after re-post = %v (status %d), want 25800 (no double-count)", b["book_balance"], code)
+	}
+
+	// Skip: a tank with no opening balance is skipped, not posted.
+	tx, err = h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	posted, skipped, err = invRepo.PostSalesForShift(ctx, tx, h.ids.tenantID, uuid.New(), adminID,
+		[]inventory.SaleLine{{TankID: h.ids.tankAGO, LitresSold: 100}})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("post sales unopened: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if len(posted) != 0 || len(skipped) != 1 || skipped[0] != h.ids.tankAGO {
+		t.Fatalf("unopened tank should be skipped, got posted=%d skipped=%v", len(posted), skipped)
+	}
+	if _, b := h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin); b["book_balance"].(float64) != 0 {
+		t.Fatalf("unopened tank balance = %v, want 0", b["book_balance"])
+	}
+}
+
+// seedClosedShiftWithSale inserts a closed shift on station1 with a single
+// frozen close line on the given nozzle, so the approval path has metered
+// sales to draw down. Returns the shift id.
+func seedClosedShiftWithSale(t *testing.T, ctx context.Context, h *harness, openedBy, nozzleID uuid.UUID, litresSold float64) uuid.UUID {
+	t.Helper()
+	var dayID, shiftID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
+		VALUES ($1, $2, $3, $4) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, time.Now().Format("2006-01-02"), openedBy).Scan(&dayID); err != nil {
+		t.Fatalf("seed operating day: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by, status, closed_by, closed_at)
+		VALUES ($1, $2, $3, 'Sale', $4, 'closed', $4, now()) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, dayID, openedBy).Scan(&shiftID); err != nil {
+		t.Fatalf("seed shift: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO shift_close_lines
+		    (tenant_id, shift_id, nozzle_id, opening_reading, closing_reading, litres_sold, unit_price, expected_value)
+		VALUES ($1, $2, $3, 0, $4::numeric, $4::numeric, 2950, $4::numeric * 2950)
+	`, h.ids.tenantID, shiftID, nozzleID, litresSold); err != nil {
+		t.Fatalf("seed close line: %v", err)
+	}
+	return shiftID
 }
 
 // seedFirstDip inserts the operating-day -> shift -> chart -> dip chain needed

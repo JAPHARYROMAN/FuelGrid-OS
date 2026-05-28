@@ -118,6 +118,40 @@ func (r *Repo) InsertCashSubmission(ctx context.Context, tx pgx.Tx, tenantID uui
 	return &c, nil
 }
 
+// TankSales is a shift's metered litres-sold aggregated up to one tank — the
+// bridge from per-nozzle close lines to a per-tank inventory draw-down.
+type TankSales struct {
+	TankID     uuid.UUID
+	LitresSold float64
+}
+
+// LitresSoldPerTankForShift sums a shift's frozen close-line litres up to the
+// tank behind each nozzle, so Phase 4 can post one sales movement per tank.
+// Tanks with a net zero are still returned; the caller decides what to post.
+func (r *Repo) LitresSoldPerTankForShift(ctx context.Context, tenantID, shiftID uuid.UUID) ([]TankSales, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT n.tank_id, COALESCE(SUM(cl.litres_sold), 0)
+		FROM shift_close_lines cl
+		JOIN nozzles n ON n.id = cl.nozzle_id AND n.tenant_id = cl.tenant_id
+		WHERE cl.tenant_id = $1 AND cl.shift_id = $2
+		GROUP BY n.tank_id
+		ORDER BY n.tank_id
+	`, tenantID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TankSales
+	for rows.Next() {
+		var ts TankSales
+		if err := rows.Scan(&ts.TankID, &ts.LitresSold); err != nil {
+			return nil, err
+		}
+		out = append(out, ts)
+	}
+	return out, rows.Err()
+}
+
 // GetCashSubmission returns a shift's cash submission, or pgx.ErrNoRows.
 func (r *Repo) GetCashSubmission(ctx context.Context, tenantID, shiftID uuid.UUID) (*CashSubmission, error) {
 	var c CashSubmission

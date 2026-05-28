@@ -13,6 +13,7 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/inventory"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
 )
 
@@ -93,6 +94,15 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// Phase 4: post the shift's metered sales to the stock ledger in the same
+	// tx, so sales and the inventory position commit atomically. Tanks not yet
+	// onboarded (no opening balance) are skipped, not blocking — approval stays
+	// independent of inventory rollout.
+	if !s.postShiftSales(w, r, actor, tx, before.ID) {
+		return
+	}
+
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "shift.approved", EventType: "ShiftApproved",
@@ -109,6 +119,51 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toShiftDTO(after))
+}
+
+// postShiftSales aggregates a shift's metered litres-sold per tank and posts
+// them to the stock ledger inside the approval tx, auditing each as a
+// stock_movement.posted (source=sales). It returns false (after writing the
+// response) only on an internal error; skipped un-opened tanks are logged but
+// do not block approval. Idempotent via PostSalesForShift.
+func (s *Server) postShiftSales(w http.ResponseWriter, r *http.Request, actor identity.Actor, tx pgx.Tx, shiftID uuid.UUID) bool {
+	ctx := r.Context()
+	saleRows, err := s.operations.LitresSoldPerTankForShift(ctx, actor.TenantID, shiftID)
+	if err != nil {
+		s.logger.Error("approve shift: aggregate sales", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	lines := make([]inventory.SaleLine, 0, len(saleRows))
+	for _, ts := range saleRows {
+		lines = append(lines, inventory.SaleLine{TankID: ts.TankID, LitresSold: ts.LitresSold})
+	}
+
+	posted, skipped, err := s.inventory.PostSalesForShift(ctx, tx, actor.TenantID, shiftID, actor.UserID, lines)
+	if err != nil {
+		s.logger.Error("approve shift: post sales", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	if len(skipped) > 0 {
+		s.logger.Warn("shift sales not posted: tanks have no opening balance",
+			"shift", shiftID, "tanks", skipped)
+	}
+	for i := range posted {
+		if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+			TenantID: actor.TenantID, ActorID: actor.UserID,
+			Action: "stock_movement.posted", EventType: "StockMovementPosted",
+			EntityType: "stock_movement", EntityID: posted[i].ID.String(),
+			NewValue: toStockMovementDTO(&posted[i]),
+			IP:       clientIP(r), UserAgent: r.UserAgent(),
+			RequestID: chimiddleware.GetReqID(ctx),
+		}); err != nil {
+			s.logger.Error("approve shift: sales audit", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) handleListShiftExceptions(w http.ResponseWriter, r *http.Request) {
