@@ -133,18 +133,18 @@ Turning raw readings into trusted, signed-off shift numbers.
 
 **Goal:** Closing a shift computes litres sold, expected cash, and the variance against the cash the attendant actually submits.
 
-- [ ] Migration `0018_shift_close`:
+- [x] Migration `0018_shift_close`:
   - `cash_submissions` (id, tenant_id, shift_id, expected_cash, cash_amount, mobile_money_amount, card_amount, credit_amount, submitted_total, variance, submitted_by, submitted_at, notes, timestamps) — money `numeric(14, 2)`
   - `shift_close_lines` (id, tenant_id, shift_id, nozzle_id, opening_reading, closing_reading, litres_sold, unit_price, expected_value) — the per-nozzle snapshot frozen at close
-- [ ] Permission `cash.submit` (station-scoped) for attendants; close stays on `shift.close`
-- [ ] Close handler (one tx): require a closing meter + dip reading for every assigned nozzle/tank; snapshot per-nozzle litres × `default_price` into `shift_close_lines`; sum `expected_cash`; flip shift to `closed`
-- [ ] Cash submission handler: record the tender breakdown, compute `submitted_total` and `variance = submitted_total − expected_cash` (shortage/excess)
-- [ ] Endpoints: `POST /api/v1/shifts/{id}/close`, `POST /api/v1/shifts/{id}/cash-submission`, `GET /api/v1/shifts/{id}/close-summary`
-- [ ] Guard: close is rejected (422) listing exactly which nozzles/tanks are missing a closing reading
-- [ ] Audit + outbox: `shift.closed` (with the close snapshot), `cash.submitted`
-- [ ] Seed: leave the demo shift `open` so the flow is exercisable end-to-end in the UI
+- [x] Permission `cash.submit` (station-scoped) for attendants; close stays on `shift.close`
+- [x] Close handler (one tx): require a closing meter + dip reading for every assigned nozzle/tank; snapshot per-nozzle litres × `default_price` into `shift_close_lines`; sum `expected_cash`; flip shift to `closed`
+- [x] Cash submission handler: record the tender breakdown, compute `submitted_total` and `variance = submitted_total − expected_cash` (shortage/excess)
+- [x] Endpoints: `POST /api/v1/shifts/{id}/close`, `POST /api/v1/shifts/{id}/cash-submission`, `GET /api/v1/shifts/{id}/close-summary`
+- [x] Guard: close is rejected (422) listing exactly which nozzles/tanks are missing a closing reading
+- [x] Audit + outbox: `shift.closed` (with the close snapshot), `cash.submitted`
+- [x] Seed: leave the demo shift `open` so the flow is exercisable end-to-end in the UI
 
-**Done when:** Closing the seeded shift after capturing closing readings produces a `close-summary` with per-nozzle litres sold and an `expected_cash`; submitting cash records `variance` = submitted − expected.
+**Done when:** Closing the seeded shift after capturing closing readings produces a `close-summary` with per-nozzle litres sold and an `expected_cash`; submitting cash records `variance` = submitted − expected. *(All verified live; missing-reading close 422s with the exact lists.)*
 
 ---
 

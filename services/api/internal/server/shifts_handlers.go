@@ -266,63 +266,6 @@ func (s *Server) handleGetShift(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, detail)
 }
 
-type shiftStatusRequest struct {
-	Status string `json:"status"`
-}
-
-func (s *Server) handleUpdateShiftStatus(w http.ResponseWriter, r *http.Request) {
-	actor, err := identity.Require(r.Context())
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	var req shiftStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-	// Stage 2 supports closing; approval lands in Stage 6.
-	if req.Status != "closed" {
-		writeError(w, http.StatusBadRequest, "status must be closed (approval arrives in a later stage)")
-		return
-	}
-	before, ok := s.shiftForWrite(w, r, actor, "shift.close", true)
-	if !ok {
-		return
-	}
-
-	ctx := r.Context()
-	tx, err := s.deps.DB.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	after, err := s.operations.CloseShift(ctx, tx, actor.TenantID, before.ID, actor.UserID)
-	if err != nil {
-		s.logger.Error("close shift", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
-		TenantID: actor.TenantID, ActorID: actor.UserID,
-		Action: "shift.closed", EventType: "ShiftClosed",
-		EntityType: "shift", EntityID: after.ID.String(),
-		PreviousValue: toShiftDTO(before), NewValue: toShiftDTO(after),
-		IP: clientIP(r), UserAgent: r.UserAgent(),
-		RequestID: chimiddleware.GetReqID(ctx),
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	writeJSON(w, http.StatusOK, toShiftDTO(after))
-}
-
 type assignAttendantRequest struct {
 	UserID uuid.UUID `json:"user_id"`
 }

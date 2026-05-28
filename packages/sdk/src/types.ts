@@ -301,6 +301,37 @@ export interface MeterReadingList {
   dispensed: MeterDispensed[];
 }
 
+export interface ShiftCloseLine {
+  nozzle_id: string;
+  opening_reading: number;
+  closing_reading: number;
+  litres_sold: number;
+  unit_price: number;
+  expected_value: number;
+}
+
+export interface CashSubmission {
+  id: string;
+  shift_id: string;
+  expected_cash: number;
+  cash_amount: number;
+  mobile_money_amount: number;
+  card_amount: number;
+  credit_amount: number;
+  submitted_total: number;
+  variance: number;
+  submitted_by: string;
+  submitted_at: string;
+  notes?: string;
+}
+
+export interface ShiftCloseSummary {
+  shift: Shift;
+  lines: ShiftCloseLine[];
+  expected_cash: number;
+  cash_submission: CashSubmission | null;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

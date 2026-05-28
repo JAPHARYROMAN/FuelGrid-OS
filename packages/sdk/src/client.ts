@@ -21,8 +21,10 @@ import type {
   PumpCalibration,
   Region,
   Role,
+  CashSubmission,
   Session,
   Shift,
+  ShiftCloseSummary,
   ShiftDetail,
   Station,
   StationOverview,
@@ -698,14 +700,6 @@ export class Client {
     });
   }
 
-  closeShift(id: string, signal?: AbortSignal): Promise<Shift> {
-    return this.request<Shift>(`/api/v1/shifts/${encodeURIComponent(id)}/status`, {
-      method: 'PATCH',
-      body: { status: 'closed' },
-      signal,
-    });
-  }
-
   assignAttendant(shiftID: string, userID: string, signal?: AbortSignal): Promise<void> {
     return this.request<void>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/attendants`, {
       method: 'POST',
@@ -806,6 +800,39 @@ export class Client {
   ): Promise<DipReading> {
     return this.request<DipReading>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/dip-readings/${encodeURIComponent(readingID)}/correct`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  // ----------- Shift close & cash -----------
+
+  closeShift(shiftID: string, signal?: AbortSignal): Promise<ShiftCloseSummary> {
+    return this.request<ShiftCloseSummary>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/close`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  getCloseSummary(shiftID: string, signal?: AbortSignal): Promise<ShiftCloseSummary> {
+    return this.request<ShiftCloseSummary>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/close-summary`,
+      { signal },
+    );
+  }
+
+  submitCash(
+    shiftID: string,
+    req: {
+      cash_amount: number;
+      mobile_money_amount?: number;
+      card_amount?: number;
+      credit_amount?: number;
+      notes?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<CashSubmission> {
+    return this.request<CashSubmission>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/cash-submission`,
       { method: 'POST', body: req, signal },
     );
   }

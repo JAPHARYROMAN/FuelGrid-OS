@@ -291,7 +291,6 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("shift.open", stationFromURLParam("stationID"))).
 							Post("/stations/{stationID}/shifts", s.handleOpenShift)
 						r.Get("/shifts/{id}", s.handleGetShift)
-						r.Patch("/shifts/{id}/status", s.handleUpdateShiftStatus)
 						r.Post("/shifts/{id}/attendants", s.handleAssignAttendant)
 						r.Delete("/shifts/{id}/attendants/{userID}", s.handleUnassignAttendant)
 						r.Post("/shifts/{id}/nozzle-assignments", s.handleAssignNozzle)
@@ -309,6 +308,11 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Get("/shifts/{id}/dip-readings", s.handleListDipReadings)
 						r.Post("/shifts/{id}/dip-readings", s.handleCaptureDipReading)
 						r.Post("/shifts/{id}/dip-readings/{readingID}/correct", s.handleCorrectDipReading)
+
+						// Shift close & cash reconciliation (Phase 3, Stage 5).
+						r.Post("/shifts/{id}/close", s.handleCloseShift)
+						r.Get("/shifts/{id}/close-summary", s.handleCloseSummary)
+						r.Post("/shifts/{id}/cash-submission", s.handleSubmitCash)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)
