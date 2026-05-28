@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
@@ -46,9 +45,10 @@ func (s *Server) handleListMySessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleRevokeMySession revokes a single session by id, scoped to the
-// actor. Revoking the current session also clears the in-memory Redis
-// entry, which would leave the caller's next request 401 — that's the
-// expected UX for "log this device out".
+// actor. The identity service deletes the live Redis entry alongside
+// the durable revocation, so the session stops authenticating
+// immediately — revoking the current device 401s its next request,
+// which is the intended "log this device out" UX.
 func (s *Server) handleRevokeMySession(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {
@@ -61,18 +61,11 @@ func (s *Server) handleRevokeMySession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Confirm ownership before any mutation.
-	if _, err := s.sessionRepo.FindActiveOwnedBy(r.Context(), id, actor.UserID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if err := s.identity.RevokeSession(r.Context(), actor.UserID, id); err != nil {
+		if errors.Is(err, identity.ErrSessionNotFound) {
 			writeError(w, http.StatusNotFound, "session not found")
 			return
 		}
-		s.logger.Error("session ownership check", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	if err := s.sessionRepo.Revoke(r.Context(), id, "self-revoke"); err != nil {
 		s.logger.Error("revoke my session", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

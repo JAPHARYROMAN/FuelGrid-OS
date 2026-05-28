@@ -268,6 +268,58 @@ func (s *Service) Logout(ctx context.Context, rawToken string) error {
 	return nil
 }
 
+// RevokeSession revokes a single session the caller owns, by its UUID.
+// It is the authoritative path the profile "revoke this device" button
+// uses: it deletes the live Redis entry (so the session stops resolving
+// immediately) AND marks the durable row revoked. Ownership is enforced
+// against ownerUserID so one user can't kill another's session.
+//
+// Returns ErrSessionNotFound when the session doesn't exist, isn't
+// active, or doesn't belong to ownerUserID.
+func (s *Service) RevokeSession(ctx context.Context, ownerUserID, sessionID uuid.UUID) error {
+	row, err := s.sessions.FindActiveOwnedBy(ctx, sessionID, ownerUserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrSessionNotFound
+		}
+		return err
+	}
+	// Kill the hot-path entry first so the session stops authenticating
+	// even if the durable update lags or fails.
+	if err := s.store.DeleteByID(ctx, sessionID); err != nil {
+		return err
+	}
+	if err := s.sessions.Revoke(ctx, row.ID, "self-revoke"); err != nil {
+		return err
+	}
+	s.logger.Info("audit",
+		"event", "UserSessionRevoked",
+		"user_id", ownerUserID,
+		"tenant_id", row.TenantID,
+		"session_id", row.ID,
+	)
+	return nil
+}
+
+// revokeAllUserSessions deletes every active session for a user from
+// Redis (by id) and marks them revoked in Postgres. Used after a
+// password reset so a leaked-credential attacker is logged out
+// everywhere, not just from sessions whose TTL happens to lapse.
+func (s *Service) revokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error {
+	rows, err := s.sessions.ListActiveForUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if err := s.store.DeleteByID(ctx, row.ID); err != nil {
+			// Best-effort per session; keep going so one Redis miss
+			// doesn't strand the rest.
+			s.logger.Warn("revoke session redis", "error", err, "session_id", row.ID)
+		}
+	}
+	return s.sessions.RevokeAllForUser(ctx, userID, reason)
+}
+
 // Refresh extends a session's TTL in both Redis and Postgres.
 func (s *Service) Refresh(ctx context.Context, rawToken string) (*session.Session, error) {
 	sess, err := s.store.Get(ctx, rawToken)
@@ -402,7 +454,9 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, token, newPassword s
 	if err := s.users.SetPassword(ctx, userID, pwHash); err != nil {
 		return err
 	}
-	if err := s.sessions.RevokeAllForUser(ctx, userID, "password reset"); err != nil {
+	// Revoke every active session in BOTH Redis and Postgres so the
+	// reset actually logs the user out everywhere.
+	if err := s.revokeAllUserSessions(ctx, userID, "password reset"); err != nil {
 		s.logger.Error("revoke sessions after reset", "error", err, "user_id", userID)
 	}
 	_ = s.redis.Del(ctx, key).Err()

@@ -254,6 +254,33 @@ jobs:
             cat /tmp/msa.json; exit 1
           fi
 
+          # Session revocation must be authoritative: revoking the
+          # current session by id (the profile "log out this device"
+          # path, which only touches Postgres + Redis-by-id) must stop
+          # the token from authenticating immediately, not on TTL lapse.
+          sess_id=$(curl -sS http://127.0.0.1:8080/api/v1/me/sessions \
+            -H "Authorization: Bearer $token" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["id"])')
+          echo "current session: $sess_id"
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+            "http://127.0.0.1:8080/api/v1/me/sessions/$sess_id" \
+            -H "Authorization: Bearer $token")
+          if [ "$status" != "204" ]; then
+            echo "revoke session returned $status, expected 204"; exit 1
+          fi
+          status=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v1/me \
+            -H "Authorization: Bearer $token")
+          if [ "$status" != "401" ]; then
+            echo "post-revoke /me returned $status, expected 401 (revocation not authoritative!)"; exit 1
+          fi
+          echo "session revocation is authoritative"
+
+          # Fresh login for the logout assertion below.
+          token=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
+            -H 'Content-Type: application/json' \
+            -d '{"tenant_slug":"demo","email":"demo@fuelgrid.local","password":"fuelgrid-demo-password-1234"}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+
           # Logout returns 204
           status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/api/v1/auth/logout \
             -H "Authorization: Bearer $token")
