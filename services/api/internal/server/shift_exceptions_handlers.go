@@ -1,0 +1,229 @@
+package server
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/japharyroman/fuelgrid-os/internal/audit"
+	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/operations"
+)
+
+type shiftExceptionDTO struct {
+	ID         uuid.UUID  `json:"id"`
+	TenantID   uuid.UUID  `json:"tenant_id"`
+	ShiftID    uuid.UUID  `json:"shift_id"`
+	Type       string     `json:"type"`
+	Severity   string     `json:"severity"`
+	Detail     *string    `json:"detail,omitempty"`
+	Status     string     `json:"status"`
+	RaisedAt   string     `json:"raised_at"`
+	ResolvedBy *uuid.UUID `json:"resolved_by,omitempty"`
+	ResolvedAt *string    `json:"resolved_at,omitempty"`
+}
+
+func toShiftExceptionDTO(e *operations.ShiftException) shiftExceptionDTO {
+	return shiftExceptionDTO{
+		ID: e.ID, TenantID: e.TenantID, ShiftID: e.ShiftID,
+		Type: e.Type, Severity: e.Severity, Detail: e.Detail, Status: e.Status,
+		RaisedAt: e.RaisedAt.Format(time.RFC3339), ResolvedBy: e.ResolvedBy,
+		ResolvedAt: fmtTime(e.ResolvedAt),
+	}
+}
+
+type approveShiftRequest struct {
+	Status string `json:"status"`
+}
+
+// handleApproveShift transitions a closed shift to approved. It refuses
+// while any unresolved exception remains on the shift.
+func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var req approveShiftRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Status != "approved" {
+		writeError(w, http.StatusBadRequest, "status must be approved (close is via POST /close)")
+		return
+	}
+
+	before, ok := s.shiftForWrite(w, r, actor, "shift.approve", false)
+	if !ok {
+		return
+	}
+	if before.Status != "closed" {
+		writeError(w, http.StatusConflict, "only a closed shift can be approved")
+		return
+	}
+
+	ctx := r.Context()
+	open, err := s.operations.OpenExceptionCountForShift(ctx, actor.TenantID, before.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if open > 0 {
+		writeError(w, http.StatusConflict, "resolve the shift's open exceptions before approving")
+		return
+	}
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	after, err := s.operations.ApproveShift(ctx, tx, actor.TenantID, before.ID, actor.UserID)
+	if err != nil {
+		s.logger.Error("approve shift", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "shift.approved", EventType: "ShiftApproved",
+		EntityType: "shift", EntityID: after.ID.String(),
+		PreviousValue: toShiftDTO(before), NewValue: toShiftDTO(after),
+		IP: clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, toShiftDTO(after))
+}
+
+func (s *Server) handleListShiftExceptions(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid shift id")
+		return
+	}
+	ctx := r.Context()
+	shift, err := s.operations.GetShift(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "shift not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", shift.StationID) {
+		return
+	}
+	rows, err := s.operations.ListExceptionsForShift(ctx, actor.TenantID, id)
+	if err != nil {
+		s.logger.Error("list shift exceptions", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]shiftExceptionDTO, 0, len(rows))
+	for i := range rows {
+		out = append(out, toShiftExceptionDTO(&rows[i]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+}
+
+type resolveExceptionRequest struct {
+	Status string `json:"status"`
+}
+
+func (s *Server) handleResolveShiftException(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid exception id")
+		return
+	}
+	var req resolveExceptionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Status != "resolved" {
+		writeError(w, http.StatusBadRequest, "status must be resolved")
+		return
+	}
+
+	ctx := r.Context()
+	exc, err := s.operations.GetException(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "exception not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Authorize against the exception's shift station.
+	shift, err := s.operations.GetShift(ctx, actor.TenantID, exc.ShiftID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "shift.approve", shift.StationID) {
+		return
+	}
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	resolved, err := s.operations.ResolveException(ctx, tx, actor.TenantID, id, actor.UserID)
+	if errors.Is(err, operations.ErrExceptionNotFound) {
+		writeError(w, http.StatusConflict, "exception is already resolved")
+		return
+	}
+	if err != nil {
+		s.logger.Error("resolve shift exception", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "shift_exception.resolved", EventType: "ShiftExceptionResolved",
+		EntityType: "shift_exception", EntityID: resolved.ID.String(),
+		PreviousValue: toShiftExceptionDTO(exc), NewValue: toShiftExceptionDTO(resolved),
+		IP: clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, toShiftExceptionDTO(resolved))
+}

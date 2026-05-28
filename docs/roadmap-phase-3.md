@@ -152,16 +152,16 @@ Turning raw readings into trusted, signed-off shift numbers.
 
 **Goal:** A supervisor reviews and approves closed shifts; anomalies surface as exceptions; once every shift is approved the day is closed and locked.
 
-- [ ] Migration `0019_shift_exceptions`: `shift_exceptions` (id, tenant_id, shift_id, type, severity, detail, status, raised_at, resolved_by, resolved_at, timestamps)
+- [x] Migration `0019_shift_exceptions`: `shift_exceptions` (id, tenant_id, shift_id, type, severity, detail, status, raised_at, resolved_by, resolved_at, timestamps)
   - `type IN ('missing_reading', 'cash_variance', 'meter_rollback', 'late_close', 'other')`
-- [ ] Permissions: reuse `shift.approve`; reuse `operations.manage_day` (Stage 1) for day close/lock
-- [ ] Approval handler (one tx): flips `closed → approved`, stamps `approved_by/at`; refuses approval while unresolved blocking exceptions remain
-- [ ] Auto-raise exceptions at close: cash variance over a station threshold, a closing meter below opening (rollback), or a missing reading that was force-overridden
-- [ ] Endpoints: `PATCH /api/v1/shifts/{id}/status` (approve), `GET /api/v1/shifts/{id}/exceptions`, `PATCH /api/v1/shift-exceptions/{id}/status`, `PATCH …/operating-days/{id}/lock`
-- [ ] Audit + outbox: `shift.approved`, `shift_exception.raised`, `shift_exception.resolved`, `operating_day.locked`
-- [ ] Day-close guard: locking refuses (409) until all of the day's shifts are `approved`
+- [x] Permissions: reuse `shift.approve`; reuse `operations.manage_day` (Stage 1) for day close/lock
+- [x] Approval handler (one tx): flips `closed → approved`, stamps `approved_by/at`; refuses approval while unresolved blocking exceptions remain
+- [x] Auto-raise `cash_variance` exception when a cash submission's variance exceeds the threshold. *(meter-rollback / missing-reading are rejected outright at close in Stage 5 rather than force-overridden, so they never reach a closed shift; those types stay reserved.)*
+- [x] Endpoints: `PATCH /api/v1/shifts/{id}/status` (approve), `GET /api/v1/shifts/{id}/exceptions`, `PATCH /api/v1/shift-exceptions/{id}/status`, `PATCH …/operating-days/{id}/lock`
+- [x] Audit + outbox: `shift.approved`, `shift_exception.raised`, `shift_exception.resolved`, `operating_day.locked`
+- [x] Day-close guard: locking refuses (409) until all of the day's shifts are `approved` *(wired in Stage 2)*
 
-**Done when:** Approving the seeded shift moves it to `approved`; a deliberately large cash variance raises a `cash_variance` exception that blocks approval until resolved; locking the day succeeds only once every shift is approved.
+**Done when:** Approving the seeded shift moves it to `approved`; a deliberately large cash variance raises a `cash_variance` exception that blocks approval until resolved; locking the day succeeds only once every shift is approved. *(All verified live.)*
 
 ---
 

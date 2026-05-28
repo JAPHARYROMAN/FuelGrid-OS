@@ -314,6 +314,13 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Get("/shifts/{id}/close-summary", s.handleCloseSummary)
 						r.Post("/shifts/{id}/cash-submission", s.handleSubmitCash)
 
+						// Approval & exceptions (Phase 3, Stage 6). Day lock
+						// (all-shifts-approved guard) already lives on the
+						// operating-day routes above.
+						r.Patch("/shifts/{id}/status", s.handleApproveShift)
+						r.Get("/shifts/{id}/exceptions", s.handleListShiftExceptions)
+						r.Patch("/shift-exceptions/{id}/status", s.handleResolveShiftException)
+
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)
 						r.With(s.requirePermission("users.invite", nil)).

@@ -151,6 +151,24 @@ func (r *Repo) CloseShift(ctx context.Context, tx pgx.Tx, tenantID, id, actorID 
 	return &s, nil
 }
 
+// ApproveShift flips a closed shift to approved, stamping approved_by/at.
+func (r *Repo) ApproveShift(ctx context.Context, tx pgx.Tx, tenantID, id, actorID uuid.UUID) (*Shift, error) {
+	var s Shift
+	err := scanShift(tx.QueryRow(ctx, `
+		UPDATE shifts SET status = 'approved', approved_by = $3, approved_at = now()
+		WHERE id = $1 AND tenant_id = $2
+		RETURNING `+shiftColumns,
+		id, tenantID, actorID,
+	), &s)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrShiftNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // OpenShiftCountForDay counts shifts in a day that are still open — the
 // guard for closing an operating day.
 func (r *Repo) OpenShiftCountForDay(ctx context.Context, tenantID, dayID uuid.UUID) (int, error) {

@@ -332,6 +332,19 @@ export interface ShiftCloseSummary {
   cash_submission: CashSubmission | null;
 }
 
+export interface ShiftException {
+  id: string;
+  tenant_id: string;
+  shift_id: string;
+  type: string;
+  severity: string;
+  detail?: string;
+  status: string;
+  raised_at: string;
+  resolved_by?: string;
+  resolved_at?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

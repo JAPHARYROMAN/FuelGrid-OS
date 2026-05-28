@@ -26,6 +26,7 @@ import type {
   Shift,
   ShiftCloseSummary,
   ShiftDetail,
+  ShiftException,
   Station,
   StationOverview,
   Tank,
@@ -834,6 +835,30 @@ export class Client {
     return this.request<CashSubmission>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/cash-submission`,
       { method: 'POST', body: req, signal },
+    );
+  }
+
+  // ----------- Shift approval & exceptions -----------
+
+  approveShift(shiftID: string, signal?: AbortSignal): Promise<Shift> {
+    return this.request<Shift>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/status`, {
+      method: 'PATCH',
+      body: { status: 'approved' },
+      signal,
+    });
+  }
+
+  listShiftExceptions(shiftID: string, signal?: AbortSignal): Promise<Paginated<ShiftException>> {
+    return this.request<Paginated<ShiftException>>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/exceptions`,
+      { signal },
+    );
+  }
+
+  resolveShiftException(exceptionID: string, signal?: AbortSignal): Promise<ShiftException> {
+    return this.request<ShiftException>(
+      `/api/v1/shift-exceptions/${encodeURIComponent(exceptionID)}/status`,
+      { method: 'PATCH', body: { status: 'resolved' }, signal },
     );
   }
 

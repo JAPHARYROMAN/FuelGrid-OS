@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"time"
 
@@ -16,6 +18,12 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
 	"github.com/japharyroman/fuelgrid-os/internal/readings"
 )
+
+// cashVarianceThreshold is the absolute shortage/excess (in the tenant's
+// money units) that auto-raises a cash_variance exception at submission.
+// A per-station configurable threshold is future work; this is a sane
+// fixed default.
+const cashVarianceThreshold = 1000.0
 
 type closeLineDTO struct {
 	NozzleID       uuid.UUID `json:"nozzle_id"`
@@ -334,17 +342,44 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	reqID := chimiddleware.GetReqID(ctx)
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "cash.submitted", EventType: "CashSubmitted",
 		EntityType: "cash_submission", EntityID: sub.ID.String(),
 		NewValue: toCashSubmissionDTO(sub),
 		IP:       clientIP(r), UserAgent: r.UserAgent(),
-		RequestID: chimiddleware.GetReqID(ctx),
+		RequestID: reqID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// A cash variance over the threshold auto-raises an exception that will
+	// block approval until a supervisor resolves it.
+	if math.Abs(sub.Variance) > cashVarianceThreshold {
+		exc, err := s.operations.RaiseException(ctx, tx, actor.TenantID, shift.ID,
+			"cash_variance", "high",
+			fmt.Sprintf("cash variance %.2f exceeds threshold %.2f", sub.Variance, cashVarianceThreshold))
+		if err != nil {
+			s.logger.Error("submit cash: raise exception", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+			TenantID: actor.TenantID, ActorID: actor.UserID,
+			Action: "shift_exception.raised", EventType: "ShiftExceptionRaised",
+			EntityType: "shift_exception", EntityID: exc.ID.String(),
+			NewValue: toShiftExceptionDTO(exc),
+			IP:       clientIP(r), UserAgent: r.UserAgent(),
+			RequestID: reqID,
+		}); err != nil {
+			s.logger.Error("submit cash: audit exception", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

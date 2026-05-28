@@ -34,6 +34,7 @@ export type {
   ShiftCloseLine,
   ShiftCloseSummary,
   ShiftDetail,
+  ShiftException,
   ShiftSummary,
   Station,
   StationOverview,
