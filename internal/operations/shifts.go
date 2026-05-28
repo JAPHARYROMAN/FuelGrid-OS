@@ -280,6 +280,39 @@ func (r *Repo) IsAttendantOnShift(ctx context.Context, tenantID, shiftID, userID
 	return exists, err
 }
 
+// NozzleAssignedOnShift reports whether the nozzle is assigned on the shift.
+// When attendantID is non-nil, it further requires the assignment to be to
+// that attendant — the self-scope check for attendant meter writes.
+func (r *Repo) NozzleAssignedOnShift(ctx context.Context, tenantID, shiftID, nozzleID uuid.UUID, attendantID *uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM shift_nozzle_assignments
+			WHERE tenant_id = $1 AND shift_id = $2 AND nozzle_id = $3
+			  AND ($4::uuid IS NULL OR attendant_id = $4)
+		)
+	`, tenantID, shiftID, nozzleID, attendantID).Scan(&exists)
+	return exists, err
+}
+
+// TankAssignedOnShift reports whether any nozzle drawing from the tank is
+// assigned on the shift. When attendantID is non-nil, it requires at least
+// one such nozzle to be assigned to that attendant — the self-scope check for
+// attendant dip writes.
+func (r *Repo) TankAssignedOnShift(ctx context.Context, tenantID, shiftID, tankID uuid.UUID, attendantID *uuid.UUID) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM shift_nozzle_assignments sna
+			JOIN nozzles n ON n.id = sna.nozzle_id
+			WHERE sna.tenant_id = $1 AND sna.shift_id = $2 AND n.tank_id = $3
+			  AND ($4::uuid IS NULL OR sna.attendant_id = $4)
+		)
+	`, tenantID, shiftID, tankID, attendantID).Scan(&exists)
+	return exists, err
+}
+
 // --- nozzle assignments ---
 
 func (r *Repo) ListNozzleAssignments(ctx context.Context, tenantID, shiftID uuid.UUID) ([]NozzleAssignment, error) {
@@ -303,13 +336,13 @@ func (r *Repo) ListNozzleAssignments(ctx context.Context, tenantID, shiftID uuid
 	return out, rows.Err()
 }
 
-func (r *Repo) AssignNozzle(ctx context.Context, tx pgx.Tx, tenantID, shiftID, nozzleID, attendantID, assignedBy uuid.UUID) (*NozzleAssignment, error) {
+func (r *Repo) AssignNozzle(ctx context.Context, tx pgx.Tx, tenantID, stationID, shiftID, nozzleID, attendantID, assignedBy uuid.UUID) (*NozzleAssignment, error) {
 	var n NozzleAssignment
 	if err := tx.QueryRow(ctx, `
-		INSERT INTO shift_nozzle_assignments (tenant_id, shift_id, nozzle_id, attendant_id, assigned_by)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO shift_nozzle_assignments (tenant_id, station_id, shift_id, nozzle_id, attendant_id, assigned_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, shift_id, nozzle_id, attendant_id, assigned_at
-	`, tenantID, shiftID, nozzleID, attendantID, assignedBy).Scan(
+	`, tenantID, stationID, shiftID, nozzleID, attendantID, assignedBy).Scan(
 		&n.ID, &n.ShiftID, &n.NozzleID, &n.AttendantID, &n.AssignedAt,
 	); err != nil {
 		return nil, err

@@ -95,6 +95,13 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// A shift with no nozzle assignments has no sales to reconcile; closing it
+	// would produce an approved, zero-expected-cash record with no lines and
+	// no exception (audit P2). Require at least one assignment.
+	if len(assignments) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "shift has no nozzle assignments; assign at least one before closing")
+		return
+	}
 	meterRows, err := s.readings.ListActiveForShift(ctx, actor.TenantID, shift.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -300,7 +307,9 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shift, ok := s.shiftForWrite(w, r, actor, "cash.submit", false)
+	// Self-scoped: an attendant (cash.submit) may submit only for a shift
+	// they're on; a supervisor (cash.override) may submit for any shift.
+	shift, _, ok := s.shiftForScopedWrite(w, r, actor, "cash.submit", "cash.override", false)
 	if !ok {
 		return
 	}

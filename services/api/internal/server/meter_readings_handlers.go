@@ -144,8 +144,10 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Capture only during an open shift, gated by reading.edit.
-	shift, ok := s.shiftForWrite(w, r, actor, "reading.edit", true)
+	// Capture only during an open shift. Attendants (reading.edit) are
+	// self-scoped to their own assigned nozzles; supervisors (reading.override)
+	// may write any nozzle assigned on the shift.
+	shift, override, ok := s.shiftForScopedWrite(w, r, actor, "reading.edit", "reading.override", true)
 	if !ok {
 		return
 	}
@@ -162,6 +164,9 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 	}
 	if nozzle.StationID != shift.StationID {
 		writeError(w, http.StatusBadRequest, "nozzle is at a different station than the shift")
+		return
+	}
+	if !s.requireNozzleAssigned(w, ctx, actor, shift.ID, req.NozzleID, override) {
 		return
 	}
 	if err := readings.ValidateScale(req.Reading, nozzle.MeterDecimalPlaces); err != nil {
@@ -234,13 +239,11 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Corrections allowed until the shift is approved.
-	shift, ok := s.shiftForWrite(w, r, actor, "reading.edit", false)
+	// Corrections only while the shift is open. Once closed, shift_close_lines
+	// and expected cash are frozen, so a correction would desync approved
+	// facts (audit P1) — block it. Self-scoped like capture.
+	shift, override, ok := s.shiftForScopedWrite(w, r, actor, "reading.edit", "reading.override", true)
 	if !ok {
-		return
-	}
-	if shift.Status == "approved" {
-		writeError(w, http.StatusConflict, "shift is approved; readings are locked")
 		return
 	}
 
@@ -260,6 +263,9 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 	}
 	if old.Status != "active" {
 		writeError(w, http.StatusConflict, "reading is already superseded")
+		return
+	}
+	if !s.requireNozzleAssigned(w, ctx, actor, shift.ID, old.NozzleID, override) {
 		return
 	}
 

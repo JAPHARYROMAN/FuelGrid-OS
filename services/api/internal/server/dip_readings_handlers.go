@@ -131,7 +131,10 @@ func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	shift, ok := s.shiftForWrite(w, r, actor, "reading.edit", true)
+	// Self-scoped like meter capture: attendants (reading.edit) may only dip
+	// tanks behind their own assigned nozzles; supervisors (reading.override)
+	// may dip any tank with an assigned nozzle on the shift.
+	shift, override, ok := s.shiftForScopedWrite(w, r, actor, "reading.edit", "reading.override", true)
 	if !ok {
 		return
 	}
@@ -148,6 +151,9 @@ func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request)
 	}
 	if tank.StationID != shift.StationID {
 		writeError(w, http.StatusBadRequest, "tank is at a different station than the shift")
+		return
+	}
+	if !s.requireTankAssigned(w, ctx, actor, shift.ID, req.TankID, override) {
 		return
 	}
 
@@ -224,12 +230,9 @@ func (s *Server) handleCorrectDipReading(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	shift, ok := s.shiftForWrite(w, r, actor, "reading.edit", false)
+	// Corrections only while open (close freezes the snapshot — audit P1).
+	shift, override, ok := s.shiftForScopedWrite(w, r, actor, "reading.edit", "reading.override", true)
 	if !ok {
-		return
-	}
-	if shift.Status == "approved" {
-		writeError(w, http.StatusConflict, "shift is approved; readings are locked")
 		return
 	}
 
@@ -249,6 +252,9 @@ func (s *Server) handleCorrectDipReading(w http.ResponseWriter, r *http.Request)
 	}
 	if old.Status != "active" {
 		writeError(w, http.StatusConflict, "reading is already superseded")
+		return
+	}
+	if !s.requireTankAssigned(w, ctx, actor, shift.ID, old.TankID, override) {
 		return
 	}
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
 )
 
@@ -215,6 +217,104 @@ func (s *Server) shiftForWrite(w http.ResponseWriter, r *http.Request, actor ide
 		return nil, false
 	}
 	return shift, true
+}
+
+// shiftForScopedWrite loads the shift for an attendant-class write (meter/dip
+// readings, cash). The actor is allowed if they hold overridePerm at the
+// shift's station (supervisor/manager path, override=true) or hold basePerm
+// at the station AND are an attendant on the shift (attendant self-scope
+// path, override=false). The override flag lets callers further restrict an
+// attendant to their own assigned nozzles/tanks. Returns the shift, the
+// override flag, and ok; writes the error response on failure.
+func (s *Server) shiftForScopedWrite(w http.ResponseWriter, r *http.Request, actor identity.Actor, basePerm, overridePerm string, requireOpen bool) (*operations.Shift, bool, bool) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid shift id")
+		return nil, false, false
+	}
+	ctx := r.Context()
+	shift, err := s.operations.GetShift(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "shift not found")
+		return nil, false, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil, false, false
+	}
+
+	override := s.policy.Can(ctx, actor, overridePerm, policy.AtStation(shift.StationID)) == nil
+	if !override {
+		// Attendant self-scope: must hold the base permission at the station
+		// and be assigned to this shift.
+		if !s.authorizeStation(w, r, actor, basePerm, shift.StationID) {
+			return nil, false, false
+		}
+		onShift, err := s.operations.IsAttendantOnShift(ctx, actor.TenantID, shift.ID, actor.UserID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return nil, false, false
+		}
+		if !onShift {
+			writeError(w, http.StatusForbidden, "you are not assigned to this shift")
+			return nil, false, false
+		}
+	}
+
+	if requireOpen && shift.Status != "open" {
+		writeError(w, http.StatusConflict, "shift is not open")
+		return nil, false, false
+	}
+	return shift, override, true
+}
+
+// requireNozzleAssigned enforces that the nozzle is assigned on the shift
+// (integrity, all roles) and, unless the caller is acting via override, that
+// it's assigned to the actor (attendant self-scope). Returns true when
+// allowed; otherwise writes the error response and returns false.
+func (s *Server) requireNozzleAssigned(w http.ResponseWriter, ctx context.Context, actor identity.Actor, shiftID, nozzleID uuid.UUID, override bool) bool {
+	var attendantFilter *uuid.UUID
+	if !override {
+		attendantFilter = &actor.UserID
+	}
+	assigned, err := s.operations.NozzleAssignedOnShift(ctx, actor.TenantID, shiftID, nozzleID, attendantFilter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	if !assigned {
+		if override {
+			writeError(w, http.StatusUnprocessableEntity, "nozzle is not assigned on this shift")
+		} else {
+			writeError(w, http.StatusForbidden, "nozzle is not assigned to you on this shift")
+		}
+		return false
+	}
+	return true
+}
+
+// requireTankAssigned enforces that some nozzle drawing from the tank is
+// assigned on the shift and, unless override, that one is assigned to the
+// actor. Returns true when allowed; otherwise writes the response.
+func (s *Server) requireTankAssigned(w http.ResponseWriter, ctx context.Context, actor identity.Actor, shiftID, tankID uuid.UUID, override bool) bool {
+	var attendantFilter *uuid.UUID
+	if !override {
+		attendantFilter = &actor.UserID
+	}
+	assigned, err := s.operations.TankAssignedOnShift(ctx, actor.TenantID, shiftID, tankID, attendantFilter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	if !assigned {
+		if override {
+			writeError(w, http.StatusUnprocessableEntity, "no nozzle drawing from this tank is assigned on this shift")
+		} else {
+			writeError(w, http.StatusForbidden, "no nozzle drawing from this tank is assigned to you on this shift")
+		}
+		return false
+	}
+	return true
 }
 
 func (s *Server) handleGetShift(w http.ResponseWriter, r *http.Request) {
@@ -437,7 +537,7 @@ func (s *Server) handleAssignNozzle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	assignment, err := s.operations.AssignNozzle(ctx, tx, actor.TenantID, shift.ID, req.NozzleID, req.AttendantID, actor.UserID)
+	assignment, err := s.operations.AssignNozzle(ctx, tx, actor.TenantID, shift.StationID, shift.ID, req.NozzleID, req.AttendantID, actor.UserID)
 	if isUniqueViolation(err) {
 		writeError(w, http.StatusConflict, "nozzle is already assigned on this shift")
 		return
