@@ -46,6 +46,14 @@ tags:
     description: Append-only sensitive-action log
   - name: Platform
     description: Platform-admin operations (tenant provisioning)
+  - name: Operating Days
+    description: Per-station business-day lifecycle (open/close/lock)
+  - name: Shifts
+    description: Shifts, attendant + nozzle assignments, close, approval
+  - name: Readings
+    description: Per-shift meter + tank-dip readings (append-only)
+  - name: Operations
+    description: Attendant console + supervisor operations dashboard
 
 security:
   - bearerAuth: []
@@ -852,6 +860,392 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AuditLogList' } } } }
 
+  /api/v1/me/active-shift:
+    get:
+      tags: [Operations]
+      summary: The actor's own current shift + assigned nozzles
+      description: Self-scoped attendant console feed; returns only shifts the actor is an attendant on. Authentication alone, no station permission.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyShift' } } } }
+
+  /api/v1/stations/{stationID}/operating-days:
+    parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Operating Days]
+      summary: List a station's operating days
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OperatingDayList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Operating Days]
+      summary: Open an operating day (operations.manage_day)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                business_date: { type: string, format: date, description: Defaults to today (UTC) }
+                notes:         { type: string }
+      responses:
+        '201': { description: Opened, content: { application/json: { schema: { $ref: '#/components/schemas/OperatingDay' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+        '409': { description: A day is already open for that date }
+
+  /api/v1/operating-days/{id}:
+    get:
+      tags: [Operating Days]
+      summary: Get an operating day
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OperatingDay' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/operating-days/{id}/status:
+    patch:
+      tags: [Operating Days]
+      summary: Close or reopen a day (operations.manage_day)
+      description: closed requires no open shifts. open reopens a closed day (audited operating_day.reopened); a locked day cannot change status.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, closed] }
+                reason: { type: string }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OperatingDay' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Locked day, already in state, or open shifts block close }
+
+  /api/v1/operating-days/{id}/lock:
+    patch:
+      tags: [Operating Days]
+      summary: Lock a closed day (operations.manage_day)
+      description: Terminal. Rejected until every shift in the day is approved.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { reason: { type: string } } } } }
+      responses:
+        '200': { description: Locked, content: { application/json: { schema: { $ref: '#/components/schemas/OperatingDay' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Day not closed, or unapproved shifts remain }
+
+  /api/v1/stations/{stationID}/shifts:
+    parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Shifts]
+      summary: List a station's shifts
+      parameters: [{ in: query, name: operating_day_id, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Shifts]
+      summary: Open a shift in a day (shift.open)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operating_day_id, name]
+              properties:
+                operating_day_id: { type: string, format: uuid }
+                name:             { type: string }
+                notes:            { type: string }
+      responses:
+        '201': { description: Opened, content: { application/json: { schema: { $ref: '#/components/schemas/Shift' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Operating day is not open }
+
+  /api/v1/shifts/{id}:
+    get:
+      tags: [Shifts]
+      summary: Get a shift with attendants + nozzle assignments
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftDetail' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shifts/{id}/attendants:
+    post:
+      tags: [Shifts]
+      summary: Assign an attendant to the shift (shift.assign)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [user_id], properties: { user_id: { type: string, format: uuid } } }
+      responses:
+        '201': { description: Assigned }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Shift or user not found }
+        '409': { description: Already on the shift }
+
+  /api/v1/shifts/{id}/attendants/{userID}:
+    delete:
+      tags: [Shifts]
+      summary: Unassign an attendant (cascades their nozzle assignments)
+      parameters:
+        - { in: path, name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: userID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Unassigned }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shifts/{id}/nozzle-assignments:
+    post:
+      tags: [Shifts]
+      summary: Assign a nozzle to an attendant on the shift (shift.assign)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nozzle_id, attendant_id]
+              properties:
+                nozzle_id:    { type: string, format: uuid }
+                attendant_id: { type: string, format: uuid }
+      responses:
+        '201': { description: Assigned, content: { application/json: { schema: { $ref: '#/components/schemas/NozzleAssignment' } } } }
+        '400': { description: Nozzle at a different station, or attendant not on the shift }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Nozzle already assigned on the shift }
+
+  /api/v1/shifts/{id}/nozzle-assignments/{assignmentID}:
+    delete:
+      tags: [Shifts]
+      summary: Remove a nozzle assignment (shift.assign)
+      parameters:
+        - { in: path, name: id,           required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: assignmentID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shifts/{id}/meter-readings:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Readings]
+      summary: List active meter readings + computed litres dispensed
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MeterReadingList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Readings]
+      summary: Capture an opening/closing meter reading
+      description: Attendants (reading.edit) are self-scoped to their assigned nozzles; supervisors (reading.override) may write any nozzle on the shift. Open shift only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nozzle_id, reading_type, reading]
+              properties:
+                nozzle_id:    { type: string, format: uuid }
+                reading_type: { type: string, enum: [opening, closing] }
+                reading:      { type: number }
+      responses:
+        '201': { description: Captured, content: { application/json: { schema: { $ref: '#/components/schemas/MeterReading' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not assigned to this shift/nozzle }
+        '409': { description: A reading of that type already exists; correct it instead }
+        '422': { description: Decimal scale exceeds the nozzle's meter precision, or nozzle not assigned on the shift }
+
+  /api/v1/shifts/{id}/meter-readings/{readingID}/correct:
+    post:
+      tags: [Readings]
+      summary: Supersede a meter reading (open shift only)
+      parameters:
+        - { in: path, name: id,        required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: readingID, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reading], properties: { reading: { type: number } } }
+      responses:
+        '200': { description: Corrected, content: { application/json: { schema: { $ref: '#/components/schemas/MeterReading' } } } }
+        '403': { description: Not assigned to this shift/nozzle }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Shift is not open (corrections lock at close), or reading already superseded }
+
+  /api/v1/shifts/{id}/dip-readings:
+    parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Readings]
+      summary: List active tank dip readings (resolved volumes)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/DipReadingList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Readings]
+      summary: Capture an opening/closing dip (volume resolved server-side)
+      description: Volume + chart_id are snapshotted from the tank's active calibration chart. Self-scoped like meter capture (reading.edit / reading.override). Open shift only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tank_id, reading_type, dip_mm]
+              properties:
+                tank_id:       { type: string, format: uuid }
+                reading_type:  { type: string, enum: [opening, closing] }
+                dip_mm:        { type: number }
+                water_mm:      { type: number }
+                temperature_c: { type: number }
+      responses:
+        '201': { description: Captured, content: { application/json: { schema: { $ref: '#/components/schemas/DipReading' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: No assigned nozzle draws from this tank on the shift }
+        '409': { description: Tank has no active chart, or a dip of that type exists }
+        '422': { description: Dip outside the chart's range, or tank not assigned on the shift }
+
+  /api/v1/shifts/{id}/dip-readings/{readingID}/correct:
+    post:
+      tags: [Readings]
+      summary: Supersede a dip reading (open shift only)
+      parameters:
+        - { in: path, name: id,        required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: readingID, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [dip_mm]
+              properties:
+                dip_mm:        { type: number }
+                water_mm:      { type: number }
+                temperature_c: { type: number }
+      responses:
+        '200': { description: Corrected, content: { application/json: { schema: { $ref: '#/components/schemas/DipReading' } } } }
+        '403': { description: No assigned nozzle draws from this tank on the shift }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Shift is not open, or reading already superseded }
+
+  /api/v1/shifts/{id}/close:
+    post:
+      tags: [Shifts]
+      summary: Close a shift (shift.close)
+      description: Requires opening+closing meter for every assigned nozzle and a closing dip for every tank behind them. Snapshots per-nozzle close lines and expected cash.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Closed, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftCloseSummary' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Shift is not open }
+        '422': { description: No nozzle assignments, or missing/rolled-back readings (lists the offending ids) }
+
+  /api/v1/shifts/{id}/close-summary:
+    get:
+      tags: [Shifts]
+      summary: Close lines + expected cash + cash submission
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftCloseSummary' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shifts/{id}/cash-submission:
+    post:
+      tags: [Shifts]
+      summary: Submit the cash tender breakdown for a closed shift
+      description: Attendants (cash.submit) submit only for shifts they're on; supervisors (cash.override) for any. Variance over threshold auto-raises a blocking exception.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cash_amount]
+              properties:
+                cash_amount:         { type: number }
+                mobile_money_amount: { type: number }
+                card_amount:         { type: number }
+                credit_amount:       { type: number }
+                notes:               { type: string }
+      responses:
+        '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/CashSubmission' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not assigned to this shift }
+        '409': { description: Shift not closed, or cash already submitted }
+
+  /api/v1/shifts/{id}/status:
+    patch:
+      tags: [Shifts]
+      summary: Approve a closed shift (shift.approve)
+      description: Refused while the shift has open exceptions. Close is via POST /close, not here.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [approved] } } }
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Shift' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Shift not closed, or open exceptions remain }
+
+  /api/v1/shifts/{id}/exceptions:
+    get:
+      tags: [Shifts]
+      summary: List a shift's exceptions
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftExceptionList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shift-exceptions/{id}/status:
+    patch:
+      tags: [Shifts]
+      summary: Resolve a shift exception (shift.approve)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [status], properties: { status: { type: string, enum: [resolved] } } }
+      responses:
+        '200': { description: Resolved, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftException' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already resolved }
+
+  /api/v1/stations/{stationID}/operations-overview:
+    get:
+      tags: [Operations]
+      summary: Supervisor dashboard — active day + its shifts in one call
+      description: The station's latest open/closed operating day with every shift (attendants, assignments, close totals, cash status, exceptions). station.read.
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OperationsOverview' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1188,6 +1582,10 @@ components:
         status:            { type: string }
         installation_date: { type: string, format: date }
         decommission_date: { type: string, format: date }
+        current_litres:            { type: number, description: Latest dip-resolved volume; station overview only }
+        current_dip_reading_type:  { type: string, enum: [opening, closing], description: Station overview only }
+        current_dip_recorded_at:   { type: string, format: date-time, description: Station overview only }
+        current_dip_business_date: { type: string, format: date, description: Station overview only }
     TankCreate:
       type: object
       required: [station_id, product_id, name, code, capacity_litres]
@@ -1393,4 +1791,218 @@ components:
         station:        { $ref: '#/components/schemas/Station' }
         tanks:          { type: array, items: { $ref: '#/components/schemas/Tank' } }
         pumps:          { type: array, items: { $ref: '#/components/schemas/PumpWithNozzles' } }
+        open_shifts:    { type: array, items: { $ref: '#/components/schemas/ShiftSummary' } }
         open_incidents: { type: array, items: { $ref: '#/components/schemas/Incident' } }
+
+    OperatingDay:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        tenant_id:     { type: string, format: uuid }
+        station_id:    { type: string, format: uuid }
+        business_date: { type: string, format: date }
+        status:        { type: string, enum: [open, closed, locked] }
+        opened_by:     { type: string, format: uuid }
+        opened_at:     { type: string, format: date-time }
+        closed_by:     { type: string, format: uuid }
+        closed_at:     { type: string, format: date-time }
+        locked_by:     { type: string, format: uuid }
+        locked_at:     { type: string, format: date-time }
+        notes:         { type: string }
+    OperatingDayList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OperatingDay' } }
+        count: { type: integer }
+
+    Shift:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        tenant_id:        { type: string, format: uuid }
+        station_id:       { type: string, format: uuid }
+        operating_day_id: { type: string, format: uuid }
+        name:             { type: string }
+        status:           { type: string, enum: [open, closed, approved] }
+        opened_by:        { type: string, format: uuid }
+        opened_at:        { type: string, format: date-time }
+        closed_by:        { type: string, format: uuid }
+        closed_at:        { type: string, format: date-time }
+        approved_by:      { type: string, format: uuid }
+        approved_at:      { type: string, format: date-time }
+        notes:            { type: string }
+    ShiftList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Shift' } }
+        count: { type: integer }
+    ShiftAttendant:
+      type: object
+      properties:
+        shift_id:    { type: string, format: uuid }
+        user_id:     { type: string, format: uuid }
+        assigned_by: { type: string, format: uuid }
+        assigned_at: { type: string, format: date-time }
+    NozzleAssignment:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        shift_id:     { type: string, format: uuid }
+        nozzle_id:    { type: string, format: uuid }
+        attendant_id: { type: string, format: uuid }
+        assigned_at:  { type: string, format: date-time }
+    ShiftSummary:
+      allOf:
+        - $ref: '#/components/schemas/Shift'
+        - type: object
+          properties:
+            attendants:         { type: array, items: { $ref: '#/components/schemas/ShiftAttendant' } }
+            nozzle_assignments: { type: array, items: { $ref: '#/components/schemas/NozzleAssignment' } }
+    ShiftDetail:
+      allOf:
+        - $ref: '#/components/schemas/ShiftSummary'
+
+    MeterReading:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        tenant_id:     { type: string, format: uuid }
+        shift_id:      { type: string, format: uuid }
+        nozzle_id:     { type: string, format: uuid }
+        reading_type:  { type: string, enum: [opening, closing] }
+        reading:       { type: number }
+        recorded_by:   { type: string, format: uuid }
+        recorded_at:   { type: string, format: date-time }
+        supersedes_id: { type: string, format: uuid }
+        status:        { type: string, enum: [active, superseded] }
+    MeterDispensed:
+      type: object
+      properties:
+        nozzle_id:        { type: string, format: uuid }
+        opening:          { type: number }
+        closing:          { type: number }
+        litres_dispensed: { type: number }
+    MeterReadingList:
+      type: object
+      properties:
+        items:     { type: array, items: { $ref: '#/components/schemas/MeterReading' } }
+        count:     { type: integer }
+        dispensed: { type: array, items: { $ref: '#/components/schemas/MeterDispensed' } }
+    DipReading:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        tenant_id:     { type: string, format: uuid }
+        shift_id:      { type: string, format: uuid }
+        tank_id:       { type: string, format: uuid }
+        reading_type:  { type: string, enum: [opening, closing] }
+        dip_mm:        { type: number }
+        volume_litres: { type: number }
+        water_mm:      { type: number }
+        temperature_c: { type: number }
+        chart_id:      { type: string, format: uuid }
+        recorded_by:   { type: string, format: uuid }
+        recorded_at:   { type: string, format: date-time }
+        supersedes_id: { type: string, format: uuid }
+        status:        { type: string, enum: [active, superseded] }
+    DipReadingList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/DipReading' } }
+        count: { type: integer }
+
+    ShiftCloseLine:
+      type: object
+      properties:
+        nozzle_id:       { type: string, format: uuid }
+        opening_reading: { type: number }
+        closing_reading: { type: number }
+        litres_sold:     { type: number }
+        unit_price:      { type: number }
+        expected_value:  { type: number }
+    CashSubmission:
+      type: object
+      properties:
+        id:                  { type: string, format: uuid }
+        shift_id:            { type: string, format: uuid }
+        expected_cash:       { type: number }
+        cash_amount:         { type: number }
+        mobile_money_amount: { type: number }
+        card_amount:         { type: number }
+        credit_amount:       { type: number }
+        submitted_total:     { type: number }
+        variance:            { type: number }
+        submitted_by:        { type: string, format: uuid }
+        submitted_at:        { type: string, format: date-time }
+        notes:               { type: string }
+    ShiftCloseSummary:
+      type: object
+      properties:
+        shift:           { $ref: '#/components/schemas/Shift' }
+        lines:           { type: array, items: { $ref: '#/components/schemas/ShiftCloseLine' } }
+        expected_cash:   { type: number }
+        cash_submission: { oneOf: [{ $ref: '#/components/schemas/CashSubmission' }, { type: 'null' }] }
+    ShiftException:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        tenant_id:   { type: string, format: uuid }
+        shift_id:    { type: string, format: uuid }
+        type:        { type: string, enum: [missing_reading, cash_variance, meter_rollback, late_close, other] }
+        severity:    { type: string }
+        detail:      { type: string }
+        status:      { type: string, enum: [open, resolved] }
+        raised_at:   { type: string, format: date-time }
+        resolved_by: { type: string, format: uuid }
+        resolved_at: { type: string, format: date-time }
+    ShiftExceptionList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ShiftException' } }
+        count: { type: integer }
+
+    MyShiftNozzle:
+      type: object
+      properties:
+        nozzle_id:            { type: string, format: uuid }
+        pump_number:          { type: integer }
+        nozzle_number:        { type: integer }
+        product_name:         { type: string }
+        product_color:        { type: string }
+        tank_code:            { type: string }
+        default_price:        { type: number }
+        meter_decimal_places: { type: integer }
+        opening_reading:      { type: number }
+        closing_reading:      { type: number }
+    MyShift:
+      type: object
+      properties:
+        shift:           { oneOf: [{ $ref: '#/components/schemas/Shift' }, { type: 'null' }] }
+        assigned_nozzles: { type: array, items: { $ref: '#/components/schemas/MyShiftNozzle' } }
+        expected_cash:   { type: number }
+        cash_submission: { oneOf: [{ $ref: '#/components/schemas/CashSubmission' }, { type: 'null' }] }
+
+    OperationsAttendant:
+      type: object
+      properties:
+        user_id:   { type: string, format: uuid }
+        full_name: { type: string }
+        email:     { type: string, format: email }
+    OperationsShift:
+      allOf:
+        - $ref: '#/components/schemas/Shift'
+        - type: object
+          properties:
+            attendants:          { type: array, items: { $ref: '#/components/schemas/OperationsAttendant' } }
+            nozzle_assignments:  { type: array, items: { $ref: '#/components/schemas/NozzleAssignment' } }
+            expected_cash:       { type: number }
+            litres_sold:         { type: number }
+            cash_submission:     { oneOf: [{ $ref: '#/components/schemas/CashSubmission' }, { type: 'null' }] }
+            exceptions:          { type: array, items: { $ref: '#/components/schemas/ShiftException' } }
+            open_exception_count: { type: integer }
+    OperationsOverview:
+      type: object
+      properties:
+        station: { $ref: '#/components/schemas/Station' }
+        day:     { oneOf: [{ $ref: '#/components/schemas/OperatingDay' }, { type: 'null' }] }
+        shifts:  { type: array, items: { $ref: '#/components/schemas/OperationsShift' } }
