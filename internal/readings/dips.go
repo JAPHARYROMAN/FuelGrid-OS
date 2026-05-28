@@ -121,13 +121,31 @@ func (r *Repo) SupersedeDip(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UU
 	return nil
 }
 
-// LatestDipVolumesForStation returns the most recent active dip's volume for
-// each tank at a station — the dashboard's current fill level per tank.
-func (r *Repo) LatestDipVolumesForStation(ctx context.Context, tenantID, stationID uuid.UUID) (map[uuid.UUID]float64, error) {
+// LatestDip is the most recent active dip for a tank plus the metadata a
+// dashboard needs to judge how "current" it is: when it was taken, whether it
+// was an opening or closing read, and the business date of the operating day
+// it belongs to.
+type LatestDip struct {
+	TankID       uuid.UUID
+	VolumeLitres float64
+	ReadingType  string
+	RecordedAt   time.Time
+	BusinessDate time.Time
+}
+
+// LatestDipsForStation returns, per tank at a station, its most recent active
+// dip with metadata. "Current" is defined as the latest active reading by
+// recorded_at regardless of day; the caller gets the business date and
+// reading type so a stale (prior-day) reading is visible rather than silently
+// presented as today's level.
+func (r *Repo) LatestDipsForStation(ctx context.Context, tenantID, stationID uuid.UUID) (map[uuid.UUID]LatestDip, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT DISTINCT ON (d.tank_id) d.tank_id, d.volume_litres
+		SELECT DISTINCT ON (d.tank_id)
+		       d.tank_id, d.volume_litres, d.reading_type, d.recorded_at, od.business_date
 		FROM tank_dip_readings d
-		JOIN tanks t ON t.id = d.tank_id
+		JOIN tanks t          ON t.id  = d.tank_id
+		JOIN shifts sh        ON sh.id = d.shift_id
+		JOIN operating_days od ON od.id = sh.operating_day_id
 		WHERE d.tenant_id = $1 AND d.status = 'active' AND t.station_id = $2
 		ORDER BY d.tank_id, d.recorded_at DESC
 	`, tenantID, stationID)
@@ -135,14 +153,13 @@ func (r *Repo) LatestDipVolumesForStation(ctx context.Context, tenantID, station
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[uuid.UUID]float64{}
+	out := map[uuid.UUID]LatestDip{}
 	for rows.Next() {
-		var tankID uuid.UUID
-		var vol float64
-		if err := rows.Scan(&tankID, &vol); err != nil {
+		var d LatestDip
+		if err := rows.Scan(&d.TankID, &d.VolumeLitres, &d.ReadingType, &d.RecordedAt, &d.BusinessDate); err != nil {
 			return nil, err
 		}
-		out[tankID] = vol
+		out[d.TankID] = d
 	}
 	return out, rows.Err()
 }

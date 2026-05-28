@@ -107,6 +107,10 @@ export interface Tank {
   decommission_date?: string;
   /** Latest dip-resolved volume; present only on the station overview. */
   current_litres?: number;
+  /** Metadata for current_litres, so the UI can flag a stale (prior-day) read. */
+  current_dip_reading_type?: 'opening' | 'closing';
+  current_dip_recorded_at?: string;
+  current_dip_business_date?: string;
 }
 
 export interface Pump {

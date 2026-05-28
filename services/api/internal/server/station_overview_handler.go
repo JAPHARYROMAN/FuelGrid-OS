@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -102,8 +103,9 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 		nozzlesByPump[dto.PumpID] = append(nozzlesByPump[dto.PumpID], dto)
 	}
 
-	// Latest dip-resolved volume per tank, for the visual fill level.
-	currentByTank, err := s.readings.LatestDipVolumesForStation(ctx, actor.TenantID, id)
+	// Latest dip-resolved volume + metadata per tank, for the visual fill
+	// level (and so the dashboard can flag a stale, prior-day reading).
+	currentByTank, err := s.readings.LatestDipsForStation(ctx, actor.TenantID, id)
 	if err != nil {
 		s.logger.Error("station overview: dip volumes", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -112,9 +114,15 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 	tanks := make([]tankDTO, 0, len(tankRows))
 	for i := range tankRows {
 		dto := toTankDTO(&tankRows[i])
-		if v, ok := currentByTank[tankRows[i].ID]; ok {
-			vv := v
-			dto.CurrentLitres = &vv
+		if d, ok := currentByTank[tankRows[i].ID]; ok {
+			vol := d.VolumeLitres
+			dto.CurrentLitres = &vol
+			rt := d.ReadingType
+			dto.CurrentDipReadingType = &rt
+			at := d.RecordedAt.Format(time.RFC3339)
+			dto.CurrentDipRecordedAt = &at
+			bd := d.BusinessDate.Format(dateLayout)
+			dto.CurrentDipBusinessDate = &bd
 		}
 		tanks = append(tanks, dto)
 	}

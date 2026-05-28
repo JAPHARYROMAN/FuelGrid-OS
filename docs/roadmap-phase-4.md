@@ -30,6 +30,7 @@ New conventions specific to Phase 4:
 | Sales posting trigger | Metered sales post to the ledger only when a Phase-3 shift is **approved** — Phase 4 builds exclusively on signed-off numbers, never on open/closed-but-unapproved shifts. |
 | Reconciliation grain | One reconciliation per `(tank, operating_day)`. It freezes the book figure, the physical (closing dip) figure, and the variance — a re-strap or late correction can't rewrite a sealed reconciliation. |
 | Variance classification | Variance is judged against the product's `loss_tolerance_percent` (Phase-2 config): within tolerance is informational; over tolerance raises a blocking exception. |
+| Decimal precision | Ledger-grade values (movement litres, balances, variances) are parsed and carried as decimals — not `float64`/JS `number` — before the ledger posts. This closes the Phase-3 audit P3: Phase 3's float handling was fine for operational workflow but the stock ledger needs deterministic decimal arithmetic. |
 
 ---
 

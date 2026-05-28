@@ -235,3 +235,23 @@ A few Phase-3 decisions lock shape for later phases:
 - **Reading immutability (supersede, never overwrite)** is the audit foundation regulators and Phase-10 fraud detection will lean on; if it's bypassed now, later phases inherit untrustworthy history.
 
 If any of these change, the migration story for Phase 4+ will need careful sequencing.
+
+---
+
+## Post-audit hardening (2026-05-28)
+
+The Phase 3 audit (`docs/phase-3-audit-report.md`) found two release blockers and a set of integrity gaps. Resolutions:
+
+**P1 — Attendant write self-scope.** Display was self-scoped but the write APIs only checked station-scoped permission, so a station attendant could write readings/cash for shifts or nozzles they weren't assigned to. Fixed: attendants holding `reading.edit` / `cash.submit` are now restricted in-handler to shifts they're on and nozzles/tanks assigned to them; supervisors/managers get new `reading.override` / `cash.override` permissions (migration `0021`) that write across a station. The nozzle-assigned-to-shift invariant is enforced for *all* roles.
+
+**P1 — Post-close correction lock.** Meter/dip corrections were allowed until *approved*, but `shift_close_lines` / expected cash freeze at *close* — so a post-close correction could desync the approved facts Phase 4 posts from. Fixed: corrections are now blocked once a shift is `closed` (open-only). A controlled reopen/reclose workflow is deferred; if one lands it must transactionally void close lines + cash + exceptions.
+
+**P2 — Schema integrity.** Migration `0022` ties each nozzle assignment to a real `shift_attendants` row (`ON DELETE CASCADE`, so unassigning an attendant cleans up their nozzle rows). Migration `0023` pins a shift to its operating day's station and a nozzle assignment to the shift+nozzle station (carrying `station_id`). Close is rejected for a shift with zero nozzle assignments.
+
+**P2 — Station "current stock" signal.** The overview's per-tank fill level now carries the latest dip's `reading_type`, `recorded_at`, and the `business_date` of the day it was taken, so the dashboard can flag a stale (prior-day) reading instead of presenting it as today's. "Current" is defined as the latest active dip by recorded time.
+
+**P3 — Operating-day reopen (kept, intentional).** `closed → open` is a deliberate, audited (`operating_day.reopened`), `operations.manage_day`-gated escape hatch for fixing a premature close. A `locked` day cannot reopen (terminal), and Phase 4 posts off shift *approval* (not day close) and never off a locked day, so reopen can't corrupt the ledger.
+
+**P3 — Decimal precision (deferred to Phase 4).** Phase 3 moves litres/cash through `float64`/JS `number`, which is fine for operational workflow but not accounting-grade. Phase 4 will parse and store ledger-grade values as decimals before the stock ledger posts — see the Phase 4 roadmap.
+
+Still open from the audit and tracked separately: full Phase 3 OpenAPI coverage, DB-backed Phase 3 integration tests, and the remaining `/operations` (open day/shift, assign, close) and `/my-shift` (dip capture) UI actions.
