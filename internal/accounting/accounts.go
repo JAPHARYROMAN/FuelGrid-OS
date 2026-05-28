@@ -61,6 +61,7 @@ func scanAccount(row pgx.Row, a *Account) error {
 // defaultChart is the seeded fuel-retail chart of accounts.
 var defaultChart = []AccountInput{
 	{Code: "1000", Name: "Cash on Hand", Type: "asset", NormalBalance: "debit", SystemKey: ptrStr("cash_on_hand")},
+	{Code: "1005", Name: "Petty Cash", Type: "asset", NormalBalance: "debit", SystemKey: ptrStr("petty_cash")},
 	{Code: "1010", Name: "Bank Clearing", Type: "asset", NormalBalance: "debit", SystemKey: ptrStr("bank_clearing")},
 	{Code: "1020", Name: "Bank", Type: "asset", NormalBalance: "debit", SystemKey: ptrStr("bank")},
 	{Code: "1100", Name: "Accounts Receivable", Type: "asset", NormalBalance: "debit", SystemKey: ptrStr("accounts_receivable")},

@@ -18,12 +18,12 @@ func TestPhase7_AccountingFoundation(t *testing.T) {
 	ctx := context.Background()
 	_, _, admin := h.adminContext(t, ctx)
 
-	// Seed the default chart of accounts (16 accounts).
+	// Seed the default chart of accounts (17 accounts).
 	code, seeded := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{})
-	if code != http.StatusOK || seeded["created"].(float64) != 16 {
+	if code != http.StatusOK || seeded["created"].(float64) != 17 {
 		t.Fatalf("seed chart: %d %v", code, seeded)
 	}
-	if code, acc := h.getJSON(t, "/api/v1/accounts", admin); code != http.StatusOK || acc["count"].(float64) != 16 {
+	if code, acc := h.getJSON(t, "/api/v1/accounts", admin); code != http.StatusOK || acc["count"].(float64) != 17 {
 		t.Fatalf("list accounts: %d count %v", code, acc["count"])
 	}
 
@@ -405,6 +405,89 @@ func TestPhase7_Receivables(t *testing.T) {
 	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
 		got["status"] != "paid" || got["outstanding_amount"] != "0.00" {
 		t.Fatalf("invoice after full payment = %v", got)
+	}
+
+	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
+		t.Fatalf("trial balance not balanced: %v", tb)
+	}
+}
+
+// TestPhase7_ExpensesAndPettyCash covers Category E: an expense flows
+// draft -> submitted -> approved -> posted (debit expense, credit cash), and a
+// petty-cash float is topped up, spent against, guarded from overdraw, and
+// reconciled with the variance posting to cash over/short.
+func TestPhase7_ExpensesAndPettyCash(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	station := h.ids.station1.String()
+
+	// --- Expense: draft -> submitted -> approved -> posted ---
+	code, exp := h.invPostJSON(t, "/api/v1/expenses", admin, map[string]any{
+		"station_id": station, "payee": "City Power", "expense_date": "2026-06-08",
+		"amount": "1200", "payment_mode": "cash", "reference": "UTIL-06",
+	})
+	if code != http.StatusCreated || exp["status"] != "draft" || exp["amount"] != "1200.00" {
+		t.Fatalf("create expense = %d %v", code, exp)
+	}
+	expID := exp["id"].(string)
+	// Posting before approval is refused.
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/post", admin, nil, ""); code != http.StatusConflict {
+		t.Fatalf("post before approve: %d, want 409", code)
+	}
+	for _, action := range []string{"submit", "approve", "post"} {
+		if code, raw := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/"+action, admin, nil, ""); code != http.StatusOK {
+			t.Fatalf("expense %s: %d %s", action, code, raw)
+		}
+	}
+	if code, got := h.getJSON(t, "/api/v1/expenses/"+expID, admin); code != http.StatusOK ||
+		got["status"] != "posted" || got["journal_entry_id"] == nil {
+		t.Fatalf("expense after post = %v", got)
+	}
+
+	// --- Petty cash: top up, spend, overdraw guard, reconcile ---
+	code, fl := h.invPostJSON(t, "/api/v1/petty-cash-floats", admin,
+		map[string]any{"station_id": station, "name": "Front desk float"})
+	if code != http.StatusCreated {
+		t.Fatalf("create float = %d %v", code, fl)
+	}
+	floatID := fl["id"].(string)
+
+	// Top up 10,000.
+	code, top := h.invPostJSON(t, "/api/v1/petty-cash-floats/"+floatID+"/transactions", admin,
+		map[string]any{"txn_type": "topup", "amount": "10000", "date": "2026-06-01"})
+	if code != http.StatusCreated || top["balance_after"] != "10000.00" {
+		t.Fatalf("topup = %d %v", code, top)
+	}
+	// Spend 1,500 on supplies.
+	code, spend := h.invPostJSON(t, "/api/v1/petty-cash-floats/"+floatID+"/transactions", admin,
+		map[string]any{"txn_type": "spend", "amount": "1500", "date": "2026-06-05", "description": "Cleaning supplies"})
+	if code != http.StatusCreated || spend["balance_after"] != "8500.00" {
+		t.Fatalf("spend = %d %v", code, spend)
+	}
+	// Overdrawing is refused without an override.
+	if code, _ := h.invPostJSON(t, "/api/v1/petty-cash-floats/"+floatID+"/transactions", admin,
+		map[string]any{"txn_type": "spend", "amount": "100000", "date": "2026-06-06"}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("overdraw: %d, want 422", code)
+	}
+	// Reconcile against a count of 8,400: a 100 shortfall to cash over/short.
+	code, rec := h.invPostJSON(t, "/api/v1/petty-cash-floats/"+floatID+"/reconcile", admin,
+		map[string]any{"counted_cash": "8400", "date": "2026-06-10"})
+	if code != http.StatusOK || rec["variance"] != "-100.00" {
+		t.Fatalf("reconcile = %d %v", code, rec)
+	}
+	if code, got := h.getJSON(t, "/api/v1/petty-cash-floats/"+floatID, admin); code != http.StatusOK || got["balance"] != "8400.00" {
+		t.Fatalf("float after reconcile = %v", got)
 	}
 
 	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {

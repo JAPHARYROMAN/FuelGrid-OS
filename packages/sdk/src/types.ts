@@ -987,6 +987,48 @@ export interface CustomerPayment {
   journal_entry_id?: string;
 }
 
+export interface ExpenseCategory {
+  id: string;
+  name: string;
+  account_key: string;
+  status: string;
+}
+
+export interface Expense {
+  id: string;
+  station_id?: string;
+  category_id?: string;
+  payee?: string;
+  expense_date: string;
+  amount: string;
+  account_key: string;
+  payment_mode: string;
+  reference?: string;
+  status: string;
+  journal_entry_id?: string;
+  approved_by?: string;
+}
+
+export interface PettyCashFloat {
+  id: string;
+  station_id: string;
+  name: string;
+  balance: string;
+  status: string;
+}
+
+export interface PettyCashTransaction {
+  id: string;
+  txn_type: string;
+  amount: string;
+  balance_after: string;
+  description?: string;
+  account_key?: string;
+  overdraw: boolean;
+  journal_entry_id?: string;
+  created_at?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

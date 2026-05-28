@@ -19,6 +19,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/expenses"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
@@ -67,6 +68,7 @@ type Server struct {
 
 	accounting     *accounting.Repo
 	banking        *banking.Repo
+	expenses       *expenses.Repo
 	companies      *companies.Repo
 	regions        *regions.Repo
 	stations       *stations.Repo
@@ -109,6 +111,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	if deps.DB != nil {
 		s.accounting = accounting.New(deps.DB)
 		s.banking = banking.New(deps.DB)
+		s.expenses = expenses.New(deps.DB)
 		s.companies = companies.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
@@ -485,6 +488,31 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							Post("/customer-invoices/{id}/issue", s.handleIssueCustomerInvoice)
 						r.With(s.requirePermission("customer_payment.manage", nil)).
 							Post("/customer-payments", s.handlePostCustomerPayment)
+
+						// Expenses & petty cash (Phase 7, Stages 11-12).
+						r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
+							r.Get("/expense-categories", s.handleListExpenseCategories)
+							r.Get("/expenses", s.handleListExpenses)
+							r.Get("/expenses/{id}", s.handleGetExpense)
+							r.Get("/petty-cash-floats", s.handleListPettyCashFloats)
+							r.Get("/petty-cash-floats/{id}", s.handleGetPettyCashFloat)
+							r.Get("/petty-cash-floats/{id}/transactions", s.handleListPettyCashTransactions)
+						})
+						r.With(s.requirePermission("expense.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/expense-categories", s.handleCreateExpenseCategory)
+							r.Post("/expenses", s.handleCreateExpense)
+							r.Post("/expenses/{id}/submit", s.handleSubmitExpense)
+						})
+						r.With(s.requirePermission("expense.approve", nil)).
+							Post("/expenses/{id}/approve", s.handleApproveExpense)
+						r.With(s.requirePermission("expense.post", nil)).
+							Post("/expenses/{id}/post", s.handlePostExpense)
+						r.With(s.requirePermission("petty_cash.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/petty-cash-floats", s.handleCreatePettyCashFloat)
+							r.Post("/petty-cash-floats/{id}/transactions", s.handlePettyCashTransaction)
+						})
+						r.With(s.requirePermission("petty_cash.reconcile", nil)).
+							Post("/petty-cash-floats/{id}/reconcile", s.handleReconcilePettyCash)
 
 						// Finance reports + dashboard (Phase 7, Stages 13, 15) —
 						// read-only over posted journal lines, gated by finance.read.

@@ -19,6 +19,8 @@ import type {
   CalibrationPreview,
   Company,
   DipReading,
+  Expense,
+  ExpenseCategory,
   Incident,
   InventoryOverview,
   LoginRequest,
@@ -33,6 +35,8 @@ import type {
   OperatingDay,
   OperationsOverview,
   Paginated,
+  PettyCashFloat,
+  PettyCashTransaction,
   PriceBoardEntry,
   PriceChange,
   Product,
@@ -1741,6 +1745,131 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<{ payment_id: string; journal_entry_id: string }> {
     return this.request('/api/v1/customer-payments', { method: 'POST', body: req, signal });
+  }
+
+  // ----------- Expenses & petty cash (Phase 7) -----------
+
+  listExpenseCategories(signal?: AbortSignal): Promise<Paginated<ExpenseCategory>> {
+    return this.request<Paginated<ExpenseCategory>>('/api/v1/expense-categories', { signal });
+  }
+
+  createExpenseCategory(
+    req: { name: string; account_key?: string },
+    signal?: AbortSignal,
+  ): Promise<ExpenseCategory> {
+    return this.request<ExpenseCategory>('/api/v1/expense-categories', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listExpenses(opts: { status?: string } = {}, signal?: AbortSignal): Promise<Paginated<Expense>> {
+    const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : '';
+    return this.request<Paginated<Expense>>(`/api/v1/expenses${qs}`, { signal });
+  }
+
+  getExpense(id: string, signal?: AbortSignal): Promise<Expense> {
+    return this.request<Expense>(`/api/v1/expenses/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createExpense(
+    req: {
+      station_id?: string;
+      category_id?: string;
+      payee?: string;
+      expense_date?: string;
+      amount: string;
+      account_key?: string;
+      payment_mode?: string;
+      reference?: string;
+      notes?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Expense> {
+    return this.request<Expense>('/api/v1/expenses', { method: 'POST', body: req, signal });
+  }
+
+  submitExpense(id: string, signal?: AbortSignal): Promise<Expense> {
+    return this.request<Expense>(`/api/v1/expenses/${encodeURIComponent(id)}/submit`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  approveExpense(id: string, signal?: AbortSignal): Promise<Expense> {
+    return this.request<Expense>(`/api/v1/expenses/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  postExpense(id: string, signal?: AbortSignal): Promise<Expense> {
+    return this.request<Expense>(`/api/v1/expenses/${encodeURIComponent(id)}/post`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  listPettyCashFloats(signal?: AbortSignal): Promise<Paginated<PettyCashFloat>> {
+    return this.request<Paginated<PettyCashFloat>>('/api/v1/petty-cash-floats', { signal });
+  }
+
+  getPettyCashFloat(id: string, signal?: AbortSignal): Promise<PettyCashFloat> {
+    return this.request<PettyCashFloat>(`/api/v1/petty-cash-floats/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  createPettyCashFloat(
+    req: { station_id: string; name: string },
+    signal?: AbortSignal,
+  ): Promise<PettyCashFloat> {
+    return this.request<PettyCashFloat>('/api/v1/petty-cash-floats', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listPettyCashTransactions(
+    floatID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<PettyCashTransaction>> {
+    return this.request<Paginated<PettyCashTransaction>>(
+      `/api/v1/petty-cash-floats/${encodeURIComponent(floatID)}/transactions`,
+      { signal },
+    );
+  }
+
+  recordPettyCashTransaction(
+    floatID: string,
+    req: {
+      txn_type: 'topup' | 'spend' | 'reimbursement' | 'adjustment' | 'transfer';
+      amount: string;
+      date?: string;
+      description?: string;
+      account_key?: string;
+      overdraw?: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<PettyCashTransaction> {
+    return this.request<PettyCashTransaction>(
+      `/api/v1/petty-cash-floats/${encodeURIComponent(floatID)}/transactions`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  reconcilePettyCash(
+    floatID: string,
+    req: { counted_cash: string; date?: string },
+    signal?: AbortSignal,
+  ): Promise<{ id: string; expected_balance: string; counted_cash: string; variance: string }> {
+    return this.request(`/api/v1/petty-cash-floats/${encodeURIComponent(floatID)}/reconcile`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   // ----------- Users -----------
