@@ -28,6 +28,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/pumps"
 	"github.com/japharyroman/fuelgrid-os/internal/readings"
+	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
@@ -56,20 +57,21 @@ type Server struct {
 	policy   *policy.Service
 	metrics  *observability.Metrics
 
-	companies   *companies.Repo
-	regions     *regions.Repo
-	stations    *stations.Repo
-	products    *products.Repo
-	tanks       *tanks.Repo
-	pumps       *pumps.Repo
-	nozzles     *nozzles.Repo
-	calibration *calibration.Repo
-	incidents   *incidents.Repo
-	operations  *operations.Repo
-	readings    *readings.Repo
-	inventory   *inventory.Repo
-	userRepo    *repo.UserRepo
-	sessionRepo *repo.SessionRepo
+	companies      *companies.Repo
+	regions        *regions.Repo
+	stations       *stations.Repo
+	products       *products.Repo
+	tanks          *tanks.Repo
+	pumps          *pumps.Repo
+	nozzles        *nozzles.Repo
+	calibration    *calibration.Repo
+	incidents      *incidents.Repo
+	operations     *operations.Repo
+	readings       *readings.Repo
+	inventory      *inventory.Repo
+	reconciliation *reconciliation.Repo
+	userRepo       *repo.UserRepo
+	sessionRepo    *repo.SessionRepo
 
 	http *http.Server
 }
@@ -101,6 +103,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.operations = operations.New(deps.DB)
 		s.readings = readings.New(deps.DB)
 		s.inventory = inventory.New(deps.DB)
+		s.reconciliation = reconciliation.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -282,6 +285,17 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Post("/tanks/{id}/deliveries", s.handleReceiveDelivery)
 						r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/deliveries", s.handleListStationDeliveries)
+
+						// Reconciliation (Phase 4, Stages 5-6). Preview/get/list ride
+						// reconciliation.read; run/adjust/seal are reconciliation.manage,
+						// all authorized in-handler against the tank's station.
+						r.Get("/tanks/{id}/reconciliation-preview", s.handleReconciliationPreview)
+						r.Get("/tanks/{id}/reconciliation", s.handleGetReconciliation)
+						r.Post("/tanks/{id}/reconciliations", s.handlePersistReconciliation)
+						r.Post("/reconciliations/{id}/adjustments", s.handleAdjustReconciliation)
+						r.Post("/reconciliations/{id}/seal", s.handleSealReconciliation)
+						r.With(s.requirePermission("reconciliation.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/reconciliations", s.handleListStationReconciliations)
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped

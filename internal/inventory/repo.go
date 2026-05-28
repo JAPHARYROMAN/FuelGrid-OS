@@ -70,6 +70,7 @@ func requiresOpening(movementType string) bool {
 // Movement is one row of a tank's stock ledger.
 type Movement struct {
 	ID            uuid.UUID
+	Seq           int64 // monotonic insertion order; the ledger's append sequence
 	TenantID      uuid.UUID
 	TankID        uuid.UUID
 	MovementType  string
@@ -103,14 +104,14 @@ type Repo struct{ pool *database.Pool }
 func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
-    id, tenant_id, tank_id, movement_type, source_ref_type, source_ref_id,
+    id, seq, tenant_id, tank_id, movement_type, source_ref_type, source_ref_id,
     litres, balance_after, recorded_by, recorded_at, supersedes_id, status,
     notes, created_at, updated_at
 `
 
 func scan(row pgx.Row, m *Movement) error {
 	return row.Scan(
-		&m.ID, &m.TenantID, &m.TankID, &m.MovementType, &m.SourceRefType, &m.SourceRefID,
+		&m.ID, &m.Seq, &m.TenantID, &m.TankID, &m.MovementType, &m.SourceRefType, &m.SourceRefID,
 		&m.Litres, &m.BalanceAfter, &m.RecordedBy, &m.RecordedAt, &m.SupersedesID, &m.Status,
 		&m.Notes, &m.CreatedAt, &m.UpdatedAt,
 	)

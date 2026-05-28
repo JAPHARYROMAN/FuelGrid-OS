@@ -368,7 +368,7 @@ func TestPhase4_SalesOnApproval(t *testing.T) {
 		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
 		t.Fatalf("lookup nozzle: %v", err)
 	}
-	shiftID := seedClosedShiftWithSale(t, ctx, h, adminID, nozzleID, 4200)
+	_, shiftID := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-20", 4200)
 
 	// Aggregation rolls the close line up to the tank.
 	rows, err := opsRepo.LitresSoldPerTankForShift(ctx, h.ids.tenantID, shiftID)
@@ -450,16 +450,126 @@ func TestPhase4_SalesOnApproval(t *testing.T) {
 	}
 }
 
-// seedClosedShiftWithSale inserts a closed shift on station1 with a single
-// frozen close line on the given nozzle, so the approval path has metered
-// sales to draw down. Returns the shift id.
-func seedClosedShiftWithSale(t *testing.T, ctx context.Context, h *harness, openedBy, nozzleID uuid.UUID, litresSold float64) uuid.UUID {
+func TestPhase4_Reconciliation(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// Give PMS a 1% loss tolerance so we can exercise both sides of the band.
+	if _, err := h.pool.Exec(ctx, `UPDATE products SET loss_tolerance_percent = 1.0 WHERE id = $1`, h.ids.pmsProduct); err != nil {
+		t.Fatalf("set tolerance: %v", err)
+	}
+	pms := "/api/v1/tanks/" + h.ids.tankPMS.String()
+	if code, _ := h.invPostJSON(t, pms+"/opening-balance", admin, map[string]any{"litres": 30000}); code != http.StatusCreated {
+		t.Fatalf("open: %d", code)
+	}
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	chartID := seedChart(t, ctx, h, h.ids.tankPMS)
+
+	// --- Day 1: sells 4,200 L; physical comes in 800 L short (over 1% tol). ---
+	day1, shift1 := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-21", 4200)
+	seedClosingDip(t, ctx, h, shift1, h.ids.tankPMS, chartID, adminID, 25000)
+
+	// Guard: reconciliation can't run before the day's shifts are approved.
+	if code, _ := h.invPostJSON(t, pms+"/reconciliations", admin, map[string]any{"operating_day_id": day1.String()}); code != http.StatusConflict {
+		t.Fatalf("reconcile before approval: %d, want 409", code)
+	}
+	// Approve shift1 -> posts -4,200 sales -> book 25,800.
+	if code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shift1.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json"); code != http.StatusOK {
+		t.Fatalf("approve shift1: %d %s", code, raw)
+	}
+
+	// Preview computes book vs physical without persisting.
+	if code, prev := h.getJSON(t, pms+"/reconciliation-preview?operating_day_id="+day1.String(), admin); code != http.StatusOK ||
+		prev["closing_book"].(float64) != 25800 || !prev["over_tolerance"].(bool) {
+		t.Fatalf("preview = %v (status %d)", prev, code)
+	}
+
+	// Persist: over tolerance (variance 800 > 258) -> exception.
+	code, body := h.invPostJSON(t, pms+"/reconciliations", admin, map[string]any{"operating_day_id": day1.String()})
+	if code != http.StatusCreated {
+		t.Fatalf("persist recon: %d %v", code, body)
+	}
+	if body["status"] != "exception" || !body["over_tolerance"].(bool) ||
+		body["opening_book"].(float64) != 30000 || body["sales_total"].(float64) != 4200 ||
+		body["closing_book"].(float64) != 25800 || body["closing_physical"].(float64) != 25000 ||
+		body["variance_litres"].(float64) != 800 {
+		t.Fatalf("day1 figures = %v", body)
+	}
+	reconID := body["id"].(string)
+
+	// Seal is blocked while over tolerance.
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/reconciliations/"+reconID+"/seal", admin, nil, ""); code != http.StatusConflict {
+		t.Fatalf("seal over tolerance: %d, want 409", code)
+	}
+
+	// A justified -800 adjustment brings book to physical, within tolerance.
+	code, body = h.invPostJSON(t, "/api/v1/reconciliations/"+reconID+"/adjustments", admin,
+		map[string]any{"litres": -800, "reason": "tank leak write-off"})
+	if code != http.StatusOK {
+		t.Fatalf("adjust: %d %v", code, body)
+	}
+	if body["status"] != "draft" || body["over_tolerance"].(bool) ||
+		body["adjustments_total"].(float64) != -800 || body["closing_book"].(float64) != 25000 ||
+		body["variance_litres"].(float64) != 0 {
+		t.Fatalf("after adjustment = %v", body)
+	}
+
+	// Seal freezes the reconciliation.
+	code, raw := h.do(t, http.MethodPost, "/api/v1/reconciliations/"+reconID+"/seal", admin, nil, "")
+	if code != http.StatusOK {
+		t.Fatalf("seal: %d %s", code, raw)
+	}
+	var sealed map[string]any
+	_ = json.Unmarshal(raw, &sealed)
+	if sealed["status"] != "sealed" {
+		t.Fatalf("sealed status = %v", sealed["status"])
+	}
+	// Ledger is reconciled to physical.
+	if _, b := h.getJSON(t, pms+"/book-balance", admin); b["book_balance"].(float64) != 25000 {
+		t.Fatalf("book balance after seal = %v, want 25000", b["book_balance"])
+	}
+	// Re-sealing is rejected.
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/reconciliations/"+reconID+"/seal", admin, nil, ""); code != http.StatusConflict {
+		t.Fatalf("re-seal: %d, want 409", code)
+	}
+
+	// --- Day 2: balance-forward — opening book must equal day 1's physical. ---
+	day2, shift2 := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-22", 1000)
+	seedClosingDip(t, ctx, h, shift2, h.ids.tankPMS, chartID, adminID, 24000)
+	if code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shift2.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json"); code != http.StatusOK {
+		t.Fatalf("approve shift2: %d %s", code, raw)
+	}
+	code, body = h.invPostJSON(t, pms+"/reconciliations", admin, map[string]any{"operating_day_id": day2.String()})
+	if code != http.StatusCreated {
+		t.Fatalf("persist day2 recon: %d %v", code, body)
+	}
+	if body["opening_book"].(float64) != 25000 {
+		t.Fatalf("day2 opening_book = %v, want 25000 (balance-forward from day1 physical)", body["opening_book"])
+	}
+	if body["closing_book"].(float64) != 24000 || body["variance_litres"].(float64) != 0 || body["status"] != "draft" {
+		t.Fatalf("day2 figures = %v", body)
+	}
+}
+
+// seedClosedDayShift inserts an operating day (on the given business date) and
+// a closed shift on station1 with a single frozen close line on the nozzle, so
+// the approval path has metered sales to draw down. Returns (dayID, shiftID).
+func seedClosedDayShift(t *testing.T, ctx context.Context, h *harness, openedBy, nozzleID uuid.UUID, businessDate string, litresSold float64) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	var dayID, shiftID uuid.UUID
 	if err := h.pool.QueryRow(ctx, `
 		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
 		VALUES ($1, $2, $3, $4) RETURNING id
-	`, h.ids.tenantID, h.ids.station1, time.Now().Format("2006-01-02"), openedBy).Scan(&dayID); err != nil {
+	`, h.ids.tenantID, h.ids.station1, businessDate, openedBy).Scan(&dayID); err != nil {
 		t.Fatalf("seed operating day: %v", err)
 	}
 	if err := h.pool.QueryRow(ctx, `
@@ -475,7 +585,32 @@ func seedClosedShiftWithSale(t *testing.T, ctx context.Context, h *harness, open
 	`, h.ids.tenantID, shiftID, nozzleID, litresSold); err != nil {
 		t.Fatalf("seed close line: %v", err)
 	}
-	return shiftID
+	return dayID, shiftID
+}
+
+// seedChart creates the tank's active calibration chart (one per tank), needed
+// as the FK target for seeded dips.
+func seedChart(t *testing.T, ctx context.Context, h *harness, tankID uuid.UUID) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO tank_calibration_charts (tenant_id, tank_id, name) VALUES ($1, $2, 'Recon Chart') RETURNING id
+	`, h.ids.tenantID, tankID).Scan(&id); err != nil {
+		t.Fatalf("seed chart: %v", err)
+	}
+	return id
+}
+
+// seedClosingDip records a closing dip for a tank on a shift at the given
+// physical volume — the figure a reconciliation compares book stock against.
+func seedClosingDip(t *testing.T, ctx context.Context, h *harness, shiftID, tankID, chartID, recordedBy uuid.UUID, volume float64) {
+	t.Helper()
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO tank_dip_readings (tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres, chart_id, recorded_by)
+		VALUES ($1, $2, $3, 'closing', 1000, $4, $5, $6)
+	`, h.ids.tenantID, shiftID, tankID, volume, chartID, recordedBy); err != nil {
+		t.Fatalf("seed closing dip: %v", err)
+	}
 }
 
 // seedFirstDip inserts the operating-day -> shift -> chart -> dip chain needed

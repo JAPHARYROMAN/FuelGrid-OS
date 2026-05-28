@@ -138,6 +138,33 @@ func (r *Repo) SupersedeDip(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UU
 	return nil
 }
 
+// ClosingDipForTankDay returns the tank's most recent active closing dip among
+// the shifts of one operating day — the physical figure a reconciliation
+// compares book stock against. Returns pgx.ErrNoRows when the tank has no
+// closing dip that day.
+func (r *Repo) ClosingDipForTankDay(ctx context.Context, tenantID, tankID, operatingDayID uuid.UUID) (*DipReading, error) {
+	var d DipReading
+	if err := scanDip(r.pool.QueryRow(ctx, `
+		SELECT `+prefixedDipColumns+`
+		FROM tank_dip_readings d
+		JOIN shifts sh ON sh.id = d.shift_id AND sh.tenant_id = d.tenant_id
+		WHERE d.tenant_id = $1 AND d.tank_id = $2 AND d.reading_type = 'closing'
+		  AND d.status = 'active' AND sh.operating_day_id = $3
+		ORDER BY d.recorded_at DESC, d.created_at DESC
+		LIMIT 1
+	`, tenantID, tankID, operatingDayID), &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// prefixedDipColumns is dipColumns qualified to the d alias for joins.
+const prefixedDipColumns = `
+    d.id, d.tenant_id, d.shift_id, d.tank_id, d.reading_type, d.dip_mm, d.volume_litres,
+    d.water_mm, d.temperature_c, d.chart_id, d.recorded_by, d.recorded_at,
+    d.supersedes_id, d.status, d.created_at, d.updated_at
+`
+
 // LatestDip is the most recent active dip for a tank plus the metadata a
 // dashboard needs to judge how "current" it is: when it was taken, whether it
 // was an opening or closing read, and the business date of the operating day
