@@ -4,6 +4,7 @@ import type {
   CalibrationChart,
   CalibrationPreview,
   Company,
+  DipReading,
   Incident,
   LoginRequest,
   LoginResponse,
@@ -767,6 +768,45 @@ export class Client {
     return this.request<MeterReading>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/meter-readings/${encodeURIComponent(readingID)}/correct`,
       { method: 'POST', body: { reading }, signal },
+    );
+  }
+
+  // ----------- Tank dip readings -----------
+
+  listDipReadings(shiftID: string, signal?: AbortSignal): Promise<Paginated<DipReading>> {
+    return this.request<Paginated<DipReading>>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/dip-readings`,
+      { signal },
+    );
+  }
+
+  captureDipReading(
+    shiftID: string,
+    req: {
+      tank_id: string;
+      reading_type: 'opening' | 'closing';
+      dip_mm: number;
+      water_mm?: number;
+      temperature_c?: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<DipReading> {
+    return this.request<DipReading>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/dip-readings`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  correctDipReading(
+    shiftID: string,
+    readingID: string,
+    req: { dip_mm: number; water_mm?: number; temperature_c?: number },
+    signal?: AbortSignal,
+  ): Promise<DipReading> {
+    return this.request<DipReading>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/dip-readings/${encodeURIComponent(readingID)}/correct`,
+      { method: 'POST', body: req, signal },
     );
   }
 

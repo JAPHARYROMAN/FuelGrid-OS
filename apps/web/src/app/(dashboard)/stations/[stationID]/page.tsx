@@ -185,7 +185,7 @@ export default function StationDashboardPage() {
                 capacityLitres={t.capacity_litres}
                 safeMinLitres={t.safe_min_litres}
                 safeMaxLitres={t.safe_max_litres}
-                currentLitres={null}
+                currentLitres={t.current_litres ?? null}
                 status={t.status}
               />
             ))}

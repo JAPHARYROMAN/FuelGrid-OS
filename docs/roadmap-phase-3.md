@@ -106,22 +106,22 @@ What the meters and dips actually say. These stages consume Phase 2's calibratio
 
 **Goal:** Opening and closing tank dips are captured in millimetres and resolved to litres via the calibration chart, with water and temperature recorded alongside.
 
-- [ ] Migration `0017_tank_dip_readings`: `tank_dip_readings` (id, tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres, water_mm, temperature_c, chart_id, recorded_by, recorded_at, supersedes_id, status, timestamps)
+- [x] Migration `0017_tank_dip_readings`: `tank_dip_readings` (id, tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres, water_mm, temperature_c, chart_id, recorded_by, recorded_at, supersedes_id, status, timestamps)
   - `reading_type IN ('opening', 'closing')`; volume + dip `numeric(14, 3)`
   - Partial unique: at most one active opening and one active closing per `(shift_id, tank_id)`
   - Composite tenant FKs to `shifts` and `tanks`; `chart_id` records which calibration chart resolved the volume
-- [ ] Reuse permission `reading.edit` (station-scoped)
-- [ ] Capture path calls the Phase-2 `calibration.Lookup(tankID, dip_mm)` and **snapshots** the resolved `volume_litres` + `chart_id` on the row (a later re-strap leaves history intact)
-- [ ] Endpoints:
+- [x] Reuse permission `reading.edit` (station-scoped)
+- [x] Capture path calls the Phase-2 `calibration.Lookup(tankID, dip_mm)` and **snapshots** the resolved `volume_litres` + `chart_id` on the row (a later re-strap leaves history intact)
+- [x] Endpoints:
   - `POST /api/v1/shifts/{id}/dip-readings` — capture an opening/closing dip (volume resolved server-side)
   - `GET /api/v1/shifts/{id}/dip-readings` — list with resolved volumes
   - `POST …/dip-readings/{id}/correct` — supersede (audited)
-- [ ] Reject (422) a dip outside the active chart's range; 409 if the tank has no active chart
-- [ ] Tank visual on `/stations/{id}` reads the latest dip's `volume_litres` to render a **real fill level** (replacing the Phase-2 "awaiting reading" placeholder)
-- [ ] Audit + outbox: `dip_reading.captured`, `dip_reading.corrected`
-- [ ] Seed: an opening dip for `MIK-01`'s PMS tank that resolves against the seeded 51-point chart
+- [x] Reject (422) a dip outside the active chart's range; 409 if the tank has no active chart
+- [x] Tank visual on `/stations/{id}` reads the latest dip's `volume_litres` to render a **real fill level** (replacing the Phase-2 "awaiting reading" placeholder)
+- [x] Audit + outbox: `dip_reading.captured`, `dip_reading.corrected`
+- [x] Seed: an opening dip for `MIK-01`'s PMS tank that resolves against the seeded 51-point chart
 
-**Done when:** Capturing a dip of 1240 mm on the PMS tank stores `volume_litres ≈ 12400` (via the calibration API) and the station dashboard's tank visual animates to that level.
+**Done when:** Capturing a dip of 1240 mm on the PMS tank stores `volume_litres ≈ 12400` (via the calibration API) and the station dashboard's tank visual animates to that level. *(API capture 1240 → 12400 and overview current_litres=12400 verified live; the visual is fed that value — animation not browser-confirmed in this environment.)*
 
 ---
 

@@ -105,6 +105,8 @@ export interface Tank {
   status: string;
   installation_date?: string;
   decommission_date?: string;
+  /** Latest dip-resolved volume; present only on the station overview. */
+  current_litres?: number;
 }
 
 export interface Pump {
@@ -263,6 +265,23 @@ export interface MeterReading {
   nozzle_id: string;
   reading_type: 'opening' | 'closing';
   reading: number;
+  recorded_by: string;
+  recorded_at: string;
+  supersedes_id?: string;
+  status: string;
+}
+
+export interface DipReading {
+  id: string;
+  tenant_id: string;
+  shift_id: string;
+  tank_id: string;
+  reading_type: 'opening' | 'closing';
+  dip_mm: number;
+  volume_litres: number;
+  water_mm?: number;
+  temperature_c?: number;
+  chart_id: string;
   recorded_by: string;
   recorded_at: string;
   supersedes_id?: string;

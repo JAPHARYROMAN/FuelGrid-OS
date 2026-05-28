@@ -338,6 +338,19 @@ func run() error {
 		return err
 	}
 
+	// Opening tank dip for MIK-01's PMS tank: 1240mm resolves to 12400L on
+	// the seeded linear chart (volume = dip*10). Snapshots the active chart.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO tank_dip_readings
+		    (tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres, chart_id, recorded_by)
+		SELECT $1, $2, t.id, 'opening', 1240.000, 12400.000, c.id, $3
+		FROM tanks t
+		JOIN tank_calibration_charts c ON c.tank_id = t.id AND c.status = 'active'
+		WHERE t.tenant_id = $1 AND t.station_id = $4 AND t.code = 'T1'
+	`, tenantID, shiftID, userID, station1ID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -358,6 +371,7 @@ func run() error {
 		"operating_day", "MIK-01: open for today",
 		"shift", "MIK-01: Morning (operator on 2 PMS nozzles)",
 		"meter_readings", "MIK-01 Morning: opening 10000 on 2 nozzles",
+		"dip_reading", "MIK-01 Morning: PMS tank opening 1240mm -> 12400L",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

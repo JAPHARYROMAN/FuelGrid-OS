@@ -304,6 +304,12 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Post("/shifts/{id}/meter-readings", s.handleCaptureMeterReading)
 						r.Post("/shifts/{id}/meter-readings/{readingID}/correct", s.handleCorrectMeterReading)
 
+						// Tank dip readings (Phase 3, Stage 4). Capture resolves
+						// litres via the tank's active calibration chart.
+						r.Get("/shifts/{id}/dip-readings", s.handleListDipReadings)
+						r.Post("/shifts/{id}/dip-readings", s.handleCaptureDipReading)
+						r.Post("/shifts/{id}/dip-readings/{readingID}/correct", s.handleCorrectDipReading)
+
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)
 						r.With(s.requirePermission("users.invite", nil)).

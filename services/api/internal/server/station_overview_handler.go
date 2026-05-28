@@ -102,9 +102,21 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 		nozzlesByPump[dto.PumpID] = append(nozzlesByPump[dto.PumpID], dto)
 	}
 
+	// Latest dip-resolved volume per tank, for the visual fill level.
+	currentByTank, err := s.readings.LatestDipVolumesForStation(ctx, actor.TenantID, id)
+	if err != nil {
+		s.logger.Error("station overview: dip volumes", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	tanks := make([]tankDTO, 0, len(tankRows))
 	for i := range tankRows {
-		tanks = append(tanks, toTankDTO(&tankRows[i]))
+		dto := toTankDTO(&tankRows[i])
+		if v, ok := currentByTank[tankRows[i].ID]; ok {
+			vv := v
+			dto.CurrentLitres = &vv
+		}
+		tanks = append(tanks, dto)
 	}
 
 	pumps := make([]pumpWithNozzlesDTO, 0, len(pumpRows))

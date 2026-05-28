@@ -34,6 +34,9 @@ type tankDTO struct {
 	Status           string    `json:"status"`
 	InstallationDate *string   `json:"installation_date,omitempty"`
 	DecommissionDate *string   `json:"decommission_date,omitempty"`
+	// CurrentLitres is the latest dip-resolved volume. Populated only by the
+	// station overview (from tank_dip_readings); nil elsewhere.
+	CurrentLitres *float64 `json:"current_litres,omitempty"`
 }
 
 func fmtDate(t *time.Time) *string {

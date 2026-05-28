@@ -7,6 +7,7 @@ export type {
   CalibrationChart,
   CalibrationPreview,
   Company,
+  DipReading,
   Incident,
   LoginRequest,
   LoginResponse,
