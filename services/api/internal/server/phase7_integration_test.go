@@ -156,3 +156,43 @@ func TestPhase7_Payables(t *testing.T) {
 		t.Fatalf("over-allocation: %d, want 422", code)
 	}
 }
+
+func TestPhase7_Reports(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+	// Recognize 5,000 of cash sales: debit cash, credit sales revenue.
+	if code, _ := h.invPostJSON(t, "/api/v1/journal-entries", admin, map[string]any{
+		"entry_date": "2026-06-12", "memo": "cash sale",
+		"lines": []map[string]any{
+			{"system_key": "cash_on_hand", "debit": "5000", "credit": "0"},
+			{"system_key": "sales_revenue", "debit": "0", "credit": "5000"},
+		},
+	}); code != http.StatusCreated {
+		t.Fatalf("post entry: %d", code)
+	}
+
+	// Trial balance balances; P&L shows the revenue; balance sheet shows cash.
+	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
+		t.Fatalf("trial balance not balanced: %v", tb)
+	}
+	if code, pl := h.getJSON(t, "/api/v1/finance/reports/profit-loss?from=2026-06-01&to=2026-06-30", admin); code != http.StatusOK ||
+		pl["revenue"] != "5000.00" || pl["net_profit"] != "5000.00" {
+		t.Fatalf("profit-loss = %v", pl)
+	}
+	if code, bsh := h.getJSON(t, "/api/v1/finance/reports/balance-sheet?as_of=2026-06-30", admin); code != http.StatusOK || bsh["assets"] != "5000.00" {
+		t.Fatalf("balance sheet = %v", bsh)
+	}
+	if code, ov := h.getJSON(t, "/api/v1/finance/overview", admin); code != http.StatusOK || ov["balance_sheet"] == nil {
+		t.Fatalf("finance overview = %v", ov)
+	}
+}

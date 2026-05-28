@@ -439,6 +439,16 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("supplier_payment.manage", nil)).
 							Post("/supplier-payments", s.handleRecordSupplierPayment)
 
+						// Finance reports + dashboard (Phase 7, Stages 13, 15) —
+						// read-only over posted journal lines, gated by finance.read.
+						r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
+							r.Get("/finance/overview", s.handleFinanceOverview)
+							r.Get("/finance/reports/trial-balance", s.handleTrialBalance)
+							r.Get("/finance/reports/profit-loss", s.handleIncomeStatement)
+							r.Get("/finance/reports/balance-sheet", s.handleBalanceSheet)
+							r.Get("/finance/reports/general-ledger", s.handleGeneralLedger)
+						})
+
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
 						// (pumps.calibrate), status changes fold into pumps.manage

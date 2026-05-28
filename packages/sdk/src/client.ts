@@ -1,6 +1,11 @@
 import type {
   Account,
   AccountingPeriod,
+  BalanceSheet,
+  FinanceOverview,
+  GeneralLedgerRow,
+  IncomeStatement,
+  TrialBalance,
   JournalEntry,
   Payable,
   SupplierAging,
@@ -1459,6 +1464,43 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<{ payment_id: string; journal_entry_id: string }> {
     return this.request('/api/v1/supplier-payments', { method: 'POST', body: req, signal });
+  }
+
+  // ----------- Finance reports & dashboard (Phase 7) -----------
+
+  /** One-call finance dashboard: balance sheet, P&L, AP count, open periods, recent entries. */
+  getFinanceOverview(signal?: AbortSignal): Promise<FinanceOverview> {
+    return this.request<FinanceOverview>('/api/v1/finance/overview', { signal });
+  }
+
+  getTrialBalance(asOf?: string, signal?: AbortSignal): Promise<TrialBalance> {
+    const qs = asOf ? `?as_of=${encodeURIComponent(asOf)}` : '';
+    return this.request<TrialBalance>(`/api/v1/finance/reports/trial-balance${qs}`, { signal });
+  }
+
+  getIncomeStatement(from?: string, to?: string, signal?: AbortSignal): Promise<IncomeStatement> {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const q = qs.toString();
+    return this.request<IncomeStatement>(`/api/v1/finance/reports/profit-loss${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  getBalanceSheet(asOf?: string, signal?: AbortSignal): Promise<BalanceSheet> {
+    const qs = asOf ? `?as_of=${encodeURIComponent(asOf)}` : '';
+    return this.request<BalanceSheet>(`/api/v1/finance/reports/balance-sheet${qs}`, { signal });
+  }
+
+  getGeneralLedger(
+    accountID: string,
+    signal?: AbortSignal,
+  ): Promise<{ items: GeneralLedgerRow[]; count: number }> {
+    return this.request(
+      `/api/v1/finance/reports/general-ledger?account_id=${encodeURIComponent(accountID)}`,
+      { signal },
+    );
   }
 
   // ----------- Users -----------

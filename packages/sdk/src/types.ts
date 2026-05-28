@@ -861,6 +861,56 @@ export interface SupplierAging {
   open_count: number;
 }
 
+export interface TrialBalanceRow {
+  account_id: string;
+  code: string;
+  name: string;
+  type: string;
+  normal_balance: string;
+  debit: string;
+  credit: string;
+  balance: string;
+}
+
+export interface TrialBalance {
+  as_of: string;
+  rows: TrialBalanceRow[];
+  balanced: boolean;
+}
+
+export interface IncomeStatement {
+  from: string;
+  to: string;
+  revenue: string;
+  expenses: string;
+  net_profit: string;
+}
+
+export interface BalanceSheet {
+  as_of: string;
+  assets: string;
+  liabilities: string;
+  equity: string;
+}
+
+export interface FinanceOverview {
+  balance_sheet: { assets: string; liabilities: string; equity: string };
+  income_statement: { revenue: string; expenses: string; net_profit: string };
+  ap_supplier_count: number;
+  open_periods: number;
+  recent_entries: JournalEntry[];
+}
+
+export interface GeneralLedgerRow {
+  entry_id: string;
+  entry_number: string;
+  entry_date: string;
+  source_type: string;
+  memo: string;
+  debit: string;
+  credit: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;
