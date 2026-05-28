@@ -19,8 +19,10 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
+	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
+	"github.com/japharyroman/fuelgrid-os/internal/pumps"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
@@ -54,6 +56,8 @@ type Server struct {
 	stations    *stations.Repo
 	products    *products.Repo
 	tanks       *tanks.Repo
+	pumps       *pumps.Repo
+	nozzles     *nozzles.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -80,6 +84,8 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.stations = stations.New(deps.DB)
 		s.products = products.New(deps.DB)
 		s.tanks = tanks.New(deps.DB)
+		s.pumps = pumps.New(deps.DB)
+		s.nozzles = nozzles.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -207,6 +213,21 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Post("/tanks", s.handleCreateTank)
 						r.Patch("/tanks/{id}", s.handleUpdateTank)
 						r.Delete("/tanks/{id}", s.handleDeleteTank)
+
+						// Pumps & nozzles: reads ride tenant-wide station.read;
+						// writes are station-scoped (pumps.manage) and authorized
+						// in-handler. Nozzle mutations fold into pumps.manage.
+						r.With(s.requirePermission("station.read", nil)).Group(func(r chi.Router) {
+							r.Get("/pumps", s.handleListPumps)
+							r.Get("/pumps/{id}", s.handleGetPump)
+							r.Get("/nozzles", s.handleListNozzles)
+						})
+						r.Post("/pumps", s.handleCreatePump)
+						r.Patch("/pumps/{id}", s.handleUpdatePump)
+						r.Delete("/pumps/{id}", s.handleDeletePump)
+						r.Post("/nozzles", s.handleCreateNozzle)
+						r.Patch("/nozzles/{id}", s.handleUpdateNozzle)
+						r.Delete("/nozzles/{id}", s.handleDeleteNozzle)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)

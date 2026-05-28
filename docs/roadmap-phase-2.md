@@ -67,15 +67,15 @@ The catalog operators install. Pure CRUD + wiring; no operational state yet.
 
 **Goal:** The dispensing layer is fully configured: every nozzle pulls from one tank and dispenses one product at a configurable price.
 
-- [ ] Migration `0011_pumps_nozzles`:
+- [x] Migration `0011_pumps_nozzles`:
   - `pumps` (id, tenant_id, station_id, number, name, manufacturer, model, serial_number, status, installation_date, timestamps)
   - `nozzles` (id, tenant_id, station_id, pump_id, tank_id, product_id, number, default_price, meter_decimal_places, status, timestamps)
-  - Triggers / DB-level CHECK enforce: `nozzle.product_id = tank.product_id` and `nozzle.station_id = pump.station_id = tank.station_id`
-- [ ] Permissions: `pumps.manage` (station-scoped), `nozzles.manage` (folds into `pumps.manage` for now)
-- [ ] Hierarchical admin UI at `/settings/pumps`: station picker → pumps list → expand a pump to see its nozzles
-- [ ] "Add nozzle" dialog filters tanks by station and locks the product field to the chosen tank
-- [ ] Seed: two pumps at `MIK-01` — pump 1 has two PMS nozzles, pump 2 has two AGO nozzles. Default price comes from the product.
-- [ ] Audit + outbox: `pump.*` and `nozzle.*`
+  - Triggers / DB-level CHECK enforce: `nozzle.product_id = tank.product_id` and `nozzle.station_id = pump.station_id = tank.station_id` *(via composite FKs, no triggers)*
+- [x] Permissions: `pumps.manage` (station-scoped), `nozzles.manage` (folds into `pumps.manage` for now)
+- [x] Hierarchical admin UI at `/settings/pumps`: station picker → pumps list → expand a pump to see its nozzles
+- [x] "Add nozzle" dialog filters tanks by station and locks the product field to the chosen tank
+- [x] Seed: two pumps at `MIK-01` — pump 1 has two PMS nozzles, pump 2 has two AGO nozzles. Default price comes from the product.
+- [x] Audit + outbox: `pump.*` and `nozzle.*`
 
 **Done when:** The demo station shows two pumps with four nozzles total, each correctly wired; reassigning a nozzle to a tank of a different product is rejected at the DB layer.
 

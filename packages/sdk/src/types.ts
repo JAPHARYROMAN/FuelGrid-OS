@@ -107,6 +107,32 @@ export interface Tank {
   decommission_date?: string;
 }
 
+export interface Pump {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  number: number;
+  name?: string;
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  status: string;
+  installation_date?: string;
+}
+
+export interface Nozzle {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  pump_id: string;
+  tank_id: string;
+  product_id: string;
+  number: number;
+  default_price: number;
+  meter_decimal_places: number;
+  status: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

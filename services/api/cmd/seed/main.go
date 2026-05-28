@@ -186,6 +186,40 @@ func run() error {
 		return err
 	}
 
+	// Two pumps at MIK-01. Pump 1 draws PMS (tank T1), pump 2 draws AGO
+	// (tank T2). Each gets two nozzles; default price comes from the
+	// product. station_id + product_id are derived from the tank so the
+	// composite-FK invariants in 0011 hold.
+	var pump1ID, pump2ID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO pumps (tenant_id, station_id, number, name)
+		VALUES ($1, $2, 1, 'Pump 1') RETURNING id
+	`, tenantID, station1ID).Scan(&pump1ID); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO pumps (tenant_id, station_id, number, name)
+		VALUES ($1, $2, 2, 'Pump 2') RETURNING id
+	`, tenantID, station1ID).Scan(&pump2ID); err != nil {
+		return err
+	}
+	for _, np := range []struct {
+		pumpID   string
+		tankCode string
+	}{{pump1ID, "T1"}, {pump2ID, "T2"}} {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO nozzles
+			    (tenant_id, station_id, pump_id, tank_id, product_id, number, default_price)
+			SELECT $1, $2, $3, t.id, t.product_id, g.num, p.default_price
+			FROM tanks t
+			JOIN products p ON p.id = t.product_id
+			CROSS JOIN (VALUES (1), (2)) AS g(num)
+			WHERE t.tenant_id = $1 AND t.station_id = $2 AND t.code = $4
+		`, tenantID, station1ID, np.pumpID, np.tankCode); err != nil {
+			return err
+		}
+	}
+
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO users (tenant_id, email, full_name, status,
 		                  password_hash, password_changed_at)
@@ -255,6 +289,7 @@ func run() error {
 		"station2_code", "MSA-01",
 		"products", "PMS, AGO, KERO",
 		"tanks", "MIK-01: T1(PMS), T2(AGO); MSA-01: T1(PMS)",
+		"pumps", "MIK-01: Pump 1 (2x PMS), Pump 2 (2x AGO)",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

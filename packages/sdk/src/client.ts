@@ -5,8 +5,10 @@ import type {
   LoginResponse,
   Me,
   MePermissions,
+  Nozzle,
   Paginated,
   Product,
+  Pump,
   Region,
   Role,
   Session,
@@ -374,6 +376,86 @@ export class Client {
 
   deleteTank(id: string, signal?: AbortSignal): Promise<void> {
     return this.request<void>(`/api/v1/tanks/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Pumps -----------
+
+  listPumps(opts: { stationID?: string } = {}, signal?: AbortSignal): Promise<Paginated<Pump>> {
+    const qs = opts.stationID ? `?station_id=${encodeURIComponent(opts.stationID)}` : '';
+    return this.request<Paginated<Pump>>(`/api/v1/pumps${qs}`, { signal });
+  }
+
+  getPump(id: string, signal?: AbortSignal): Promise<Pump> {
+    return this.request<Pump>(`/api/v1/pumps/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createPump(
+    req: Partial<Pump> & { station_id: string; number: number },
+    signal?: AbortSignal,
+  ): Promise<Pump> {
+    return this.request<Pump>('/api/v1/pumps', { method: 'POST', body: req, signal });
+  }
+
+  updatePump(id: string, req: Partial<Pump>, signal?: AbortSignal): Promise<Pump> {
+    return this.request<Pump>(`/api/v1/pumps/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deletePump(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/pumps/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Nozzles -----------
+
+  listNozzles(
+    opts: { stationID?: string; pumpID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Nozzle>> {
+    const qs = new URLSearchParams();
+    if (opts.stationID) qs.set('station_id', opts.stationID);
+    if (opts.pumpID) qs.set('pump_id', opts.pumpID);
+    const q = qs.toString();
+    return this.request<Paginated<Nozzle>>(`/api/v1/nozzles${q ? `?${q}` : ''}`, { signal });
+  }
+
+  createNozzle(
+    req: {
+      pump_id: string;
+      tank_id: string;
+      number: number;
+      default_price?: number;
+      meter_decimal_places?: number;
+    },
+    signal?: AbortSignal,
+  ): Promise<Nozzle> {
+    return this.request<Nozzle>('/api/v1/nozzles', { method: 'POST', body: req, signal });
+  }
+
+  updateNozzle(
+    id: string,
+    req: Partial<Pick<Nozzle, 'number' | 'default_price' | 'meter_decimal_places' | 'status'>> & {
+      tank_id?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Nozzle> {
+    return this.request<Nozzle>(`/api/v1/nozzles/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteNozzle(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/nozzles/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       signal,
     });
