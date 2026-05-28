@@ -3,6 +3,8 @@ import type {
   AccountingExport,
   AccountingExportResult,
   AccountingPeriod,
+  ApprovalRequest,
+  StationGroup,
   BalanceSheet,
   BankAccount,
   BankDeposit,
@@ -2362,6 +2364,111 @@ export class Client {
       body: req,
       signal,
     });
+  }
+
+  // ----------- Enterprise governance (Phase 9) -----------
+
+  listStationGroups(signal?: AbortSignal): Promise<Paginated<StationGroup>> {
+    return this.request<Paginated<StationGroup>>('/api/v1/enterprise/station-groups', { signal });
+  }
+
+  createStationGroup(
+    req: { name: string; kind?: string },
+    signal?: AbortSignal,
+  ): Promise<StationGroup> {
+    return this.request<StationGroup>('/api/v1/enterprise/station-groups', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  addStationGroupMember(
+    groupID: string,
+    stationID: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.request(
+      `/api/v1/enterprise/station-groups/${encodeURIComponent(groupID)}/members`,
+      {
+        method: 'POST',
+        body: { station_id: stationID },
+        signal,
+      },
+    );
+  }
+
+  grantEnterpriseScope(
+    req: {
+      user_id: string;
+      scope_type: 'tenant' | 'company' | 'region' | 'group' | 'station';
+      scope_id?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request('/api/v1/enterprise/scope-grants', { method: 'POST', body: req, signal });
+  }
+
+  getEffectiveStations(
+    userID: string,
+    signal?: AbortSignal,
+  ): Promise<{ user_id: string; tenant_wide: boolean; station_ids: string[] }> {
+    return this.request(
+      `/api/v1/enterprise/users/${encodeURIComponent(userID)}/effective-stations`,
+      { signal },
+    );
+  }
+
+  listApprovalPolicies(signal?: AbortSignal): Promise<{ items: unknown[]; count: number }> {
+    return this.request('/api/v1/approval-policies', { signal });
+  }
+
+  createApprovalPolicy(
+    req: {
+      workflow_type: string;
+      min_amount?: string;
+      required_approvals?: number;
+      required_role?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request('/api/v1/approval-policies', { method: 'POST', body: req, signal });
+  }
+
+  listApprovalRequests(
+    opts: { status?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<ApprovalRequest>> {
+    const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : '';
+    return this.request<Paginated<ApprovalRequest>>(`/api/v1/approval-requests${qs}`, { signal });
+  }
+
+  raiseApprovalRequest(
+    req: {
+      workflow_type: string;
+      reference_type?: string;
+      reference_id?: string;
+      amount?: string;
+      station_id?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<ApprovalRequest> {
+    return this.request<ApprovalRequest>('/api/v1/approval-requests', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  decideApprovalRequest(
+    id: string,
+    req: { decision: 'approve' | 'reject'; comment?: string },
+    signal?: AbortSignal,
+  ): Promise<ApprovalRequest> {
+    return this.request<ApprovalRequest>(
+      `/api/v1/approval-requests/${encodeURIComponent(id)}/decide`,
+      { method: 'POST', body: req, signal },
+    );
   }
 
   // ----------- Users -----------

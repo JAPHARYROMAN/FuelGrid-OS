@@ -19,6 +19,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/enterprise"
 	"github.com/japharyroman/fuelgrid-os/internal/expenses"
 	"github.com/japharyroman/fuelgrid-os/internal/fleet"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
@@ -69,6 +70,7 @@ type Server struct {
 
 	accounting     *accounting.Repo
 	banking        *banking.Repo
+	enterprise     *enterprise.Repo
 	expenses       *expenses.Repo
 	fleet          *fleet.Repo
 	companies      *companies.Repo
@@ -113,6 +115,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	if deps.DB != nil {
 		s.accounting = accounting.New(deps.DB)
 		s.banking = banking.New(deps.DB)
+		s.enterprise = enterprise.New(deps.DB)
 		s.expenses = expenses.New(deps.DB)
 		s.fleet = fleet.New(deps.DB)
 		s.companies = companies.New(deps.DB)
@@ -484,6 +487,27 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/credit-alerts/{id}/resolve", s.handleTransitionCreditAlert("resolved"))
 							r.Post("/credit-alerts/{id}/dismiss", s.handleTransitionCreditAlert("dismissed"))
 						})
+
+						// ===== Phase 9: Chain & Enterprise Command =====
+						// Hierarchy, scopes, approvals (Stages 1-3).
+						r.With(s.requirePermissionHeld("enterprise.read")).Group(func(r chi.Router) {
+							r.Get("/enterprise/station-groups", s.handleListStationGroups)
+							r.Get("/approval-policies", s.handleListApprovalPolicies)
+							r.Get("/approval-requests", s.handleListApprovalRequests)
+							r.Post("/approval-requests", s.handleRaiseApprovalRequest)
+						})
+						r.With(s.requirePermission("enterprise_structure.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/enterprise/station-groups", s.handleCreateStationGroup)
+							r.Post("/enterprise/station-groups/{id}/members", s.handleAddGroupMember)
+						})
+						r.With(s.requirePermissionHeld("enterprise_access.read")).
+							Get("/enterprise/users/{id}/effective-stations", s.handleEffectiveStations)
+						r.With(s.requirePermission("enterprise_access.manage", nil)).
+							Post("/enterprise/scope-grants", s.handleGrantScope)
+						r.With(s.requirePermission("approval_policy.manage", nil)).
+							Post("/approval-policies", s.handleCreateApprovalPolicy)
+						r.With(s.requirePermission("approval_request.decide", nil)).
+							Post("/approval-requests/{id}/decide", s.handleDecideApproval)
 
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {

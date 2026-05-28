@@ -879,6 +879,25 @@ export interface CreditAlert {
   detail?: string;
 }
 
+export interface StationGroup {
+  id: string;
+  name: string;
+  kind?: string;
+  status: string;
+}
+
+export interface ApprovalRequest {
+  id: string;
+  workflow_type: string;
+  reference_type?: string;
+  reference_id?: string;
+  amount: string;
+  required_approvals: number;
+  approvals_count: number;
+  status: string;
+  requested_by: string;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;
