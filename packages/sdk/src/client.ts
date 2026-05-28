@@ -142,7 +142,13 @@ export class Client {
   constructor(cfg: ClientConfig) {
     this.baseURL = cfg.baseURL.replace(/\/$/, '');
     this.getToken = cfg.getToken ?? (() => null);
-    this.fetchImpl = cfg.fetch ?? fetch;
+    // The global `fetch` must be invoked with `this` bound to the global
+    // object. Storing it on an instance field and calling it as
+    // `this.fetchImpl(...)` would set `this` to the Client, which Chrome
+    // rejects with "TypeError: Illegal invocation". Bind the default so
+    // every call dispatches correctly. A caller-supplied fetch (tests,
+    // instrumentation) is used as-is.
+    this.fetchImpl = cfg.fetch ?? fetch.bind(globalThis);
   }
 
   /**
