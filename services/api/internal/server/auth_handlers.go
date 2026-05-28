@@ -3,8 +3,8 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
@@ -244,9 +244,11 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // bucketing. Honors X-Forwarded-For only when ForwardedTrusted is wired
 // in a later stage — for now we always use r.RemoteAddr.
 func clientIP(r *http.Request) string {
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		return host[:i]
+	// SplitHostPort strips the port and unwraps the IPv6 brackets, so a
+	// RemoteAddr of "[::1]:54321" yields "::1" rather than "[::1]" (which
+	// is not valid INET syntax and would fail an audit insert).
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
-	return host
+	return r.RemoteAddr
 }

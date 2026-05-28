@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -52,11 +53,12 @@ func Write(ctx context.Context, tx pgx.Tx, e Entry) error {
 		return errors.New("audit: EntityType is required")
 	}
 
+	// Only pass an IP that parses cleanly. Casting junk (e.g. a bracketed
+	// "[::1]" or a host:port pair) to ::inet fails the whole transaction —
+	// and a malformed audit IP must not derail the business action it
+	// accompanies. Anything ParseIP rejects is stored as NULL.
 	var ipArg any
-	if e.IP != "" {
-		// Postgres parses the string as INET. We let it; if the value is
-		// junk, NULL is preferable to a transaction failure on a
-		// secondary concern.
+	if net.ParseIP(e.IP) != nil {
 		ipArg = e.IP
 	}
 
