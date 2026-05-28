@@ -49,6 +49,7 @@ const navItems: NavItem[] = [
   { label: 'Finance', href: '/finance', icon: DollarSign },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
   { label: 'Alerts', href: '/alerts', icon: AlertCircle },
+  { label: 'Risk', href: '/risk', icon: ShieldCheck },
   { label: 'AI Assistant', href: '/assistant', icon: Sparkles },
   { label: 'Audit', href: '/audit', icon: ShieldCheck },
   { label: 'Settings', href: '/settings', icon: Settings },

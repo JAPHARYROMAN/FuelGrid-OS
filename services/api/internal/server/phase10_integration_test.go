@@ -74,3 +74,43 @@ func TestPhase10_SignalsRulesDetection(t *testing.T) {
 		t.Fatalf("resolve = %d %v", code, res)
 	}
 }
+
+// TestPhase10_ScoringDashboard covers Category C: station risk scoring from
+// open alerts and the risk overview dashboard.
+func TestPhase10_ScoringDashboard(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
+	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
+		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
+	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
+		t.Fatalf("seed cash recon: %v", err)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("detect: %d", code)
+	}
+
+	// Recompute station scores from open alerts.
+	if code, sc := h.invPostJSON(t, "/api/v1/risk/scores/recompute", admin, map[string]any{}); code != http.StatusOK || sc["scored_stations"].(float64) < 1 {
+		t.Fatalf("recompute = %d %v", code, sc)
+	}
+
+	// The overview reports open alerts by severity and top stations.
+	code, ov := h.getJSON(t, "/api/v1/risk/overview", admin)
+	if code != http.StatusOK || ov["open_total"].(float64) < 1 {
+		t.Fatalf("overview = %d %v", code, ov)
+	}
+	if len(ov["top_stations"].([]any)) < 1 {
+		t.Fatalf("expected a top scored station: %v", ov["top_stations"])
+	}
+	top := ov["top_stations"].([]any)[0].(map[string]any)
+	if top["score"].(float64) < 1 || top["band"] == "" {
+		t.Fatalf("top station score = %v", top)
+	}
+}

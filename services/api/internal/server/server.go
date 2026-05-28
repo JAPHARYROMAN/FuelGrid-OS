@@ -579,6 +579,14 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/risk/alerts/{id}/escalate", s.handleTransitionRiskAlert("escalated"))
 						})
 
+						// Risk scoring & dashboard (Stages 9-10).
+						r.With(s.requirePermissionHeld("risk.read")).Group(func(r chi.Router) {
+							r.Get("/risk/overview", s.handleRiskOverview)
+							r.Get("/risk/scores", s.handleListRiskScores)
+						})
+						r.With(s.requirePermission("risk_score.admin", nil)).
+							Post("/risk/scores/recompute", s.handleRecomputeRiskScores)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

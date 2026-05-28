@@ -2710,6 +2710,27 @@ export class Client {
     });
   }
 
+  getRiskOverview(signal?: AbortSignal): Promise<{
+    open_by_severity: Record<string, number>;
+    open_total: number;
+    top_stations: Array<{ entity_id: string; score: number; band: string; open_alerts: number }>;
+    scores_computed_at?: string;
+  }> {
+    return this.request('/api/v1/risk/overview', { signal });
+  }
+
+  listRiskScores(
+    opts: { dimension?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ items: unknown[]; count: number }> {
+    const qs = opts.dimension ? `?dimension=${encodeURIComponent(opts.dimension)}` : '';
+    return this.request(`/api/v1/risk/scores${qs}`, { signal });
+  }
+
+  recomputeRiskScores(signal?: AbortSignal): Promise<{ scored_stations: number }> {
+    return this.request('/api/v1/risk/scores/recompute', { method: 'POST', signal });
+  }
+
   // ----------- Users -----------
 
   listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {
