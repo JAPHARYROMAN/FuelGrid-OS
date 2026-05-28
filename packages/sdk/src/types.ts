@@ -684,6 +684,58 @@ export interface TankValuation {
   stock_value?: string;
 }
 
+export interface Payment {
+  id: string;
+  station_id: string;
+  shift_id?: string;
+  customer_id?: string;
+  tender_type: string;
+  amount: string;
+  reference?: string;
+  received_by: string;
+  received_at: string;
+  status: string;
+  notes?: string;
+}
+
+export interface ShiftPaymentReconciliation {
+  shift_id: string;
+  tendered: string;
+  recognized: string;
+  variance: string;
+  over_threshold: boolean;
+}
+
+export interface Customer {
+  id: string;
+  tenant_id: string;
+  code: string;
+  name: string;
+  contact_name?: string;
+  contact_phone?: string;
+  contact_email?: string;
+  credit_limit: string;
+  status: string;
+}
+
+export interface ARentry {
+  id: string;
+  customer_id: string;
+  entry_type: string;
+  amount: string;
+  balance_after: string;
+  source_ref_type?: string;
+  source_ref_id?: string;
+  recorded_at: string;
+  notes?: string;
+}
+
+export interface CustomerStatement {
+  customer: Customer;
+  balance: string;
+  entries: ARentry[];
+}
+
 export interface UserSummary {
   id: string;
   email: string;

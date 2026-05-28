@@ -33,6 +33,11 @@ import type {
   Role,
   Sale,
   TankValuation,
+  ARentry,
+  Customer,
+  CustomerStatement,
+  Payment,
+  ShiftPaymentReconciliation,
   CashSubmission,
   Session,
   Shift,
@@ -1210,6 +1215,89 @@ export class Client {
       `/api/v1/stations/${encodeURIComponent(stationID)}/inventory-valuation`,
       { signal },
     );
+  }
+
+  // ----------- Tender & receivables (Phase 6) -----------
+
+  recordPayment(
+    shiftID: string,
+    req: {
+      tender_type: string;
+      amount: string;
+      reference?: string;
+      customer_id?: string;
+      allow_over_limit?: boolean;
+      notes?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Payment> {
+    return this.request<Payment>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/payments`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listShiftPayments(shiftID: string, signal?: AbortSignal): Promise<Paginated<Payment>> {
+    return this.request<Paginated<Payment>>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/payments`,
+      { signal },
+    );
+  }
+
+  getShiftPaymentReconciliation(
+    shiftID: string,
+    signal?: AbortSignal,
+  ): Promise<ShiftPaymentReconciliation> {
+    return this.request<ShiftPaymentReconciliation>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/payment-reconciliation`,
+      { signal },
+    );
+  }
+
+  listCustomers(signal?: AbortSignal): Promise<Paginated<Customer>> {
+    return this.request<Paginated<Customer>>('/api/v1/customers', { signal });
+  }
+
+  createCustomer(
+    req: {
+      code: string;
+      name: string;
+      contact_name?: string;
+      contact_phone?: string;
+      contact_email?: string;
+      credit_limit?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Customer> {
+    return this.request<Customer>('/api/v1/customers', { method: 'POST', body: req, signal });
+  }
+
+  updateCustomer(id: string, req: Partial<Customer>, signal?: AbortSignal): Promise<Customer> {
+    return this.request<Customer>(`/api/v1/customers/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  getCustomerStatement(id: string, signal?: AbortSignal): Promise<CustomerStatement> {
+    return this.request<CustomerStatement>(
+      `/api/v1/customers/${encodeURIComponent(id)}/statement`,
+      { signal },
+    );
+  }
+
+  recordCustomerPayment(
+    id: string,
+    req: { amount: string; reference?: string; notes?: string },
+    signal?: AbortSignal,
+  ): Promise<ARentry> {
+    return this.request<ARentry>(`/api/v1/customers/${encodeURIComponent(id)}/payments`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   // ----------- Users -----------

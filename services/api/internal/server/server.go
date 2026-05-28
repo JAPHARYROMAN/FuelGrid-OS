@@ -25,11 +25,13 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
+	"github.com/japharyroman/fuelgrid-os/internal/payments"
 	"github.com/japharyroman/fuelgrid-os/internal/pricing"
 	"github.com/japharyroman/fuelgrid-os/internal/procurement"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/pumps"
 	"github.com/japharyroman/fuelgrid-os/internal/readings"
+	"github.com/japharyroman/fuelgrid-os/internal/receivables"
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
@@ -72,8 +74,10 @@ type Server struct {
 	operations     *operations.Repo
 	readings       *readings.Repo
 	inventory      *inventory.Repo
+	payments       *payments.Repo
 	pricing        *pricing.Repo
 	procurement    *procurement.Repo
+	receivables    *receivables.Repo
 	reconciliation *reconciliation.Repo
 	revenue        *revenue.Repo
 	userRepo       *repo.UserRepo
@@ -109,8 +113,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.operations = operations.New(deps.DB)
 		s.readings = readings.New(deps.DB)
 		s.inventory = inventory.New(deps.DB)
+		s.payments = payments.New(deps.DB)
 		s.pricing = pricing.New(deps.DB)
 		s.procurement = procurement.New(deps.DB)
+		s.receivables = receivables.New(deps.DB)
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.revenue = revenue.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
@@ -356,6 +362,24 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							Get("/stations/{stationID}/sales", s.handleListStationSales)
 						r.With(s.requirePermission("margin.view", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/inventory-valuation", s.handleInventoryValuation)
+
+						// Tender (Phase 6, Stage 5): shift payments + reconciliation
+						// against recognized revenue (in-handler station authz).
+						r.Post("/shifts/{id}/payments", s.handleRecordPayment)
+						r.Get("/shifts/{id}/payments", s.handleListShiftPayments)
+						r.Get("/shifts/{id}/payment-reconciliation", s.handleShiftPaymentReconciliation)
+
+						// Credit customers & receivables (Phase 6, Stage 6). Customers
+						// are tenant-wide: reads ride customer.read, writes credit.manage.
+						r.With(s.requirePermissionHeld("customer.read")).Group(func(r chi.Router) {
+							r.Get("/customers", s.handleListCustomers)
+							r.Get("/customers/{id}/statement", s.handleCustomerStatement)
+						})
+						r.With(s.requirePermission("credit.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/customers", s.handleCreateCustomer)
+							r.Patch("/customers/{id}", s.handleUpdateCustomer)
+							r.Post("/customers/{id}/payments", s.handleRecordCustomerPayment)
+						})
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
