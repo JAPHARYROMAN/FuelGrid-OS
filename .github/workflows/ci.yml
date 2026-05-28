@@ -295,6 +295,20 @@ jobs:
             echo "post-logout /me returned $status, expected 401"; exit 1
           fi
 
+          # Auth events must now land in audit_logs + outbox_events, not
+          # just slog (audit #4). The flow above logged in twice, revoked
+          # a session, and logged out.
+          PSQL="PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
+          logged_in=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.logged_in'")
+          logged_out=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.logged_out'")
+          revoked=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.session_revoked'")
+          outbox_login=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserLoggedIn'")
+          echo "audit: logged_in=$logged_in logged_out=$logged_out revoked=$revoked outbox_login=$outbox_login"
+          if [ "$logged_in" -lt 2 ] || [ "$logged_out" -lt 1 ] || [ "$revoked" -lt 1 ] || [ "$outbox_login" -lt 2 ]; then
+            echo "auth events did not produce the expected audit_logs / outbox_events rows"; exit 1
+          fi
+          echo "auth events are audited + emit outbox events"
+
       - name: Tenant isolation — seed a second tenant and verify both layers
         env:
           AUTH_PASSWORD_PEPPER: ci-test-pepper

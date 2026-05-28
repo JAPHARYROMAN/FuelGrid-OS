@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -21,6 +23,17 @@ type Config struct {
 
 // Pool is the shared connection pool type used across the service.
 type Pool = pgxpool.Pool
+
+// Querier is the read/write surface shared by *pgxpool.Pool and pgx.Tx.
+// Repo methods take a Querier so the same code runs either auto-committed
+// (pass the pool) or inside a caller's transaction (pass the tx). This is
+// what lets the identity service wrap a state change + its audit + outbox
+// rows in a single transaction.
+type Querier interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
 
 // Connect creates the pool, applies tuning, and verifies the database is
 // reachable with a short timeout. The caller is responsible for Close().

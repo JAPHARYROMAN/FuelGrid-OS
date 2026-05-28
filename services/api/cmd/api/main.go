@@ -196,6 +196,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 				LoginRateWindow:  cfg.AuthLoginRateWindow,
 				PasswordResetTTL: cfg.AuthPasswordResetTTL,
 			},
+			deps.DB,
 			hasher,
 			userRepo,
 			sessionRepo,

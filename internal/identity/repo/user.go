@@ -104,8 +104,11 @@ func (r *UserRepo) FindByEmail(ctx context.Context, tenantSlug, email string) (*
 }
 
 // SetPassword updates the password hash and resets failed login counters.
-func (r *UserRepo) SetPassword(ctx context.Context, userID uuid.UUID, hash string) error {
-	_, err := r.pool.Exec(ctx, `
+// Takes a Querier so the identity service can run it inside the same
+// transaction as its audit + outbox writes (pass the pool for stand-alone
+// use).
+func (r *UserRepo) SetPassword(ctx context.Context, q database.Querier, userID uuid.UUID, hash string) error {
+	_, err := q.Exec(ctx, `
 		UPDATE users
 		SET password_hash = $1,
 		    password_changed_at = now(),
@@ -118,8 +121,8 @@ func (r *UserRepo) SetPassword(ctx context.Context, userID uuid.UUID, hash strin
 }
 
 // MarkLoginSuccess clears failure counters and stamps last_login_at.
-func (r *UserRepo) MarkLoginSuccess(ctx context.Context, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *UserRepo) MarkLoginSuccess(ctx context.Context, q database.Querier, userID uuid.UUID) error {
+	_, err := q.Exec(ctx, `
 		UPDATE users
 		SET last_login_at = now(),
 		    failed_login_count = 0,
@@ -131,8 +134,8 @@ func (r *UserRepo) MarkLoginSuccess(ctx context.Context, userID uuid.UUID) error
 
 // MarkLoginFailure increments the failure counter and, after a threshold,
 // sets locked_until. Returns the new failure count.
-func (r *UserRepo) MarkLoginFailure(ctx context.Context, userID uuid.UUID, lockAfter int, lockFor time.Duration) (int, error) {
-	q := `
+func (r *UserRepo) MarkLoginFailure(ctx context.Context, q database.Querier, userID uuid.UUID, lockAfter int, lockFor time.Duration) (int, error) {
+	query := `
 		UPDATE users
 		SET failed_login_count = failed_login_count + 1,
 		    locked_until = CASE
@@ -143,7 +146,7 @@ func (r *UserRepo) MarkLoginFailure(ctx context.Context, userID uuid.UUID, lockA
 		RETURNING failed_login_count
 	`
 	var count int
-	if err := r.pool.QueryRow(ctx, q, userID, lockAfter, lockFor).Scan(&count); err != nil {
+	if err := q.QueryRow(ctx, query, userID, lockAfter, lockFor).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
@@ -151,8 +154,8 @@ func (r *UserRepo) MarkLoginFailure(ctx context.Context, userID uuid.UUID, lockA
 
 // EnrollMfa stores the secret without enabling MFA. Calling VerifyMfa
 // with a valid code flips mfa_enabled to true.
-func (r *UserRepo) EnrollMfa(ctx context.Context, userID uuid.UUID, secret string) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *UserRepo) EnrollMfa(ctx context.Context, q database.Querier, userID uuid.UUID, secret string) error {
+	_, err := q.Exec(ctx, `
 		UPDATE users
 		SET mfa_secret = $1,
 		    mfa_enabled = false
@@ -163,14 +166,25 @@ func (r *UserRepo) EnrollMfa(ctx context.Context, userID uuid.UUID, secret strin
 
 // ActivateMfa flips mfa_enabled to true. Caller must have already verified
 // a valid code against the stored secret.
-func (r *UserRepo) ActivateMfa(ctx context.Context, userID uuid.UUID) error {
-	_, err := r.pool.Exec(ctx,
+func (r *UserRepo) ActivateMfa(ctx context.Context, q database.Querier, userID uuid.UUID) error {
+	_, err := q.Exec(ctx,
 		`UPDATE users SET mfa_enabled = true WHERE id = $1`, userID)
 	return err
 }
 
 // IsNotFound is a small convenience for callers translating to sentinel errors.
 func IsNotFound(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
+
+// TenantOf returns the tenant a user belongs to. Used by flows that
+// resolve a user by id alone (e.g. password reset, where the only handle
+// is a token-derived user id) but still need the tenant for audit rows.
+func (r *UserRepo) TenantOf(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	var tenantID uuid.UUID
+	err := r.pool.QueryRow(ctx,
+		`SELECT tenant_id FROM users WHERE id = $1`, userID,
+	).Scan(&tenantID)
+	return tenantID, err
+}
 
 // -----------------------------------------------------------------------
 // Admin queries (Stage 9). These power /api/v1/users and friends.

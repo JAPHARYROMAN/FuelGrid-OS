@@ -33,9 +33,12 @@ type SessionRow struct {
 	UserAgent string
 }
 
-// Insert records a freshly issued session and returns the generated row id.
+// Insert records a freshly issued session and returns the generated row
+// id. Takes a Querier so the login flow can write it in the same
+// transaction as the audit + outbox rows.
 func (r *SessionRepo) Insert(
 	ctx context.Context,
+	q database.Querier,
 	tokenHash []byte,
 	userID, tenantID uuid.UUID,
 	deviceID *uuid.UUID,
@@ -52,7 +55,7 @@ func (r *SessionRepo) Insert(
 	}
 
 	var id uuid.UUID
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		INSERT INTO sessions (token_hash, user_id, tenant_id, device_id,
 		                     ip, user_agent, expires_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -63,8 +66,8 @@ func (r *SessionRepo) Insert(
 
 // Revoke marks the session row as revoked. The Redis key is deleted
 // separately by the caller.
-func (r *SessionRepo) Revoke(ctx context.Context, id uuid.UUID, reason string) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *SessionRepo) Revoke(ctx context.Context, q database.Querier, id uuid.UUID, reason string) error {
+	_, err := q.Exec(ctx, `
 		UPDATE sessions
 		SET revoked_at = now(), revoke_reason = $2
 		WHERE id = $1 AND revoked_at IS NULL
@@ -73,8 +76,8 @@ func (r *SessionRepo) Revoke(ctx context.Context, id uuid.UUID, reason string) e
 }
 
 // RevokeAllForUser is used by "log out of all devices" flows.
-func (r *SessionRepo) RevokeAllForUser(ctx context.Context, userID uuid.UUID, reason string) error {
-	_, err := r.pool.Exec(ctx, `
+func (r *SessionRepo) RevokeAllForUser(ctx context.Context, q database.Querier, userID uuid.UUID, reason string) error {
+	_, err := q.Exec(ctx, `
 		UPDATE sessions
 		SET revoked_at = now(), revoke_reason = $2
 		WHERE user_id = $1 AND revoked_at IS NULL

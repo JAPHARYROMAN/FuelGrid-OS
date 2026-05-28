@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/japharyroman/fuelgrid-os/internal/audit"
+	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
@@ -61,6 +63,7 @@ func (c ServiceConfig) SafeDefaults() ServiceConfig {
 // (later) gRPC, CLIs, and background jobs.
 type Service struct {
 	cfg      ServiceConfig
+	pool     *database.Pool
 	hasher   *password.Hasher
 	users    *repo.UserRepo
 	sessions *repo.SessionRepo
@@ -73,8 +76,14 @@ type Service struct {
 
 // NewService wires the identity service. Callers own the underlying
 // dependencies and should close the Redis client / pool on shutdown.
+//
+// The pool is used directly (rather than only via the repos) so the
+// service can open transactions that wrap a state change together with
+// its audit_logs + outbox_events rows — the Stage-7 durability pattern,
+// now applied to auth events too.
 func NewService(
 	cfg ServiceConfig,
+	pool *database.Pool,
 	hasher *password.Hasher,
 	users *repo.UserRepo,
 	sessions *repo.SessionRepo,
@@ -85,6 +94,7 @@ func NewService(
 ) *Service {
 	return &Service{
 		cfg:      cfg.SafeDefaults(),
+		pool:     pool,
 		hasher:   hasher,
 		users:    users,
 		sessions: sessions,
@@ -94,6 +104,21 @@ func NewService(
 		logger:   logger,
 		now:      time.Now,
 	}
+}
+
+// auditAuth writes an audit_logs row + outbox_events row for an auth
+// event inside tx. Keeps every call site to a single line.
+func (s *Service) auditAuth(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID, action, eventType string, payload any) error {
+	return audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID:      tenantID,
+		ActorID:       actorID,
+		Action:        action,
+		EventType:     eventType,
+		EntityType:    "user",
+		AggregateType: "user",
+		EntityID:      actorID.String(),
+		NewValue:      payload,
+	})
 }
 
 // LoginRequest carries all the inputs a login attempt needs.
@@ -153,17 +178,19 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 		return nil, err
 	}
 	if !match {
-		count, mErr := s.users.MarkLoginFailure(ctx, user.ID, s.cfg.LoginLockAfter, s.cfg.LoginLockFor)
-		if mErr != nil {
-			s.logger.Error("mark login failure", "error", mErr, "user_id", user.ID)
+		// Failed attempt mutates state (failed_login_count, maybe
+		// locked_until) so it rides a tx with its audit + outbox rows.
+		if err := s.inTx(ctx, func(tx pgx.Tx) error {
+			count, err := s.users.MarkLoginFailure(ctx, tx, user.ID, s.cfg.LoginLockAfter, s.cfg.LoginLockFor)
+			if err != nil {
+				return err
+			}
+			return s.auditAuth(ctx, tx, user.TenantID, user.ID,
+				"user.login_failed", "UserLoginFailed",
+				map[string]any{"failure_count": count, "ip": req.IP})
+		}); err != nil {
+			s.logger.Error("record login failure", "error", err, "user_id", user.ID)
 		}
-		s.logger.Info("audit",
-			"event", "UserLoginFailed",
-			"user_id", user.ID,
-			"tenant_id", user.TenantID,
-			"failure_count", count,
-			"ip", req.IP,
-		)
 		return nil, ErrInvalidCredentials
 	}
 
@@ -172,6 +199,7 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 			return &LoginResult{MfaRequired: true}, nil
 		}
 		if user.MfaSecret == nil || !totp.Verify(*user.MfaSecret, req.MfaCode, s.now()) {
+			// No state change on a bad MFA code; slog is the record.
 			s.logger.Info("audit",
 				"event", "UserMfaFailed",
 				"user_id", user.ID,
@@ -191,15 +219,10 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 			bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if newHash, err := s.hasher.Hash(pw); err == nil {
-				_ = s.users.SetPassword(bg, uid, newHash)
+				_ = s.users.SetPassword(bg, s.pool, uid, newHash)
 			}
 		}(user.ID, req.Password)
 	}
-
-	if err := s.users.MarkLoginSuccess(ctx, user.ID); err != nil {
-		s.logger.Error("mark login success", "error", err, "user_id", user.ID)
-	}
-	_ = s.limiter.Reset(ctx, rateBucket)
 
 	raw, hash, err := session.NewToken()
 	if err != nil {
@@ -207,10 +230,27 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 	}
 	expiresAt := s.now().Add(s.cfg.SessionTTL)
 
-	sessID, err := s.sessions.Insert(ctx, hash, user.ID, user.TenantID, req.DeviceID, req.IP, req.UserAgent, expiresAt)
+	// One transaction: clear failure counters, insert the durable session
+	// row, and write the login audit + outbox event. Either all three
+	// commit or none do — no half-issued logins, no lost audit.
+	var sessID uuid.UUID
+	err = s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.MarkLoginSuccess(ctx, tx, user.ID); err != nil {
+			return err
+		}
+		id, err := s.sessions.Insert(ctx, tx, hash, user.ID, user.TenantID, req.DeviceID, req.IP, req.UserAgent, expiresAt)
+		if err != nil {
+			return err
+		}
+		sessID = id
+		return s.auditAuth(ctx, tx, user.TenantID, user.ID,
+			"user.logged_in", "UserLoggedIn",
+			map[string]any{"session_id": id, "mfa": user.MfaEnabled, "ip": req.IP})
+	})
 	if err != nil {
 		return nil, err
 	}
+	_ = s.limiter.Reset(ctx, rateBucket)
 
 	sess := &session.Session{
 		ID:           sessID,
@@ -227,20 +267,26 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 	}
 	if err := s.store.Put(ctx, raw, sess); err != nil {
 		// Roll back the durable row so we don't have a phantom session.
-		_ = s.sessions.Revoke(ctx, sessID, "redis put failed")
+		_ = s.sessions.Revoke(ctx, s.pool, sessID, "redis put failed")
 		return nil, err
 	}
 
-	s.logger.Info("audit",
-		"event", "UserLoggedIn",
-		"user_id", user.ID,
-		"tenant_id", user.TenantID,
-		"session_id", sessID,
-		"mfa", user.MfaEnabled,
-		"ip", req.IP,
-	)
-
 	return &LoginResult{Token: raw, Session: sess}, nil
+}
+
+// inTx runs fn inside a transaction, committing on success and rolling
+// back on error. The single place the identity service opens
+// transactions.
+func (s *Service) inTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // Logout revokes the session associated with the raw token. Missing
@@ -256,16 +302,14 @@ func (s *Service) Logout(ctx context.Context, rawToken string) error {
 	if err := s.store.Delete(ctx, rawToken); err != nil {
 		return err
 	}
-	if err := s.sessions.Revoke(ctx, sess.ID, "logout"); err != nil {
-		return err
-	}
-	s.logger.Info("audit",
-		"event", "UserLoggedOut",
-		"user_id", sess.UserID,
-		"tenant_id", sess.TenantID,
-		"session_id", sess.ID,
-	)
-	return nil
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.sessions.Revoke(ctx, tx, sess.ID, "logout"); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, sess.TenantID, sess.UserID,
+			"user.logged_out", "UserLoggedOut",
+			map[string]any{"session_id": sess.ID})
+	})
 }
 
 // RevokeSession revokes a single session the caller owns, by its UUID.
@@ -289,23 +333,21 @@ func (s *Service) RevokeSession(ctx context.Context, ownerUserID, sessionID uuid
 	if err := s.store.DeleteByID(ctx, sessionID); err != nil {
 		return err
 	}
-	if err := s.sessions.Revoke(ctx, row.ID, "self-revoke"); err != nil {
-		return err
-	}
-	s.logger.Info("audit",
-		"event", "UserSessionRevoked",
-		"user_id", ownerUserID,
-		"tenant_id", row.TenantID,
-		"session_id", row.ID,
-	)
-	return nil
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.sessions.Revoke(ctx, tx, row.ID, "self-revoke"); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, row.TenantID, ownerUserID,
+			"user.session_revoked", "UserSessionRevoked",
+			map[string]any{"session_id": row.ID})
+	})
 }
 
 // revokeAllUserSessions deletes every active session for a user from
 // Redis (by id) and marks them revoked in Postgres. Used after a
 // password reset so a leaked-credential attacker is logged out
 // everywhere, not just from sessions whose TTL happens to lapse.
-func (s *Service) revokeAllUserSessions(ctx context.Context, userID uuid.UUID, reason string) error {
+func (s *Service) revokeAllUserSessions(ctx context.Context, tx pgx.Tx, userID uuid.UUID, reason string) error {
 	rows, err := s.sessions.ListActiveForUser(ctx, userID)
 	if err != nil {
 		return err
@@ -317,7 +359,7 @@ func (s *Service) revokeAllUserSessions(ctx context.Context, userID uuid.UUID, r
 			s.logger.Warn("revoke session redis", "error", err, "session_id", row.ID)
 		}
 	}
-	return s.sessions.RevokeAllForUser(ctx, userID, reason)
+	return s.sessions.RevokeAllForUser(ctx, tx, userID, reason)
 }
 
 // Refresh extends a session's TTL in both Redis and Postgres.
@@ -386,15 +428,13 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID, userID uuid.UUID
 	if err != nil {
 		return err
 	}
-	if err := s.users.SetPassword(ctx, userID, hash); err != nil {
-		return err
-	}
-	s.logger.Info("audit",
-		"event", "UserPasswordChanged",
-		"user_id", userID,
-		"tenant_id", tenantID,
-	)
-	return nil
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.SetPassword(ctx, tx, userID, hash); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.password_changed", "UserPasswordChanged", nil)
+	})
 }
 
 // RequestPasswordReset issues a one-time reset token and stores it in
@@ -420,11 +460,14 @@ func (s *Service) RequestPasswordReset(ctx context.Context, tenantSlug, email st
 	if err := s.redis.Set(ctx, key, user.ID.String(), s.cfg.PasswordResetTTL).Err(); err != nil {
 		return "", false, err
 	}
-	s.logger.Info("audit",
-		"event", "UserPasswordResetRequested",
-		"user_id", user.ID,
-		"tenant_id", user.TenantID,
-	)
+	// The token lives in Redis; the audit + outbox row records that a
+	// reset was requested (no Postgres state change beyond the audit).
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
+		return s.auditAuth(ctx, tx, user.TenantID, user.ID,
+			"user.password_reset_requested", "UserPasswordResetRequested", nil)
+	}); err != nil {
+		s.logger.Error("audit password reset request", "error", err, "user_id", user.ID)
+	}
 	return raw, true, nil
 }
 
@@ -451,20 +494,31 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, token, newPassword s
 	if err != nil {
 		return err
 	}
-	if err := s.users.SetPassword(ctx, userID, pwHash); err != nil {
+
+	// We need the user's tenant for the audit row. Resolve it before the
+	// tx; FindActiveOwnedBy isn't applicable here (no session yet).
+	tenantID, err := s.users.TenantOf(ctx, userID)
+	if err != nil {
 		return err
 	}
-	// Revoke every active session in BOTH Redis and Postgres so the
-	// reset actually logs the user out everywhere.
-	if err := s.revokeAllUserSessions(ctx, userID, "password reset"); err != nil {
-		s.logger.Error("revoke sessions after reset", "error", err, "user_id", userID)
+
+	// One transaction: set the new password, revoke all the user's
+	// sessions, and write the audit + outbox row. The Redis side of
+	// revocation (DeleteByID per session) runs inside revokeAllUserSessions
+	// and is best-effort; the durable revoke + audit are atomic.
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.SetPassword(ctx, tx, userID, pwHash); err != nil {
+			return err
+		}
+		if err := s.revokeAllUserSessions(ctx, tx, userID, "password reset"); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.password_reset", "UserPasswordReset", nil)
+	}); err != nil {
+		return err
 	}
 	_ = s.redis.Del(ctx, key).Err()
-
-	s.logger.Info("audit",
-		"event", "UserPasswordReset",
-		"user_id", userID,
-	)
 	return nil
 }
 
@@ -482,14 +536,15 @@ func (s *Service) EnrollMfa(ctx context.Context, userID uuid.UUID, tenantID uuid
 	if err != nil {
 		return nil, err
 	}
-	if err := s.users.EnrollMfa(ctx, userID, e.Secret); err != nil {
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.EnrollMfa(ctx, tx, userID, e.Secret); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.mfa_enrolled", "UserMfaEnrolled", nil)
+	}); err != nil {
 		return nil, err
 	}
-	s.logger.Info("audit",
-		"event", "UserMfaEnrolled",
-		"user_id", userID,
-		"tenant_id", tenantID,
-	)
 	return &e, nil
 }
 
@@ -506,15 +561,13 @@ func (s *Service) VerifyMfa(ctx context.Context, userID, tenantID uuid.UUID, cod
 	if !totp.Verify(*user.MfaSecret, code, s.now()) {
 		return ErrMfaInvalid
 	}
-	if err := s.users.ActivateMfa(ctx, userID); err != nil {
-		return err
-	}
-	s.logger.Info("audit",
-		"event", "UserMfaActivated",
-		"user_id", userID,
-		"tenant_id", tenantID,
-	)
-	return nil
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.ActivateMfa(ctx, tx, userID); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.mfa_activated", "UserMfaActivated", nil)
+	})
 }
 
 // base64Hash returns the URL-safe base64 form of a token hash, suitable
