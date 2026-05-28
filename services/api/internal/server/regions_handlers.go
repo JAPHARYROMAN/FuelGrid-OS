@@ -82,6 +82,20 @@ func (s *Server) handleCreateRegion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// The composite FK added in migration 0008 rejects a cross-tenant
+	// company link at the DB layer; this guard turns that into a clean
+	// 404 instead of a 500 and avoids leaking whether the id exists in
+	// another tenant.
+	if _, err := s.companies.Get(ctx, actor.TenantID, req.CompanyID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "company not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

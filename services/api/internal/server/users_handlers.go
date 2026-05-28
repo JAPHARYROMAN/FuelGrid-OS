@@ -170,6 +170,21 @@ func (s *Server) handleUpdateUserStatus(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"id": targetID, "status": req.Status})
 }
 
+// userInTenant reports whether the target user exists in the actor's
+// tenant. Returns (false, nil) when the user is missing or belongs to
+// another tenant — callers map that to 404 so existence in another
+// tenant never leaks. Wraps the tenant-scoped FindByID.
+func (s *Server) userInTenant(r *http.Request, tenantID, userID uuid.UUID) (bool, error) {
+	_, err := s.userRepo.FindByID(r.Context(), tenantID, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *Server) handleRevokeUserRole(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {
@@ -188,6 +203,18 @@ func (s *Server) handleRevokeUserRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Guard: the target user must be in the actor's tenant. Without this
+	// the DELETE matched on (user_id, role_id) alone, letting an admin in
+	// tenant A revoke a role grant in tenant B.
+	if ok, err := s.userInTenant(r, actor.TenantID, targetID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if !ok {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -254,15 +281,18 @@ func (s *Server) handleGrantStationAccess(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	tx, err := s.deps.DB.Begin(ctx)
-	if err != nil {
+
+	// Both the target user and the station must live in the actor's
+	// tenant. The composite FKs in migration 0008 are the backstop;
+	// these guards return clean 404s and stop a cross-tenant grant from
+	// being silently swallowed by ON CONFLICT DO NOTHING.
+	if ok, err := s.userInTenant(r, actor.TenantID, targetID); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	} else if !ok {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	// Confirm the station exists in this tenant (cross-tenant grants
-	// would otherwise be silently accepted by ON CONFLICT DO NOTHING).
 	if _, err := s.stations.Get(ctx, actor.TenantID, req.StationID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "station not found")
@@ -271,6 +301,13 @@ func (s *Server) handleGrantStationAccess(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := s.userRepo.GrantStationAccess(ctx, tx, targetID, req.StationID, actor.TenantID, actor.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -313,6 +350,18 @@ func (s *Server) handleRevokeStationAccess(w http.ResponseWriter, r *http.Reques
 	}
 
 	ctx := r.Context()
+
+	// Guard: the target user must be in the actor's tenant; otherwise the
+	// DELETE matched on (user_id, station_id) alone, letting tenant A
+	// strip a tenant-B user's access.
+	if ok, err := s.userInTenant(r, actor.TenantID, targetID); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if !ok {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

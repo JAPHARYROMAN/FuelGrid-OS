@@ -335,6 +335,21 @@ jobs:
           other_tenant_id="22222222-2222-2222-2222-222222222222"
           other_station_id="44444444-4444-4444-4444-444444444444"
 
+          # ----- DB-layer cross-tenant FK rejection (audit #2) -----
+          # A region in the demo tenant pointing at the OTHER tenant's
+          # company must be rejected by the composite FK from 0008.
+          # `set ON_ERROR_STOP off` so psql returns 0; we assert the
+          # statement itself failed.
+          rej=$(PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid -v ON_ERROR_STOP=0 -c "
+            INSERT INTO regions (tenant_id, company_id, name)
+            VALUES ('$demo_tenant_id', '33333333-3333-3333-3333-333333333333', 'Cross-tenant region');
+          " 2>&1 || true)
+          echo "cross-tenant insert result: $rej"
+          if ! echo "$rej" | grep -qi "violates foreign key constraint"; then
+            echo "expected the cross-tenant region insert to be rejected by a FK"; exit 1
+          fi
+          echo "DB rejects cross-tenant hierarchy links"
+
           # ----- App-layer isolation -----
           # Log in as the demo tenant's user, request the OTHER tenant's
           # station by id. The app-layer WHERE tenant_id = ? filter must

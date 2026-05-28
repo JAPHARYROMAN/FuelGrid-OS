@@ -129,6 +129,29 @@ func (s *Server) handleCreateStation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+
+	// Verify the parent company (and region, if supplied) belong to the
+	// actor's tenant. The composite FKs in migration 0008 are the
+	// backstop; these guards return clean 404s.
+	if _, err := s.companies.Get(ctx, actor.TenantID, req.CompanyID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "company not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if req.RegionID != nil {
+		if _, err := s.regions.Get(ctx, actor.TenantID, *req.RegionID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "region not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
