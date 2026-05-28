@@ -518,6 +518,29 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("enterprise_projection.admin", nil)).
 							Post("/enterprise/projections/rebuild", s.handleRebuildProjections)
 
+						// Central commercial control (Stages 7-9).
+						r.With(s.requirePermissionHeld("enterprise.read")).Group(func(r chi.Router) {
+							r.Get("/central-price-rollouts", s.handleListPriceRollouts)
+							r.Get("/central-procurement-plans", s.handleListProcurementPlans)
+							r.Get("/stock-transfers", s.handleListTransfers)
+						})
+						r.With(s.requirePermission("central_pricing.manage", nil)).
+							Post("/central-price-rollouts", s.handleCreatePriceRollout)
+						r.With(s.requirePermission("central_pricing.approve", nil)).
+							Post("/central-price-rollouts/{id}/approve", s.handleApprovePriceRollout)
+						r.With(s.requirePermission("central_pricing.publish", nil)).
+							Post("/central-price-rollouts/{id}/activate", s.handleActivatePriceRollout)
+						r.With(s.requirePermission("central_procurement.manage", nil)).
+							Post("/central-procurement-plans", s.handleCreateProcurementPlan)
+						r.With(s.requirePermission("central_procurement.release", nil)).
+							Post("/central-procurement-plans/{id}/release", s.handleReleaseProcurementPlan)
+						r.With(s.requirePermission("stock_transfer.manage", nil)).
+							Post("/stock-transfers", s.handleCreateTransfer)
+						r.With(s.requirePermission("stock_transfer.approve", nil)).
+							Post("/stock-transfers/{id}/approve", s.handleApproveTransfer)
+						r.With(s.requirePermission("stock_transfer.receive", nil)).
+							Post("/stock-transfers/{id}/receive", s.handleReceiveTransfer)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

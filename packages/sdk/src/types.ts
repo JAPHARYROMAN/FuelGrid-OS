@@ -918,6 +918,26 @@ export interface StationRank {
   margin_total: string;
 }
 
+export interface CentralPriceRollout {
+  id: string;
+  product_id: string;
+  scope_type: string;
+  scope_id?: string;
+  unit_price: string;
+  effective_from: string;
+  status: string;
+  stations_applied: number;
+}
+
+export interface StockTransfer {
+  id: string;
+  from_tank_id: string;
+  to_tank_id: string;
+  product_id: string;
+  litres: string;
+  status: string;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;

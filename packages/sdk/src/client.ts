@@ -4,9 +4,11 @@ import type {
   AccountingExportResult,
   AccountingPeriod,
   ApprovalRequest,
+  CentralPriceRollout,
   EnterpriseOverview,
   StationGroup,
   StationRank,
+  StockTransfer,
   BalanceSheet,
   BankAccount,
   BankDeposit,
@@ -2504,6 +2506,92 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<{ projection: string; rows: number }> {
     return this.request('/api/v1/enterprise/projections/rebuild', { method: 'POST', signal });
+  }
+
+  // ----------- Central commercial control (Phase 9) -----------
+
+  listCentralPriceRollouts(signal?: AbortSignal): Promise<Paginated<CentralPriceRollout>> {
+    return this.request<Paginated<CentralPriceRollout>>('/api/v1/central-price-rollouts', {
+      signal,
+    });
+  }
+
+  createCentralPriceRollout(
+    req: {
+      product_id: string;
+      scope_type: 'tenant' | 'region' | 'station';
+      scope_id?: string;
+      unit_price: string;
+      effective_from?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<CentralPriceRollout> {
+    return this.request<CentralPriceRollout>('/api/v1/central-price-rollouts', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  transitionCentralPriceRollout(
+    id: string,
+    action: 'approve' | 'activate',
+    signal?: AbortSignal,
+  ): Promise<CentralPriceRollout> {
+    return this.request<CentralPriceRollout>(
+      `/api/v1/central-price-rollouts/${encodeURIComponent(id)}/${action}`,
+      { method: 'POST', signal },
+    );
+  }
+
+  listProcurementPlans(signal?: AbortSignal): Promise<{ items: unknown[]; count: number }> {
+    return this.request('/api/v1/central-procurement-plans', { signal });
+  }
+
+  createProcurementPlan(
+    req: {
+      name: string;
+      lines?: Array<{ station_id: string; product_id: string; target_litres: string }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request('/api/v1/central-procurement-plans', { method: 'POST', body: req, signal });
+  }
+
+  releaseProcurementPlan(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<{ id: string; released_lines: number }> {
+    return this.request(`/api/v1/central-procurement-plans/${encodeURIComponent(id)}/release`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  listStockTransfers(signal?: AbortSignal): Promise<Paginated<StockTransfer>> {
+    return this.request<Paginated<StockTransfer>>('/api/v1/stock-transfers', { signal });
+  }
+
+  createStockTransfer(
+    req: { from_tank_id: string; to_tank_id: string; product_id: string; litres: string },
+    signal?: AbortSignal,
+  ): Promise<StockTransfer> {
+    return this.request<StockTransfer>('/api/v1/stock-transfers', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  transitionStockTransfer(
+    id: string,
+    action: 'approve' | 'receive',
+    signal?: AbortSignal,
+  ): Promise<StockTransfer> {
+    return this.request<StockTransfer>(
+      `/api/v1/stock-transfers/${encodeURIComponent(id)}/${action}`,
+      { method: 'POST', signal },
+    );
   }
 
   // ----------- Users -----------

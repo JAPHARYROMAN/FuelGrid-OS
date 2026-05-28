@@ -5,6 +5,7 @@ package server_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -126,4 +127,99 @@ func TestPhase9_Dashboards(t *testing.T) {
 	if code, ov := h.getJSON(t, "/api/v1/enterprise/overview?from=2026-01-01&to=2026-12-31", admin); code != http.StatusOK || ov["gross_revenue"] != "12000.00" {
 		t.Fatalf("overview after re-rebuild = %v", ov)
 	}
+}
+
+// TestPhase9_CentralCommercial covers Category C: central pricing producing
+// station-effective price changes, central procurement plan release, and an
+// inter-station stock transfer posting paired Phase-4 movements.
+func TestPhase9_CentralCommercial(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// Central pricing: a tenant-wide PMS rollout activates to both stations.
+	code, ro := h.invPostJSON(t, "/api/v1/central-price-rollouts", admin, map[string]any{
+		"product_id": h.ids.pmsProduct.String(), "scope_type": "tenant", "unit_price": "3100", "effective_from": "2026-06-01",
+	})
+	if code != http.StatusCreated || ro["status"] != "draft" {
+		t.Fatalf("create rollout = %d %v", code, ro)
+	}
+	roID := ro["id"].(string)
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/central-price-rollouts/"+roID+"/approve", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("approve rollout: %d", code)
+	}
+	code, act := h.do2(t, http.MethodPost, "/api/v1/central-price-rollouts/"+roID+"/activate", admin)
+	if code != http.StatusOK || act["status"] != "active" || act["stations_applied"].(float64) != 2 {
+		t.Fatalf("activate rollout = %d %v", code, act)
+	}
+
+	// Central procurement: a one-line plan releases.
+	code, plan := h.invPostJSON(t, "/api/v1/central-procurement-plans", admin, map[string]any{
+		"name": "June replenishment",
+		"lines": []map[string]any{
+			{"station_id": h.ids.station1.String(), "product_id": h.ids.pmsProduct.String(), "target_litres": "20000"},
+		},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create plan = %d %v", code, plan)
+	}
+	if code, rel := h.do2(t, http.MethodPost, "/api/v1/central-procurement-plans/"+plan["id"].(string)+"/release", admin); code != http.StatusOK || rel["released_lines"].(float64) != 1 {
+		t.Fatalf("release plan = %d %v", code, rel)
+	}
+
+	// Stock transfer: seed source stock, transfer to the other station's tank.
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO stock_movements (tenant_id, tank_id, movement_type, source_ref_type, litres, balance_after, recorded_by)
+		VALUES ($1, $2, 'opening', 'opening', 20000, 20000, $3)
+	`, h.ids.tenantID, h.ids.tankPMS, adminID); err != nil {
+		t.Fatalf("seed opening: %v", err)
+	}
+	code, tr := h.invPostJSON(t, "/api/v1/stock-transfers", admin, map[string]any{
+		"from_tank_id": h.ids.tankPMS.String(), "to_tank_id": h.ids.tankMSA.String(),
+		"product_id": h.ids.pmsProduct.String(), "litres": "5000",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create transfer = %d %v", code, tr)
+	}
+	trID := tr["id"].(string)
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/stock-transfers/"+trID+"/approve", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("approve transfer: %d", code)
+	}
+	if code, recv := h.do2(t, http.MethodPost, "/api/v1/stock-transfers/"+trID+"/receive", admin); code != http.StatusOK || recv["status"] != "received" {
+		t.Fatalf("receive transfer = %d %v", code, recv)
+	}
+	// Source tank balance dropped to 15,000; destination rose by 5,000.
+	var fromBal, toBal float64
+	_ = h.pool.QueryRow(ctx, `SELECT balance_after FROM stock_movements WHERE tenant_id=$1 AND tank_id=$2 ORDER BY seq DESC LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&fromBal)
+	_ = h.pool.QueryRow(ctx, `SELECT balance_after FROM stock_movements WHERE tenant_id=$1 AND tank_id=$2 ORDER BY seq DESC LIMIT 1`, h.ids.tenantID, h.ids.tankMSA).Scan(&toBal)
+	if fromBal != 15000 || toBal != 5000 {
+		t.Fatalf("balances after transfer: from=%v to=%v", fromBal, toBal)
+	}
+
+	// Over-transfer is refused.
+	code, tr2 := h.invPostJSON(t, "/api/v1/stock-transfers", admin, map[string]any{
+		"from_tank_id": h.ids.tankPMS.String(), "to_tank_id": h.ids.tankMSA.String(),
+		"product_id": h.ids.pmsProduct.String(), "litres": "999999",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create transfer 2: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/stock-transfers/"+tr2["id"].(string)+"/approve", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("approve transfer 2: %d", code)
+	}
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/stock-transfers/"+tr2["id"].(string)+"/receive", admin, nil, ""); code != http.StatusUnprocessableEntity {
+		t.Fatalf("over-transfer receive: %d, want 422", code)
+	}
+}
+
+// do2 is a POST helper returning the decoded JSON object (for nil-body POSTs).
+func (h *harness) do2(t *testing.T, method, path, token string) (int, map[string]any) {
+	t.Helper()
+	code, raw := h.do(t, method, path, token, nil, "")
+	out := map[string]any{}
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &out)
+	}
+	return code, out
 }
