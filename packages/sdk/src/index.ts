@@ -3,6 +3,9 @@ export type { ClientConfig } from './client';
 export type {
   ApiError,
   AuditLogEntry,
+  CalibratedVolume,
+  CalibrationChart,
+  CalibrationPreview,
   Company,
   LoginRequest,
   LoginResponse,

@@ -133,6 +133,34 @@ export interface Nozzle {
   status: string;
 }
 
+export interface CalibrationChart {
+  id: string;
+  tenant_id: string;
+  tank_id: string;
+  name: string;
+  effective_from: string;
+  effective_until?: string;
+  status: string;
+  source: string;
+  entry_count: number;
+}
+
+export interface CalibratedVolume {
+  tank_id: string;
+  chart_id: string;
+  dip_mm: number;
+  volume_litres: number;
+}
+
+export interface CalibrationPreview {
+  preview: true;
+  entry_count: number;
+  min_dip_mm: number;
+  max_dip_mm: number;
+  min_volume: number;
+  max_volume: number;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

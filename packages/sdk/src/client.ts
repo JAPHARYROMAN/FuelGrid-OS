@@ -1,5 +1,8 @@
 import type {
   AuditLogEntry,
+  CalibratedVolume,
+  CalibrationChart,
+  CalibrationPreview,
   Company,
   LoginRequest,
   LoginResponse,
@@ -79,8 +82,13 @@ export class Client {
 
     let body: BodyInit | undefined;
     if (opts.body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-      body = JSON.stringify(opts.body);
+      if (opts.body instanceof FormData) {
+        // Let the browser set multipart/form-data with its boundary.
+        body = opts.body;
+      } else {
+        headers['Content-Type'] = 'application/json';
+        body = JSON.stringify(opts.body);
+      }
     }
 
     if (opts.headers) {
@@ -379,6 +387,59 @@ export class Client {
       method: 'DELETE',
       signal,
     });
+  }
+
+  // ----------- Tank calibration -----------
+
+  listCalibrationCharts(
+    tankID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<CalibrationChart>> {
+    return this.request<Paginated<CalibrationChart>>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/calibration-charts`,
+      { signal },
+    );
+  }
+
+  activeCalibrationChart(tankID: string, signal?: AbortSignal): Promise<CalibrationChart> {
+    return this.request<CalibrationChart>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/calibration-charts/active`,
+      { signal },
+    );
+  }
+
+  calibratedVolume(tankID: string, dipMM: number, signal?: AbortSignal): Promise<CalibratedVolume> {
+    return this.request<CalibratedVolume>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/calibrated-volume?dip_mm=${encodeURIComponent(dipMM)}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Upload a strapping-chart CSV (header: dip_mm,volume_litres). With
+   * dryRun, the server validates and returns a preview without persisting.
+   */
+  uploadCalibrationChart(
+    tankID: string,
+    opts: {
+      file: File | Blob;
+      name: string;
+      source?: string;
+      effectiveFrom?: string;
+      dryRun?: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<CalibrationChart | CalibrationPreview> {
+    const form = new FormData();
+    form.set('file', opts.file);
+    form.set('name', opts.name);
+    if (opts.source) form.set('source', opts.source);
+    if (opts.effectiveFrom) form.set('effective_from', opts.effectiveFrom);
+    const qs = opts.dryRun ? '?dry_run=true' : '';
+    return this.request<CalibrationChart | CalibrationPreview>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/calibration-charts${qs}`,
+      { method: 'POST', body: form, signal },
+    );
   }
 
   // ----------- Pumps -----------

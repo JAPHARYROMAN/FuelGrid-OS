@@ -55,6 +55,43 @@ func (s *Server) authorizeStation(w http.ResponseWriter, r *http.Request, actor 
 	return false
 }
 
+// requirePermissionHeld builds a middleware that allows the request when the
+// actor *holds* the permission in any scope, without demanding a specific
+// station. It's the right gate for tenant-wide catalogue reads (list/get of
+// companies, stations, products, tanks, …): the rows are already tenant-
+// scoped by the repos, and a plain Can(code, {}) would wrongly reject a
+// station-scoped permission like station.read for lack of a station id (see
+// policy.Can rule 2). Per-station writes/reads still use requirePermission
+// with a real station extractor.
+//
+//nolint:unparam // perm is "station.read" for every current caller; kept parameterized for the tenant-wide reads later stages will gate differently.
+func (s *Server) requirePermissionHeld(perm string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			actor, err := identity.Require(r.Context())
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			ps, err := s.policy.LoadFor(r.Context(), actor)
+			if err != nil {
+				if errors.Is(err, identity.ErrUnauthenticated) {
+					writeError(w, http.StatusUnauthorized, "authentication required")
+					return
+				}
+				s.logger.Error("policy load", "error", err, "permission", perm)
+				writeError(w, http.StatusInternalServerError, "authorization error")
+				return
+			}
+			if !ps.HasPermission(perm) {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // requirePermission builds a middleware enforcing a single permission.
 // extract may be nil for tenant-wide permissions.
 func (s *Server) requirePermission(perm string, extract stationExtractor) func(http.Handler) http.Handler {

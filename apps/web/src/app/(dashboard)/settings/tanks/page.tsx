@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 
@@ -256,6 +257,9 @@ export default function TanksPage() {
                     <Badge tone={t.status === 'active' ? 'success' : 'warning'}>{t.status}</Badge>
                   </TableCell>
                   <TableCell className="text-right">
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link href={`/settings/tanks/${t.id}`}>Calibration</Link>
+                    </Button>
                     <Button variant="ghost" size="sm" onClick={() => openEdit(t)}>
                       Edit
                     </Button>

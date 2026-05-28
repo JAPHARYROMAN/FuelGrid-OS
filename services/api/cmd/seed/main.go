@@ -220,6 +220,25 @@ func run() error {
 		}
 	}
 
+	// Calibration chart for MIK-01's PMS tank (T1): dip 0..3000mm in 60mm
+	// steps (51 points), a simple linear strap (volume = dip * 10) so the
+	// 30,000L tank reads full at 3000mm. The Phase-3 dip handler will call
+	// the calibrated-volume endpoint backed by this chart.
+	if _, err := tx.Exec(ctx, `
+		WITH ch AS (
+			INSERT INTO tank_calibration_charts (tenant_id, tank_id, name, source)
+			SELECT $1, t.id, 'Initial strapping', 'seed'
+			FROM tanks t
+			WHERE t.tenant_id = $1 AND t.station_id = $2 AND t.code = 'T1'
+			RETURNING id
+		)
+		INSERT INTO tank_calibration_entries (chart_id, dip_mm, volume_litres)
+		SELECT ch.id, g.dip, g.dip * 10
+		FROM ch CROSS JOIN generate_series(0, 3000, 60) AS g(dip)
+	`, tenantID, station1ID); err != nil {
+		return err
+	}
+
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO users (tenant_id, email, full_name, status,
 		                  password_hash, password_changed_at)
@@ -290,6 +309,7 @@ func run() error {
 		"products", "PMS, AGO, KERO",
 		"tanks", "MIK-01: T1(PMS), T2(AGO); MSA-01: T1(PMS)",
 		"pumps", "MIK-01: Pump 1 (2x PMS), Pump 2 (2x AGO)",
+		"calibration", "MIK-01 PMS tank: 51-point chart (0..3000mm)",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

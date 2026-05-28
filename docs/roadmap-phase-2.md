@@ -89,21 +89,21 @@ How we trust the numbers the operational layers will start producing in Phase 3.
 
 **Goal:** Given a dip reading in millimetres, the API returns the corresponding volume in litres. Charts are versioned so a re-strap doesn't lose history.
 
-- [ ] Migration `0012_tank_calibration`:
+- [x] Migration `0012_tank_calibration`:
   - `tank_calibration_charts` (id, tenant_id, tank_id, name, effective_from, effective_until, status, source, timestamps)
   - `tank_calibration_entries` (id, chart_id, dip_mm, volume_litres) — sparse rows; lookups interpolate
   - Constraint: at most one `status='active'` chart per tank at a time (partial unique index)
-- [ ] Permission `tanks.calibrate` (station-scoped)
-- [ ] `internal/calibration` package with a `Lookup(chartID, dipMM) (litres, error)` function that linearly interpolates between the two surrounding entries (and refuses extrapolation)
-- [ ] Endpoints:
+- [x] Permission `tanks.calibrate` (station-scoped)
+- [x] `internal/calibration` package with a `Lookup(chartID, dipMM) (litres, error)` function that linearly interpolates between the two surrounding entries (and refuses extrapolation)
+- [x] Endpoints:
   - `POST /api/v1/tanks/{id}/calibration-charts` — multipart CSV upload (header: `dip_mm,volume_litres`)
   - `GET /api/v1/tanks/{id}/calibration-charts` — list
   - `GET /api/v1/tanks/{id}/calibration-charts/active` — return the current chart
   - `GET /api/v1/tanks/{id}/calibrated-volume?dip_mm=N` — interpolation result (the API the Phase-3 dip-reading handler will call)
-- [ ] CSV import: parse with strict validation (monotonic dip_mm, no duplicates, sensible volume range), preview, then commit. Reject rather than partial-commit on the first malformed row.
-- [ ] Tank detail page shows the active chart name + effective dates + a "Replace chart" action
-- [ ] Audit + outbox: `tank_calibration.chart_uploaded`, `tank_calibration.chart_superseded`
-- [ ] Seed: a 50-entry chart for MIK-01's PMS tank (0..3000mm in 60mm steps)
+- [x] CSV import: parse with strict validation (monotonic dip_mm, no duplicates, sensible volume range), preview (`?dry_run=true`), then commit. Reject rather than partial-commit on the first malformed row.
+- [x] Tank detail page shows the active chart name + effective dates + a "Replace chart" action
+- [x] Audit + outbox: `tank_calibration.chart_uploaded`, `tank_calibration.chart_superseded`
+- [x] Seed: a 50-entry chart for MIK-01's PMS tank (0..3000mm in 60mm steps)
 
 **Done when:** `GET /api/v1/tanks/{MIK-PMS-id}/calibrated-volume?dip_mm=1240` returns a linearly-interpolated litre figure; replacing the chart preserves the old one as `status='superseded'`.
 
