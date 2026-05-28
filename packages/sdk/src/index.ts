@@ -1,6 +1,8 @@
 export { Client, SdkError } from './client';
 export type { ClientConfig } from './client';
 export type {
+  Account,
+  AccountingPeriod,
   ApiError,
   ARentry,
   AuditLogEntry,
@@ -16,6 +18,8 @@ export type {
   Incident,
   InventoryOverview,
   InventoryOverviewTank,
+  JournalEntry,
+  JournalLine,
   LoginRequest,
   LoginResponse,
   Me,

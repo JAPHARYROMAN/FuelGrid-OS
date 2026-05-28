@@ -1,4 +1,7 @@
 import type {
+  Account,
+  AccountingPeriod,
+  JournalEntry,
   AuditLogEntry,
   CalibratedVolume,
   CalibrationChart,
@@ -1332,6 +1335,100 @@ export class Client {
 
   getARaging(signal?: AbortSignal): Promise<Paginated<CustomerBalance>> {
     return this.request<Paginated<CustomerBalance>>('/api/v1/ar-aging', { signal });
+  }
+
+  // ----------- Accounting (Phase 7) -----------
+
+  listAccounts(signal?: AbortSignal): Promise<Paginated<Account>> {
+    return this.request<Paginated<Account>>('/api/v1/accounts', { signal });
+  }
+
+  seedDefaultChart(signal?: AbortSignal): Promise<{ created: number }> {
+    return this.request('/api/v1/accounts/seed-defaults', { method: 'POST', signal });
+  }
+
+  createAccount(
+    req: { code: string; name: string; type: string; normal_balance: string; parent_id?: string },
+    signal?: AbortSignal,
+  ): Promise<Account> {
+    return this.request<Account>('/api/v1/accounts', { method: 'POST', body: req, signal });
+  }
+
+  updateAccount(
+    id: string,
+    req: { name?: string; status?: string },
+    signal?: AbortSignal,
+  ): Promise<Account> {
+    return this.request<Account>(`/api/v1/accounts/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  listAccountingPeriods(signal?: AbortSignal): Promise<Paginated<AccountingPeriod>> {
+    return this.request<Paginated<AccountingPeriod>>('/api/v1/accounting-periods', { signal });
+  }
+
+  createAccountingPeriod(
+    req: { start_date: string; end_date: string },
+    signal?: AbortSignal,
+  ): Promise<AccountingPeriod> {
+    return this.request<AccountingPeriod>('/api/v1/accounting-periods', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  transitionAccountingPeriod(
+    id: string,
+    action: 'start-close' | 'close' | 'reopen' | 'lock',
+    signal?: AbortSignal,
+  ): Promise<AccountingPeriod> {
+    return this.request<AccountingPeriod>(
+      `/api/v1/accounting-periods/${encodeURIComponent(id)}/${action}`,
+      { method: 'POST', signal },
+    );
+  }
+
+  listJournalEntries(signal?: AbortSignal): Promise<Paginated<JournalEntry>> {
+    return this.request<Paginated<JournalEntry>>('/api/v1/journal-entries', { signal });
+  }
+
+  getJournalEntry(id: string, signal?: AbortSignal): Promise<JournalEntry> {
+    return this.request<JournalEntry>(`/api/v1/journal-entries/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  postJournalAdjustment(
+    req: {
+      entry_date: string;
+      memo?: string;
+      lines: {
+        account_id?: string;
+        system_key?: string;
+        debit: string;
+        credit: string;
+        memo?: string;
+      }[];
+    },
+    signal?: AbortSignal,
+  ): Promise<JournalEntry> {
+    return this.request<JournalEntry>('/api/v1/journal-entries', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  reverseJournalEntry(id: string, memo?: string, signal?: AbortSignal): Promise<JournalEntry> {
+    return this.request<JournalEntry>(`/api/v1/journal-entries/${encodeURIComponent(id)}/reverse`, {
+      method: 'POST',
+      body: { memo },
+      signal,
+    });
   }
 
   // ----------- Users -----------

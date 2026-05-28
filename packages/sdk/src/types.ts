@@ -792,6 +792,55 @@ export interface CustomerBalance {
   balance: string;
 }
 
+// ---- Phase 7: Finance & Accounting Control ----
+
+export interface Account {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  normal_balance: string;
+  parent_id?: string;
+  system_key?: string;
+  status: string;
+}
+
+export interface AccountingPeriod {
+  id: string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  closed_by?: string;
+  closed_at?: string;
+  locked_by?: string;
+  locked_at?: string;
+}
+
+export interface JournalLine {
+  id: string;
+  account_id: string;
+  debit: string;
+  credit: string;
+  station_id?: string;
+  memo?: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  entry_number: number;
+  period_id: string;
+  entry_date: string;
+  source_type: string;
+  source_id?: string;
+  station_id?: string;
+  status: string;
+  memo?: string;
+  reverses_entry_id?: string;
+  reversed_by_entry_id?: string;
+  total?: string;
+  lines?: JournalLine[];
+}
+
 export interface UserSummary {
   id: string;
   email: string;

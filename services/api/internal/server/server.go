@@ -13,6 +13,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 
+	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
@@ -62,6 +63,7 @@ type Server struct {
 	policy   *policy.Service
 	metrics  *observability.Metrics
 
+	accounting     *accounting.Repo
 	companies      *companies.Repo
 	regions        *regions.Repo
 	stations       *stations.Repo
@@ -101,6 +103,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// Admin / domain repos only get built when the pool is up. Handlers
 	// gate themselves on s.deps.DB == nil checks at registration time.
 	if deps.DB != nil {
+		s.accounting = accounting.New(deps.DB)
 		s.companies = companies.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
@@ -390,6 +393,37 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							Post("/revenue-days/{id}/lock", s.handleLockRevenueDay)
 						r.With(s.requirePermissionHeld("customer.read")).
 							Get("/ar-aging", s.handleARaging)
+
+						// ===== Phase 7: Finance & Accounting Control =====
+						// Accounting foundation (Stages 1-3): chart of accounts,
+						// periods, journal engine — all tenant-wide.
+						r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
+							r.Get("/accounts", s.handleListAccounts)
+							r.Get("/accounting-periods", s.handleListPeriods)
+						})
+						r.With(s.requirePermission("account.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/accounts", s.handleCreateAccount)
+							r.Post("/accounts/seed-defaults", s.handleSeedDefaultChart)
+							r.Patch("/accounts/{id}", s.handleUpdateAccount)
+						})
+						r.With(s.requirePermission("period.manage", nil)).
+							Post("/accounting-periods", s.handleCreatePeriod)
+						r.With(s.requirePermission("period.close", nil)).Group(func(r chi.Router) {
+							r.Post("/accounting-periods/{id}/start-close", s.handlePeriodTransition("start_close"))
+							r.Post("/accounting-periods/{id}/close", s.handlePeriodTransition("closed"))
+						})
+						r.With(s.requirePermission("period.reopen", nil)).
+							Post("/accounting-periods/{id}/reopen", s.handlePeriodTransition("reopened"))
+						r.With(s.requirePermission("period.lock", nil)).
+							Post("/accounting-periods/{id}/lock", s.handlePeriodTransition("locked"))
+						r.With(s.requirePermissionHeld("journal.read")).Group(func(r chi.Router) {
+							r.Get("/journal-entries", s.handleListJournalEntries)
+							r.Get("/journal-entries/{id}", s.handleGetJournalEntry)
+						})
+						r.With(s.requirePermission("journal.adjust", nil)).Group(func(r chi.Router) {
+							r.Post("/journal-entries", s.handlePostAdjustment)
+							r.Post("/journal-entries/{id}/reverse", s.handleReverseJournalEntry)
+						})
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
