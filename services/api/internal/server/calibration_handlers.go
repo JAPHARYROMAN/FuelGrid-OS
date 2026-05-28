@@ -14,7 +14,12 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 )
+
+// chartCapacityTolerance allows a chart's top volume to sit slightly above
+// the tank's nominal capacity (rounding, ullage models) before it's rejected.
+const chartCapacityTolerance = 1.01
 
 // maxCalibrationUpload caps the in-memory multipart parse. A strapping chart
 // is a few KB; 4 MB is generous headroom.
@@ -52,23 +57,23 @@ func toCalibrationChartDTO(c *calibration.Chart) calibrationChartDTO {
 // tankForCalibration loads the tank named by the {id} URL param, scoped to
 // the actor's tenant. It writes the error response and returns false on any
 // failure so callers can simply return.
-func (s *Server) tankForCalibration(w http.ResponseWriter, r *http.Request, actor identity.Actor) (uuid.UUID, uuid.UUID, bool) {
+func (s *Server) tankForCalibration(w http.ResponseWriter, r *http.Request, actor identity.Actor) (*tanks.Tank, bool) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tank id")
-		return uuid.Nil, uuid.Nil, false
+		return nil, false
 	}
 	tank, err := s.tanks.Get(r.Context(), actor.TenantID, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "tank not found")
-		return uuid.Nil, uuid.Nil, false
+		return nil, false
 	}
 	if err != nil {
 		s.logger.Error("calibration: load tank", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return uuid.Nil, uuid.Nil, false
+		return nil, false
 	}
-	return tank.ID, tank.StationID, true
+	return tank, true
 }
 
 func (s *Server) handleListCalibrationCharts(w http.ResponseWriter, r *http.Request) {
@@ -77,13 +82,14 @@ func (s *Server) handleListCalibrationCharts(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
+	tank, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
 		return
 	}
-	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
+	if !s.authorizeStation(w, r, actor, "station.read", tank.StationID) {
 		return
 	}
+	tankID := tank.ID
 	rows, err := s.calibration.ListCharts(r.Context(), actor.TenantID, tankID)
 	if err != nil {
 		s.logger.Error("list calibration charts", "error", err)
@@ -103,13 +109,14 @@ func (s *Server) handleGetActiveCalibrationChart(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
+	tank, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
 		return
 	}
-	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
+	if !s.authorizeStation(w, r, actor, "station.read", tank.StationID) {
 		return
 	}
+	tankID := tank.ID
 	chart, err := s.calibration.ActiveChart(r.Context(), actor.TenantID, tankID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "no active calibration chart")
@@ -139,13 +146,14 @@ func (s *Server) handleCalibratedVolume(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "dip_mm must be a number")
 		return
 	}
-	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
+	tank, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
 		return
 	}
-	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
+	if !s.authorizeStation(w, r, actor, "station.read", tank.StationID) {
 		return
 	}
+	tankID := tank.ID
 
 	volume, chartID, err := s.calibration.Lookup(r.Context(), actor.TenantID, tankID, dip)
 	switch {
@@ -178,13 +186,14 @@ func (s *Server) handleUploadCalibrationChart(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
+	tank, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
 		return
 	}
+	tankID := tank.ID
 
 	// Station-scoped authorization (the tank's station).
-	if !s.authorizeStation(w, r, actor, "tanks.calibrate", stationID) {
+	if !s.authorizeStation(w, r, actor, "tanks.calibrate", tank.StationID) {
 		return
 	}
 
@@ -224,6 +233,15 @@ func (s *Server) handleUploadCalibrationChart(w http.ResponseWriter, r *http.Req
 	entries, err := calibration.ParseCSV(file)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// A chart must not map the tank above its physical capacity (a small
+	// tolerance absorbs rounding / ullage). entries is sorted ascending, so
+	// the last row carries the max volume.
+	maxVolume := entries[len(entries)-1].VolumeLitres
+	if maxVolume > tank.CapacityLitres*chartCapacityTolerance {
+		writeError(w, http.StatusUnprocessableEntity, "chart maximum volume exceeds the tank's capacity")
 		return
 	}
 

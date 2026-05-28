@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -53,6 +54,11 @@ func ParseCSV(r io.Reader) ([]Entry, error) {
 		dip, err := strconv.ParseFloat(strings.TrimSpace(rec[0]), 64)
 		if err != nil {
 			return nil, fmt.Errorf("calibration: line %d: invalid dip_mm %q", line, rec[0])
+		}
+		// dip_mm is stored as an integer (millimetres); reject fractional
+		// values up front rather than silently truncating them on commit.
+		if dip != math.Trunc(dip) {
+			return nil, fmt.Errorf("calibration: line %d: dip_mm must be a whole number of millimetres (got %v)", line, rec[0])
 		}
 		vol, err := strconv.ParseFloat(strings.TrimSpace(rec[1]), 64)
 		if err != nil {
