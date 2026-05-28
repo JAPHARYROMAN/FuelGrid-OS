@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // jsonBody marshals v into an io.Reader for harness PUT/PATCH requests.
@@ -156,5 +158,70 @@ func TestPhase8_FleetIdentity(t *testing.T) {
 	// An unknown token is rejected.
 	if code, _ := h.invPostJSON(t, "/api/v1/fleet/credentials/validate", admin, map[string]any{"token": "NOPE-0000"}); code != http.StatusNotFound {
 		t.Fatalf("validate unknown: %d, want 404", code)
+	}
+}
+
+// TestPhase8_Authorization covers Category C: the deterministic authorization
+// decision (credit/hold/limit checks with explainable denials), approval that
+// holds credit, single-use fulfillment, and override.
+func TestPhase8_Authorization(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	station := h.ids.station1.String()
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin, map[string]any{"code": "AUTHCO", "name": "Auth Co", "credit_limit": "10000"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d", code)
+	}
+	custID := cust["id"].(string)
+
+	// Within available credit (10,000): a 6,000 request is approved and holds credit.
+	code, auth := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin, map[string]any{
+		"customer_id": custID, "station_id": station, "requested_amount": "6000",
+	})
+	if code != http.StatusCreated || auth["status"] != "approved" || auth["approved_amount"] != "6000.00" {
+		t.Fatalf("approve authorization = %d %v", code, auth)
+	}
+	authID := auth["id"].(string)
+
+	// Credit position now reflects the 6,000 hold: available 4,000.
+	if code, pos := h.getJSON(t, "/api/v1/customers/"+custID+"/credit-position", admin); code != http.StatusOK || pos["available_credit"] != "4000.00" {
+		t.Fatalf("credit position after hold = %v", pos)
+	}
+
+	// A second 6,000 request now exceeds available credit and is denied with a rule.
+	code, denied := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin, map[string]any{
+		"customer_id": custID, "station_id": station, "requested_amount": "6000",
+	})
+	if code != http.StatusUnprocessableEntity || denied["rule_code"] != "insufficient_credit" {
+		t.Fatalf("expected insufficient_credit denial = %d %v", code, denied)
+	}
+
+	// Override (held by the owner admin) forces an approval despite the shortfall.
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin, map[string]any{
+		"customer_id": custID, "station_id": station, "requested_amount": "6000", "override": true,
+	}); code != http.StatusCreated {
+		t.Fatalf("override authorization: %d", code)
+	}
+
+	// Fulfilling the first authorization consumes it once; a second fulfill fails.
+	saleRef := uuid.New().String()
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+authID+"/fulfill", admin, map[string]any{"consumed_by": saleRef}); code != http.StatusOK {
+		t.Fatalf("fulfill authorization: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+authID+"/fulfill", admin, map[string]any{"consumed_by": uuid.New().String()}); code != http.StatusConflict {
+		t.Fatalf("double fulfill: %d, want 409", code)
+	}
+
+	// Placing the customer on hold then denies a fresh request.
+	if code, _ := h.invPostJSON(t, "/api/v1/customers/"+custID+"/credit-hold", admin, map[string]any{"hold": true, "reason": "review"}); code != http.StatusOK {
+		t.Fatalf("set hold: %d", code)
+	}
+	if code, denied := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin, map[string]any{
+		"customer_id": custID, "station_id": station, "requested_amount": "100",
+	}); code != http.StatusUnprocessableEntity || denied["rule_code"] != "account_hold" {
+		t.Fatalf("expected account_hold denial = %d %v", code, denied)
 	}
 }

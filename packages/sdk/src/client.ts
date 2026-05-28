@@ -66,6 +66,7 @@ import type {
   CustomerStatement,
   CredentialValidation,
   Driver,
+  FuelAuthorization,
   FuelCredential,
   Vehicle,
   Payment,
@@ -1594,6 +1595,98 @@ export class Client {
       body: { token },
       signal,
     });
+  }
+
+  // ----------- Fuel authorization & limits (Phase 8) -----------
+
+  /**
+   * Request a fuel authorization. On denial the server returns HTTP 422 with a
+   * rule_code body, surfaced here as an SdkError whose body is AuthorizationDenied.
+   */
+  requestFuelAuthorization(
+    req: {
+      customer_id: string;
+      vehicle_id?: string;
+      driver_id?: string;
+      credential_id?: string;
+      station_id: string;
+      product_id?: string;
+      requested_amount: string;
+      odometer?: string;
+      source?: string;
+      override?: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<FuelAuthorization> {
+    return this.request<FuelAuthorization>('/api/v1/fuel-authorizations', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listFuelAuthorizations(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<FuelAuthorization>> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request<Paginated<FuelAuthorization>>(`/api/v1/fuel-authorizations${qs}`, {
+      signal,
+    });
+  }
+
+  getFuelAuthorization(id: string, signal?: AbortSignal): Promise<FuelAuthorization> {
+    return this.request<FuelAuthorization>(
+      `/api/v1/fuel-authorizations/${encodeURIComponent(id)}`,
+      {
+        signal,
+      },
+    );
+  }
+
+  fulfillFuelAuthorization(
+    id: string,
+    consumedBy: string,
+    signal?: AbortSignal,
+  ): Promise<FuelAuthorization> {
+    return this.request<FuelAuthorization>(
+      `/api/v1/fuel-authorizations/${encodeURIComponent(id)}/fulfill`,
+      { method: 'POST', body: { consumed_by: consumedBy }, signal },
+    );
+  }
+
+  transitionFuelAuthorization(
+    id: string,
+    action: 'cancel' | 'void',
+    signal?: AbortSignal,
+  ): Promise<FuelAuthorization> {
+    return this.request<FuelAuthorization>(
+      `/api/v1/fuel-authorizations/${encodeURIComponent(id)}/${action}`,
+      { method: 'POST', signal },
+    );
+  }
+
+  listFuelLimits(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ items: unknown[]; count: number }> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request(`/api/v1/fuel-limits${qs}`, { signal });
+  }
+
+  createFuelLimit(
+    req: {
+      customer_id?: string;
+      vehicle_id?: string;
+      product_id?: string;
+      scope?: string;
+      period?: 'transaction' | 'day' | 'week' | 'month';
+      max_amount?: string;
+      max_litres?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request('/api/v1/fuel-limits', { method: 'POST', body: req, signal });
   }
 
   // ----------- Revenue close & dashboard (Phase 6) -----------

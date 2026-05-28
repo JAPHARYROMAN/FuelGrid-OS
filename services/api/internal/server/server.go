@@ -444,6 +444,23 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/fleet/credentials/validate", s.handleValidateCredential)
 						})
 
+						// Authorization & forecourt (Stages 7-9).
+						r.With(s.requirePermissionHeld("customer.read")).Group(func(r chi.Router) {
+							r.Get("/fuel-authorizations", s.handleListAuthorizations)
+							r.Get("/fuel-authorizations/{id}", s.handleGetAuthorization)
+							r.Get("/fuel-limits", s.handleListFuelLimits)
+						})
+						r.With(s.requirePermission("fuel_authorization.create", nil)).Group(func(r chi.Router) {
+							r.Post("/fuel-authorizations", s.handleRequestAuthorization)
+							r.Post("/fuel-authorizations/{id}/fulfill", s.handleFulfillAuthorization)
+						})
+						r.With(s.requirePermission("fuel_authorization.cancel", nil)).Group(func(r chi.Router) {
+							r.Post("/fuel-authorizations/{id}/cancel", s.handleAuthorizationStatus("cancelled"))
+							r.Post("/fuel-authorizations/{id}/void", s.handleAuthorizationStatus("voided"))
+						})
+						r.With(s.requirePermission("fuel_limit.manage", nil)).
+							Post("/fuel-limits", s.handleCreateFuelLimit)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

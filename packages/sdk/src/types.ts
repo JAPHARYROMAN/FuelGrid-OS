@@ -817,6 +817,28 @@ export interface CredentialValidation extends FuelCredential {
   usable: boolean;
 }
 
+export interface FuelAuthorization {
+  id: string;
+  customer_id: string;
+  vehicle_id?: string;
+  driver_id?: string;
+  credential_id?: string;
+  station_id: string;
+  product_id?: string;
+  requested_amount: string;
+  approved_amount: string;
+  odometer?: string;
+  status: string;
+  source: string;
+  consumed_by?: string;
+}
+
+export interface AuthorizationDenied {
+  error: string;
+  rule_code: string;
+  detail: string;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;

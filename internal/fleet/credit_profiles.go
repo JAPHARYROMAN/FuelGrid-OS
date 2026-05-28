@@ -116,29 +116,33 @@ func (r *Repo) SetHold(ctx context.Context, tx pgx.Tx, tenantID, customerID uuid
 func (r *Repo) CreditPosition(ctx context.Context, q database.Querier, tenantID, customerID uuid.UUID) (*CreditPosition, error) {
 	var p CreditPosition
 	p.CustomerID = customerID
-	// exposure = AR balance + active fuel-authorization holds. The authorization
-	// hold component is folded in by AuthorizationHeld once Phase-8 Stage 8
-	// creates fuel_authorizations; this base query uses the AR balance.
+	// exposure = AR balance + outstanding approved (not-yet-fulfilled)
+	// authorization holds, so two concurrent fuelings can't both spend the same
+	// headroom.
 	err := q.QueryRow(ctx, `
 		WITH ar AS (
 		    SELECT COALESCE(SUM(amount), 0) AS bal FROM ar_entries WHERE tenant_id = $1 AND customer_id = $2
+		),
+		auth AS (
+		    SELECT COALESCE(SUM(approved_amount), 0) AS held FROM fuel_authorizations
+		    WHERE tenant_id = $1 AND customer_id = $2 AND status = 'approved'
 		),
 		overdue AS (
 		    SELECT COALESCE(SUM(outstanding_amount), 0) AS od FROM customer_invoices
 		    WHERE tenant_id = $1 AND customer_id = $2 AND status IN ('issued', 'partially_paid') AND due_date < CURRENT_DATE
 		)
 		SELECT c.credit_limit::text,
-		       ar.bal::text,
-		       (c.credit_limit - ar.bal)::text,
+		       (ar.bal + auth.held)::text,
+		       (c.credit_limit - ar.bal - auth.held)::text,
 		       overdue.od::text,
 		       c.status,
 		       (COALESCE(p.hold, false) OR c.status IN ('on_hold', 'suspended')),
 		       p.hold_reason,
 		       COALESCE(p.warning_threshold_pct, 80)::text,
-		       ar.bal > c.credit_limit,
-		       c.credit_limit > 0 AND ar.bal >= c.credit_limit * COALESCE(p.warning_threshold_pct, 80) / 100
+		       (ar.bal + auth.held) > c.credit_limit,
+		       c.credit_limit > 0 AND (ar.bal + auth.held) >= c.credit_limit * COALESCE(p.warning_threshold_pct, 80) / 100
 		FROM customers c
-		CROSS JOIN ar CROSS JOIN overdue
+		CROSS JOIN ar CROSS JOIN auth CROSS JOIN overdue
 		LEFT JOIN customer_credit_profiles p ON p.tenant_id = c.tenant_id AND p.customer_id = c.id
 		WHERE c.tenant_id = $1 AND c.id = $2
 	`, tenantID, customerID).Scan(
