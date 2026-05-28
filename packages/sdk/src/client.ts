@@ -50,6 +50,8 @@ import type {
   ARentry,
   Customer,
   CustomerBalance,
+  CustomerInvoice,
+  CustomerPayment,
   CustomerStatement,
   Payment,
   RevenueDay,
@@ -1674,6 +1676,71 @@ export class Client {
       method: 'POST',
       signal,
     });
+  }
+
+  // ----------- Customer invoices & payments (Phase 7) -----------
+
+  listCustomerInvoices(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<CustomerInvoice>> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request<Paginated<CustomerInvoice>>(`/api/v1/customer-invoices${qs}`, { signal });
+  }
+
+  getCustomerInvoice(id: string, signal?: AbortSignal): Promise<CustomerInvoice> {
+    return this.request<CustomerInvoice>(`/api/v1/customer-invoices/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  createCustomerInvoice(
+    req: {
+      customer_id: string;
+      invoice_number?: string;
+      invoice_date?: string;
+      due_date?: string;
+      source_type?: string;
+      source_id?: string;
+      station_id?: string;
+      lines: Array<{ description?: string; amount: string; revenue_account_key?: string }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<CustomerInvoice> {
+    return this.request<CustomerInvoice>('/api/v1/customer-invoices', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  issueCustomerInvoice(id: string, signal?: AbortSignal): Promise<CustomerInvoice> {
+    return this.request<CustomerInvoice>(
+      `/api/v1/customer-invoices/${encodeURIComponent(id)}/issue`,
+      { method: 'POST', signal },
+    );
+  }
+
+  getCustomerInvoiceAging(signal?: AbortSignal): Promise<Paginated<CustomerBalance>> {
+    return this.request<Paginated<CustomerBalance>>('/api/v1/customer-invoices-aging', { signal });
+  }
+
+  listCustomerPayments(signal?: AbortSignal): Promise<Paginated<CustomerPayment>> {
+    return this.request<Paginated<CustomerPayment>>('/api/v1/customer-payments', { signal });
+  }
+
+  postCustomerPayment(
+    req: {
+      customer_id: string;
+      payment_date: string;
+      method: string;
+      reference?: string;
+      source_account_key?: string;
+      allocations: Array<{ customer_invoice_id: string; amount: string }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ payment_id: string; journal_entry_id: string }> {
+    return this.request('/api/v1/customer-payments', { method: 'POST', body: req, signal });
   }
 
   // ----------- Users -----------

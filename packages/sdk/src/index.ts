@@ -23,6 +23,8 @@ export type {
   Company,
   Customer,
   CustomerBalance,
+  CustomerInvoice,
+  CustomerPayment,
   CustomerStatement,
   DipReading,
   Incident,

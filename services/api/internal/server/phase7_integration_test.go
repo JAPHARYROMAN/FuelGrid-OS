@@ -320,3 +320,94 @@ func TestPhase7_CashAndBanking(t *testing.T) {
 		t.Fatalf("trial balance not balanced: %v", tb)
 	}
 }
+
+// TestPhase7_Receivables covers Category D: a customer invoice is issued to AR
+// (debit AR, credit revenue), aged, and drawn down by an allocated customer
+// payment (debit bank, credit AR). Over-allocation is refused; the books stay
+// balanced throughout.
+func TestPhase7_Receivables(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	// A finance customer.
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin,
+		map[string]any{"code": "FLEET", "name": "Fleet Co", "credit_limit": "0"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d %v", code, cust)
+	}
+	custID := cust["id"].(string)
+
+	// A draft invoice with two lines totals 5,000.
+	code, inv := h.invPostJSON(t, "/api/v1/customer-invoices", admin, map[string]any{
+		"customer_id": custID, "invoice_number": "INV-1", "invoice_date": "2026-06-10", "due_date": "2026-06-25",
+		"lines": []map[string]any{
+			{"description": "Diesel - June wk1", "amount": "3000"},
+			{"description": "Diesel - June wk2", "amount": "2000"},
+		},
+	})
+	if code != http.StatusCreated || inv["amount"] != "5000.00" || inv["status"] != "draft" {
+		t.Fatalf("create invoice = %d %v", code, inv)
+	}
+	invID := inv["id"].(string)
+
+	// Issuing posts to AR and shows in aging.
+	code, issued := h.do(t, http.MethodPost, "/api/v1/customer-invoices/"+invID+"/issue", admin, nil, "")
+	if code != http.StatusOK {
+		t.Fatalf("issue = %d %s", code, issued)
+	}
+	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
+		got["status"] != "issued" || got["journal_entry_id"] == nil {
+		t.Fatalf("invoice after issue = %v", got)
+	}
+	if code, aging := h.getJSON(t, "/api/v1/customer-invoices-aging", admin); code != http.StatusOK ||
+		len(aging["items"].([]any)) != 1 {
+		t.Fatalf("invoice aging = %v", aging)
+	}
+
+	// A 2,000 payment leaves the invoice partially paid.
+	code, _ = h.invPostJSON(t, "/api/v1/customer-payments", admin, map[string]any{
+		"customer_id": custID, "payment_date": "2026-06-15", "method": "bank_transfer", "source_account_key": "bank",
+		"allocations": []map[string]any{{"customer_invoice_id": invID, "amount": "2000"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("first payment: %d", code)
+	}
+	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
+		got["status"] != "partially_paid" || got["outstanding_amount"] != "3000.00" {
+		t.Fatalf("invoice after partial payment = %v", got)
+	}
+
+	// Over-allocating the remaining 3,000 is refused.
+	if code, _ := h.invPostJSON(t, "/api/v1/customer-payments", admin, map[string]any{
+		"customer_id": custID, "payment_date": "2026-06-16", "method": "cash", "source_account_key": "cash_on_hand",
+		"allocations": []map[string]any{{"customer_invoice_id": invID, "amount": "4000"}},
+	}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("over-allocation: %d, want 422", code)
+	}
+
+	// Paying the remaining 3,000 settles the invoice.
+	if code, _ := h.invPostJSON(t, "/api/v1/customer-payments", admin, map[string]any{
+		"customer_id": custID, "payment_date": "2026-06-16", "method": "cash", "source_account_key": "cash_on_hand",
+		"allocations": []map[string]any{{"customer_invoice_id": invID, "amount": "3000"}},
+	}); code != http.StatusCreated {
+		t.Fatalf("final payment: %d", code)
+	}
+	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
+		got["status"] != "paid" || got["outstanding_amount"] != "0.00" {
+		t.Fatalf("invoice after full payment = %v", got)
+	}
+
+	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
+		t.Fatalf("trial balance not balanced: %v", tb)
+	}
+}

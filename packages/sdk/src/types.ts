@@ -961,6 +961,32 @@ export interface BankStatementLine {
   journal_entry_id?: string;
 }
 
+export interface CustomerInvoice {
+  id: string;
+  customer_id: string;
+  invoice_number?: string;
+  invoice_date: string;
+  due_date?: string;
+  amount: string;
+  outstanding_amount: string;
+  source_type: string;
+  station_id?: string;
+  status: string;
+  journal_entry_id?: string;
+}
+
+export interface CustomerPayment {
+  id: string;
+  customer_id: string;
+  payment_date: string;
+  method: string;
+  reference?: string;
+  amount: string;
+  source_account_key: string;
+  status: string;
+  journal_entry_id?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

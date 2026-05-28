@@ -472,6 +472,20 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/bank-statement-lines/{id}/bank-fee", s.handleBankFeeStatementLine)
 						})
 
+						// Customer invoices & payments (Phase 7, Stages 9-10).
+						r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
+							r.Get("/customer-invoices", s.handleListCustomerInvoices)
+							r.Get("/customer-invoices/{id}", s.handleGetCustomerInvoice)
+							r.Get("/customer-invoices-aging", s.handleCustomerInvoiceAging)
+							r.Get("/customer-payments", s.handleListCustomerPayments)
+						})
+						r.With(s.requirePermission("customer_invoice.manage", nil)).
+							Post("/customer-invoices", s.handleCreateCustomerInvoice)
+						r.With(s.requirePermission("customer_invoice.issue", nil)).
+							Post("/customer-invoices/{id}/issue", s.handleIssueCustomerInvoice)
+						r.With(s.requirePermission("customer_payment.manage", nil)).
+							Post("/customer-payments", s.handlePostCustomerPayment)
+
 						// Finance reports + dashboard (Phase 7, Stages 13, 15) —
 						// read-only over posted journal lines, gated by finance.read.
 						r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {

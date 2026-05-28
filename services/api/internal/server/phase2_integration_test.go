@@ -220,6 +220,10 @@ func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID)
 	stmts := []string{
 		`DELETE FROM outbox_events WHERE tenant_id = $1`,
 		`DELETE FROM audit_logs WHERE tenant_id = $1`,
+		`DELETE FROM customer_payment_allocations WHERE tenant_id = $1`,
+		`DELETE FROM customer_payments WHERE tenant_id = $1`,
+		`DELETE FROM customer_invoice_lines WHERE tenant_id = $1`,
+		`DELETE FROM customer_invoices WHERE tenant_id = $1`,
 		`DELETE FROM bank_statement_lines WHERE tenant_id = $1`,
 		`DELETE FROM bank_statement_imports WHERE tenant_id = $1`,
 		`DELETE FROM bank_deposit_lines WHERE tenant_id = $1`,
