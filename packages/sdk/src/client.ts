@@ -2731,6 +2731,82 @@ export class Client {
     return this.request('/api/v1/risk/scores/recompute', { method: 'POST', signal });
   }
 
+  // ----------- Investigations (Phase 10) -----------
+
+  listInvestigations(
+    opts: { status?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ items: unknown[]; count: number }> {
+    const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : '';
+    return this.request(`/api/v1/investigations${qs}`, { signal });
+  }
+
+  getInvestigation(id: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return this.request(`/api/v1/investigations/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createInvestigation(
+    req: { title: string; case_type?: string; severity?: string; alert_id?: string },
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    return this.request('/api/v1/investigations', { method: 'POST', body: req, signal });
+  }
+
+  attachAlertToInvestigation(id: string, alertID: string, signal?: AbortSignal): Promise<unknown> {
+    return this.request(`/api/v1/investigations/${encodeURIComponent(id)}/alerts`, {
+      method: 'POST',
+      body: { alert_id: alertID },
+      signal,
+    });
+  }
+
+  addInvestigationComment(id: string, body: string, signal?: AbortSignal): Promise<{ id: string }> {
+    return this.request(`/api/v1/investigations/${encodeURIComponent(id)}/comments`, {
+      method: 'POST',
+      body: { body },
+      signal,
+    });
+  }
+
+  addInvestigationAction(
+    id: string,
+    req: { action_type: string; detail?: string },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request(`/api/v1/investigations/${encodeURIComponent(id)}/actions`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  setInvestigationActionStatus(
+    id: string,
+    actionID: string,
+    status: 'suggested' | 'accepted' | 'completed' | 'dismissed',
+    signal?: AbortSignal,
+  ): Promise<{ id: string; status: string }> {
+    return this.request(
+      `/api/v1/investigations/${encodeURIComponent(id)}/actions/${encodeURIComponent(actionID)}/status`,
+      { method: 'POST', body: { status }, signal },
+    );
+  }
+
+  setInvestigationStatus(
+    id: string,
+    req: {
+      status: 'open' | 'assigned' | 'in_review' | 'action_required' | 'resolved' | 'closed';
+      resolution?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    return this.request(`/api/v1/investigations/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
   // ----------- Users -----------
 
   listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {

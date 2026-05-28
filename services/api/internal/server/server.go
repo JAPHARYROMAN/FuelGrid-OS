@@ -587,6 +587,20 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("risk_score.admin", nil)).
 							Post("/risk/scores/recompute", s.handleRecomputeRiskScores)
 
+						// Investigation workflow (Stages 11-13).
+						r.With(s.requirePermissionHeld("investigation.read")).Group(func(r chi.Router) {
+							r.Get("/investigations", s.handleListCases)
+							r.Get("/investigations/{id}", s.handleGetCaseTimeline)
+						})
+						r.With(s.requirePermission("investigation.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/investigations", s.handleCreateCase)
+							r.Post("/investigations/{id}/alerts", s.handleAttachAlertToCase)
+							r.Post("/investigations/{id}/comments", s.handleAddCaseComment)
+							r.Post("/investigations/{id}/actions", s.handleAddCaseAction)
+							r.Post("/investigations/{id}/actions/{actionID}/status", s.handleSetCaseActionStatus)
+							r.Post("/investigations/{id}/status", s.handleSetCaseStatus)
+						})
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

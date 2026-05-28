@@ -114,3 +114,64 @@ func TestPhase10_ScoringDashboard(t *testing.T) {
 		t.Fatalf("top station score = %v", top)
 	}
 }
+
+// TestPhase10_Investigations covers Category D: escalating an alert into a
+// case, building its timeline (linked alert + comment + action), and closing
+// with a resolution.
+func TestPhase10_Investigations(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
+	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
+		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
+	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
+		t.Fatalf("seed cash recon: %v", err)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("detect: %d", code)
+	}
+	code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=cash_shortage", admin)
+	alertID := alerts["items"].([]any)[0].(map[string]any)["id"].(string)
+	if code != http.StatusOK {
+		t.Fatalf("alerts: %d", code)
+	}
+
+	// Open a case linked to the alert.
+	code, c := h.invPostJSON(t, "/api/v1/investigations", admin, map[string]any{
+		"title": "Repeated cash shortage", "case_type": "cash_shortage", "severity": "high", "alert_id": alertID,
+	})
+	if code != http.StatusCreated || c["status"] != "open" {
+		t.Fatalf("create case = %d %v", code, c)
+	}
+	caseID := c["id"].(string)
+
+	// Add a comment and a recommended action; complete the action.
+	if code, _ := h.invPostJSON(t, "/api/v1/investigations/"+caseID+"/comments", admin, map[string]any{"body": "Supervisor recount requested"}); code != http.StatusCreated {
+		t.Fatalf("comment: %d", code)
+	}
+	code, act := h.invPostJSON(t, "/api/v1/investigations/"+caseID+"/actions", admin, map[string]any{"action_type": "request_recount", "detail": "count drawer"})
+	if code != http.StatusCreated {
+		t.Fatalf("action: %d", code)
+	}
+	actionID := act["id"].(string)
+	if code, _ := h.invPostJSON(t, "/api/v1/investigations/"+caseID+"/actions/"+actionID+"/status", admin, map[string]any{"status": "completed"}); code != http.StatusOK {
+		t.Fatalf("complete action: %d", code)
+	}
+
+	// The timeline reconstructs the case-scoped events.
+	code, tl := h.getJSON(t, "/api/v1/investigations/"+caseID, admin)
+	if code != http.StatusOK || len(tl["timeline"].([]any)) < 3 {
+		t.Fatalf("timeline = %d %v", code, tl)
+	}
+
+	// Resolve the case with a disposition.
+	if code, res := h.invPostJSON(t, "/api/v1/investigations/"+caseID+"/status", admin, map[string]any{"status": "resolved", "resolution": "training issued"}); code != http.StatusOK || res["status"] != "resolved" {
+		t.Fatalf("resolve case = %d %v", code, res)
+	}
+}
