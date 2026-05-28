@@ -736,6 +736,62 @@ export interface CustomerStatement {
   entries: ARentry[];
 }
 
+export interface RevenueDay {
+  id: string;
+  station_id: string;
+  operating_day_id: string;
+  business_date: string;
+  gross_revenue: string;
+  net_revenue: string;
+  tax_total: string;
+  cogs_total: string;
+  margin_total: string;
+  cash_total: string;
+  mobile_money_total: string;
+  card_total: string;
+  credit_total: string;
+  voucher_total: string;
+  tender_total: string;
+  cash_variance: string;
+  status: string;
+  locked_by?: string;
+  locked_at?: string;
+}
+
+export interface RevenueSummary {
+  gross_revenue: string;
+  net_revenue: string;
+  tax_total: string;
+  cogs_total: string;
+  margin_total: string;
+  litres_sold: number;
+  sale_count: number;
+}
+
+export interface RevenueTenderBreakdown {
+  cash: string;
+  mobile_money: string;
+  card: string;
+  credit: string;
+  voucher: string;
+  total: string;
+}
+
+export interface RevenueOverview {
+  station: Station;
+  day?: OperatingDay;
+  summary?: RevenueSummary;
+  tenders?: RevenueTenderBreakdown;
+  recent_days: RevenueDay[];
+}
+
+export interface CustomerBalance {
+  customer_id: string;
+  code: string;
+  name: string;
+  balance: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

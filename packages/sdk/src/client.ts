@@ -35,8 +35,11 @@ import type {
   TankValuation,
   ARentry,
   Customer,
+  CustomerBalance,
   CustomerStatement,
   Payment,
+  RevenueDay,
+  RevenueOverview,
   ShiftPaymentReconciliation,
   CashSubmission,
   Session,
@@ -1298,6 +1301,37 @@ export class Client {
       body: req,
       signal,
     });
+  }
+
+  // ----------- Revenue close & dashboard (Phase 6) -----------
+
+  computeRevenueDay(
+    stationID: string,
+    operatingDayID: string,
+    signal?: AbortSignal,
+  ): Promise<RevenueDay> {
+    return this.request<RevenueDay>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/revenue-days`,
+      { method: 'POST', body: { operating_day_id: operatingDayID }, signal },
+    );
+  }
+
+  getRevenueOverview(stationID: string, signal?: AbortSignal): Promise<RevenueOverview> {
+    return this.request<RevenueOverview>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/revenue-overview`,
+      { signal },
+    );
+  }
+
+  lockRevenueDay(revenueDayID: string, signal?: AbortSignal): Promise<RevenueDay> {
+    return this.request<RevenueDay>(
+      `/api/v1/revenue-days/${encodeURIComponent(revenueDayID)}/lock`,
+      { method: 'POST', signal },
+    );
+  }
+
+  getARaging(signal?: AbortSignal): Promise<Paginated<CustomerBalance>> {
+    return this.request<Paginated<CustomerBalance>>('/api/v1/ar-aging', { signal });
   }
 
   // ----------- Users -----------

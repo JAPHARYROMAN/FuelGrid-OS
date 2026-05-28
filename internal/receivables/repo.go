@@ -229,6 +229,40 @@ func (r *Repo) Statement(ctx context.Context, tenantID, customerID uuid.UUID) ([
 	return out, rows.Err()
 }
 
+// CustomerBalance is a customer's outstanding AR balance for an aging view.
+type CustomerBalance struct {
+	CustomerID uuid.UUID
+	Code       string
+	Name       string
+	Balance    string
+}
+
+// Aging returns every customer with a non-zero AR balance, largest first.
+func (r *Repo) Aging(ctx context.Context, tenantID uuid.UUID) ([]CustomerBalance, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT c.id, c.code, c.name, COALESCE(SUM(e.amount), 0)::text
+		FROM customers c
+		LEFT JOIN ar_entries e ON e.customer_id = c.id AND e.tenant_id = c.tenant_id
+		WHERE c.tenant_id = $1 AND c.status <> 'deleted'
+		GROUP BY c.id, c.code, c.name
+		HAVING COALESCE(SUM(e.amount), 0) <> 0
+		ORDER BY COALESCE(SUM(e.amount), 0) DESC
+	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CustomerBalance{}
+	for rows.Next() {
+		var b CustomerBalance
+		if err := rows.Scan(&b.CustomerID, &b.Code, &b.Name, &b.Balance); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 func nullableMoney(s string) any {
 	if s == "" {
 		return nil

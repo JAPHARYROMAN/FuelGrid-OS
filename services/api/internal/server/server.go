@@ -381,6 +381,16 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/customers/{id}/payments", s.handleRecordCustomerPayment)
 						})
 
+						// Revenue close & dashboard (Phase 6, Stages 7-8).
+						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
+							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)
+							r.Get("/stations/{stationID}/revenue-overview", s.handleRevenueOverview)
+						})
+						r.With(s.requirePermission("period.lock", nil)).
+							Post("/revenue-days/{id}/lock", s.handleLockRevenueDay)
+						r.With(s.requirePermissionHeld("customer.read")).
+							Get("/ar-aging", s.handleARaging)
+
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
 						// (pumps.calibrate), status changes fold into pumps.manage
