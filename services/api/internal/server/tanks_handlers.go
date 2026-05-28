@@ -413,3 +413,76 @@ func (s *Server) handleDeleteTank(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (s *Server) handleUpdateTankStatus(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req statusChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if !lifecycleStatuses[req.Status] {
+		writeError(w, http.StatusBadRequest, "status must be active, inactive, maintenance, or decommissioned")
+		return
+	}
+
+	ctx := r.Context()
+	before, err := s.tanks.Get(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if !s.authorizeStation(w, r, actor, "tanks.manage", before.StationID) {
+		return
+	}
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	after, err := s.tanks.Update(ctx, tx, actor.TenantID, id, tanks.UpdateInput{Status: &req.Status})
+	if errors.Is(err, tanks.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("update tank status", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "tank.status_changed", EventType: "TankStatusChanged",
+		EntityType: "tank", EntityID: after.ID.String(),
+		PreviousValue: toTankDTO(before), NewValue: toTankDTO(after),
+		Reason: req.Reason,
+		IP:     clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, toTankDTO(after))
+}

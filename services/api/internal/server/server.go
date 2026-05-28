@@ -20,6 +20,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
+	"github.com/japharyroman/fuelgrid-os/internal/incidents"
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
@@ -60,6 +61,7 @@ type Server struct {
 	pumps       *pumps.Repo
 	nozzles     *nozzles.Repo
 	calibration *calibration.Repo
+	incidents   *incidents.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -89,6 +91,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.pumps = pumps.New(deps.DB)
 		s.nozzles = nozzles.New(deps.DB)
 		s.calibration = calibration.New(deps.DB)
+		s.incidents = incidents.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -241,6 +244,23 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/tanks/{id}/calibrated-volume", s.handleCalibratedVolume)
 						})
 						r.Post("/tanks/{id}/calibration-charts", s.handleUploadCalibrationChart)
+
+						// Pump calibration events + status lifecycle. Reads ride
+						// station.read; calibration is station-scoped
+						// (pumps.calibrate), status changes fold into pumps.manage
+						// / tanks.manage — all authorized in-handler.
+						r.With(s.requirePermissionHeld("station.read")).
+							Get("/pumps/{id}/calibrations", s.handleListPumpCalibrations)
+						r.Post("/pumps/{id}/calibrations", s.handleCreatePumpCalibration)
+						r.Patch("/pumps/{id}/status", s.handleUpdatePumpStatus)
+						r.Patch("/tanks/{id}/status", s.handleUpdateTankStatus)
+
+						// Incidents queue. Reads ride station.read; writes are
+						// station-scoped (incidents.manage), authorized in-handler.
+						r.With(s.requirePermissionHeld("station.read")).
+							Get("/incidents", s.handleListIncidents)
+						r.Post("/incidents", s.handleCreateIncident)
+						r.Patch("/incidents/{id}/status", s.handleUpdateIncidentStatus)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)

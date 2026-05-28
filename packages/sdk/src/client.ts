@@ -4,6 +4,7 @@ import type {
   CalibrationChart,
   CalibrationPreview,
   Company,
+  Incident,
   LoginRequest,
   LoginResponse,
   Me,
@@ -12,6 +13,7 @@ import type {
   Paginated,
   Product,
   Pump,
+  PumpCalibration,
   Region,
   Role,
   Session,
@@ -389,6 +391,19 @@ export class Client {
     });
   }
 
+  updateTankStatus(
+    id: string,
+    status: string,
+    reason?: string,
+    signal?: AbortSignal,
+  ): Promise<Tank> {
+    return this.request<Tank>(`/api/v1/tanks/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: { status, reason },
+      signal,
+    });
+  }
+
   // ----------- Tank calibration -----------
 
   listCalibrationCharts(
@@ -475,6 +490,37 @@ export class Client {
     });
   }
 
+  updatePumpStatus(
+    id: string,
+    status: string,
+    reason?: string,
+    signal?: AbortSignal,
+  ): Promise<Pump> {
+    return this.request<Pump>(`/api/v1/pumps/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: { status, reason },
+      signal,
+    });
+  }
+
+  listPumpCalibrations(pumpID: string, signal?: AbortSignal): Promise<Paginated<PumpCalibration>> {
+    return this.request<Paginated<PumpCalibration>>(
+      `/api/v1/pumps/${encodeURIComponent(pumpID)}/calibrations`,
+      { signal },
+    );
+  }
+
+  recordPumpCalibration(
+    pumpID: string,
+    req: { performed_at?: string; notes?: string; tolerance_percent?: number; status?: string },
+    signal?: AbortSignal,
+  ): Promise<PumpCalibration> {
+    return this.request<PumpCalibration>(
+      `/api/v1/pumps/${encodeURIComponent(pumpID)}/calibrations`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
   // ----------- Nozzles -----------
 
   listNozzles(
@@ -518,6 +564,42 @@ export class Client {
   deleteNozzle(id: string, signal?: AbortSignal): Promise<void> {
     return this.request<void>(`/api/v1/nozzles/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Incidents -----------
+
+  listIncidents(
+    opts: { stationID?: string; status?: string; severity?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Incident>> {
+    const qs = new URLSearchParams();
+    if (opts.stationID) qs.set('station_id', opts.stationID);
+    if (opts.status) qs.set('status', opts.status);
+    if (opts.severity) qs.set('severity', opts.severity);
+    const q = qs.toString();
+    return this.request<Paginated<Incident>>(`/api/v1/incidents${q ? `?${q}` : ''}`, { signal });
+  }
+
+  createIncident(
+    req: {
+      station_id: string;
+      description: string;
+      type?: string;
+      severity?: string;
+      related_entity_type?: string;
+      related_entity_id?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Incident> {
+    return this.request<Incident>('/api/v1/incidents', { method: 'POST', body: req, signal });
+  }
+
+  updateIncidentStatus(id: string, status: string, signal?: AbortSignal): Promise<Incident> {
+    return this.request<Incident>(`/api/v1/incidents/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: { status },
       signal,
     });
   }

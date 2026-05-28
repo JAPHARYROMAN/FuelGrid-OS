@@ -161,6 +161,33 @@ export interface CalibrationPreview {
   max_volume: number;
 }
 
+export interface PumpCalibration {
+  id: string;
+  tenant_id: string;
+  pump_id: string;
+  performed_at: string;
+  performed_by: string;
+  notes?: string;
+  tolerance_percent?: number;
+  status: string;
+}
+
+export interface Incident {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  related_entity_type?: string;
+  related_entity_id?: string;
+  type: string;
+  severity: string;
+  description: string;
+  status: string;
+  opened_at: string;
+  opened_by: string;
+  resolved_at?: string;
+  resolved_by?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

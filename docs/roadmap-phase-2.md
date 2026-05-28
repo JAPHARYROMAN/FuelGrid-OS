@@ -113,19 +113,19 @@ How we trust the numbers the operational layers will start producing in Phase 3.
 
 **Goal:** Pump calibration events are a first-class audit record, and pump/tank lifecycle transitions go through the same audit + outbox pipeline as every other sensitive write.
 
-- [ ] Migration `0013_pump_cal_and_incidents`:
+- [x] Migration `0013_pump_cal_and_incidents`:
   - `pump_calibrations` (id, tenant_id, pump_id, performed_at, performed_by, notes, tolerance_percent, status, timestamps)
   - `incidents` (id, tenant_id, station_id, related_entity_type, related_entity_id, type, severity, description, status, opened_at, opened_by, resolved_at, resolved_by, timestamps)
-- [ ] Permissions: `pumps.calibrate`, `incidents.manage`
-- [ ] Endpoints:
+- [x] Permissions: `pumps.calibrate`, `incidents.manage`
+- [x] Endpoints:
   - `POST /api/v1/pumps/{id}/calibrations` — record a calibration event
   - `GET /api/v1/pumps/{id}/calibrations` — history
   - `PATCH /api/v1/pumps/{id}/status` — transition status with reason
   - `PATCH /api/v1/tanks/{id}/status` — same for tanks
   - `POST /api/v1/incidents` + `PATCH /api/v1/incidents/{id}/status`
-- [ ] Pump detail page (`/stations/{id}/pumps/{pumpID}`): calibration history table + "Record calibration" form + status toggle with reason capture
-- [ ] Incidents queue at `/incidents` with severity filters and an "Open new incident" dialog
-- [ ] Every transition writes audit + outbox: `pump.status_changed`, `tank.status_changed`, `pump.calibrated`, `incident.opened`, `incident.resolved`
+- [x] Pump detail page (`/stations/{id}/pumps/{pumpID}`): calibration history table + "Record calibration" form + status toggle with reason capture
+- [x] Incidents queue at `/incidents` with severity filters and an "Open new incident" dialog
+- [x] Every transition writes audit + outbox: `pump.status_changed`, `tank.status_changed`, `pump.calibrated`, `incident.opened`, `incident.resolved`
 
 **Done when:** Recording a pump calibration creates the `pump_calibrations` row + audit log + `PumpCalibrated` outbox event in one transaction; the pump detail page shows the entry within the publisher's tick.
 

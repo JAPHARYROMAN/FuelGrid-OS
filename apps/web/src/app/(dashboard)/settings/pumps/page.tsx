@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
 
@@ -304,6 +305,9 @@ export default function PumpsPage() {
                     </span>
                   </button>
                   <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link href={`/stations/${effectiveStation}/pumps/${pump.id}`}>Details</Link>
+                    </Button>
                     <Button variant="ghost" size="sm" onClick={() => openNozzleCreate(pump)}>
                       <Plus className="size-4" />
                       Nozzle

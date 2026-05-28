@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   BarChart3,
   Building2,
   Database,
@@ -36,6 +37,7 @@ const navItems: NavItem[] = [
   { label: 'Sales', href: '/sales', icon: BarChart3 },
   { label: 'Inventory', href: '/inventory', icon: Droplet },
   { label: 'Deliveries', href: '/deliveries', icon: Truck },
+  { label: 'Incidents', href: '/incidents', icon: AlertTriangle },
   { label: 'Customers', href: '/customers', icon: Users },
   { label: 'Finance', href: '/finance', icon: DollarSign },
   { label: 'Reports', href: '/reports', icon: BarChart3 },
