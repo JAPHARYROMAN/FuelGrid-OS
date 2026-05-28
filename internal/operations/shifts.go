@@ -214,6 +214,39 @@ func (r *Repo) ListAttendants(ctx context.Context, tenantID, shiftID uuid.UUID) 
 	return out, rows.Err()
 }
 
+// AttendantSummary is a shift attendant with their display labels, for the
+// supervisor operations dashboard (who is on which shift).
+type AttendantSummary struct {
+	UserID   uuid.UUID
+	FullName string
+	Email    string
+}
+
+// AttendantSummariesForShift returns the shift's attendants joined to their
+// user record, so the dashboard can name them without a separate lookup.
+func (r *Repo) AttendantSummariesForShift(ctx context.Context, tenantID, shiftID uuid.UUID) ([]AttendantSummary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id, u.full_name, u.email
+		FROM shift_attendants a
+		JOIN users u ON u.id = a.user_id
+		WHERE a.tenant_id = $1 AND a.shift_id = $2
+		ORDER BY u.full_name
+	`, tenantID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AttendantSummary
+	for rows.Next() {
+		var a AttendantSummary
+		if err := rows.Scan(&a.UserID, &a.FullName, &a.Email); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) AssignAttendant(ctx context.Context, tx pgx.Tx, tenantID, shiftID, userID, assignedBy uuid.UUID) error {
 	_, err := tx.Exec(ctx, `
 		INSERT INTO shift_attendants (shift_id, user_id, tenant_id, assigned_by)

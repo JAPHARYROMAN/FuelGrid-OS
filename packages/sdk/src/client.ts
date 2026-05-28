@@ -16,6 +16,7 @@ import type {
   Nozzle,
   NozzleAssignment,
   OperatingDay,
+  OperationsOverview,
   Paginated,
   Product,
   Pump,
@@ -318,6 +319,14 @@ export class Client {
   getStationOverview(stationID: string, signal?: AbortSignal): Promise<StationOverview> {
     return this.request<StationOverview>(
       `/api/v1/stations/${encodeURIComponent(stationID)}/overview`,
+      { signal },
+    );
+  }
+
+  /** The station's active operating day + its shifts (supervisor dashboard). */
+  getOperationsOverview(stationID: string, signal?: AbortSignal): Promise<OperationsOverview> {
+    return this.request<OperationsOverview>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/operations-overview`,
       { signal },
     );
   }

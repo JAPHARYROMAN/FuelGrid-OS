@@ -188,13 +188,13 @@ The daily UX for the people actually running the forecourt.
 
 **Goal:** A supervisor opens one screen and runs the day: active shifts, who's assigned where, pending approvals, expected-vs-submitted cash, and open exceptions.
 
-- [ ] Route `/operations` (or a tab on `/stations/{id}`): active-day summary, per-shift cards (attendants, litres sold, cash status), approval actions, exceptions queue
-- [ ] Backend: `GET /api/v1/stations/{id}/operations-overview` — the day + its shifts (each with assignments, close summary, cash status, exception count) in one call (avoids N+1)
-- [ ] Inline approve / open-exception / resolve-exception actions wired to Stage 5–6 endpoints
-- [ ] Permission gate: `station.read` to view, `shift.approve` for the approve action
-- [ ] Mobile responsive: shift cards stack below 768px
+- [x] Route `/operations` (or a tab on `/stations/{id}`): active-day summary, per-shift cards (attendants, litres sold, cash status), approval actions, exceptions queue
+- [x] Backend: `GET /api/v1/stations/{id}/operations-overview` — the day + its shifts (each with assignments, close summary, cash status, exception count) in one call (avoids N+1)
+- [x] Inline approve / open-exception / resolve-exception actions wired to Stage 5–6 endpoints
+- [x] Permission gate: `station.read` to view, `shift.approve` for the approve action
+- [x] Mobile responsive: shift cards stack below 768px
 
-**Done when:** `/operations` for `MIK-01` shows the open day, its shift with assigned attendant and live cash status, and a one-click approve that flips the shift to `approved` within the publisher's tick.
+**Done when:** `/operations` for `MIK-01` shows the open day, its shift with assigned attendant and live cash status, and a one-click approve that flips the shift to `approved` within the publisher's tick. *(Backend overview + full open→assign→close→cash→approve flow verified live; the approve flips the shift to `approved` and the overview reflects it. The `/operations` page compiles in a production build — phone-width rendering not browser-confirmed in this environment.)*
 
 ---
 

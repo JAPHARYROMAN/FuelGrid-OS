@@ -76,6 +76,23 @@ func (r *Repo) ListDays(ctx context.Context, tenantID, stationID uuid.UUID) ([]O
 	return out, rows.Err()
 }
 
+// LatestActiveDayForStation returns the station's most recent day still being
+// operated (open or closed — locked days are done), or pgx.ErrNoRows. This is
+// the day the supervisor operations dashboard runs against.
+func (r *Repo) LatestActiveDayForStation(ctx context.Context, tenantID, stationID uuid.UUID) (*OperatingDay, error) {
+	var d OperatingDay
+	if err := scanDay(r.pool.QueryRow(ctx, `
+		SELECT `+dayColumns+`
+		FROM operating_days
+		WHERE tenant_id = $1 AND station_id = $2 AND status IN ('open', 'closed')
+		ORDER BY business_date DESC
+		LIMIT 1
+	`, tenantID, stationID), &d); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 func (r *Repo) GetDay(ctx context.Context, tenantID, id uuid.UUID) (*OperatingDay, error) {
 	var d OperatingDay
 	if err := scanDay(r.pool.QueryRow(ctx, `

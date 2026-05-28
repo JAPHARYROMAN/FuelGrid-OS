@@ -365,6 +365,28 @@ export interface MyShift {
   cash_submission?: CashSubmission | null;
 }
 
+export interface OperationsAttendant {
+  user_id: string;
+  full_name: string;
+  email: string;
+}
+
+export interface OperationsShift extends Shift {
+  attendants: OperationsAttendant[];
+  nozzle_assignments: NozzleAssignment[];
+  expected_cash: number;
+  litres_sold: number;
+  cash_submission?: CashSubmission | null;
+  exceptions: ShiftException[];
+  open_exception_count: number;
+}
+
+export interface OperationsOverview {
+  station: Station;
+  day: OperatingDay | null;
+  shifts: OperationsShift[];
+}
+
 export interface UserSummary {
   id: string;
   email: string;

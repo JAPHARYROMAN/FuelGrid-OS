@@ -174,6 +174,9 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
 						Get("/stations/{stationID}/overview", s.handleStationOverview)
 
+					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+						Get("/stations/{stationID}/operations-overview", s.handleOperationsOverview)
+
 					r.With(s.requirePermission("audit.read", nil)).
 						Get("/audit-logs", s.handleListAuditLogs)
 
