@@ -55,8 +55,10 @@ import type {
   Sale,
   TankValuation,
   ARentry,
+  CreditAlert,
   CreditPosition,
   CreditProfile,
+  CreditStatement,
   Customer,
   CustomerBalance,
   CustomerContact,
@@ -1729,6 +1731,61 @@ export class Client {
     if (opts.from) qs.set('from', opts.from);
     if (opts.to) qs.set('to', opts.to);
     return this.request(`/api/v1/fleet/consumption?${qs.toString()}`, { signal });
+  }
+
+  // ----------- Customer statements & credit alerts (Phase 8) -----------
+
+  listCreditStatements(
+    customerID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<CreditStatement>> {
+    return this.request<Paginated<CreditStatement>>(
+      `/api/v1/customers/${encodeURIComponent(customerID)}/statements`,
+      { signal },
+    );
+  }
+
+  generateCreditStatement(
+    customerID: string,
+    req: { period_start: string; period_end: string },
+    signal?: AbortSignal,
+  ): Promise<CreditStatement> {
+    return this.request<CreditStatement>(
+      `/api/v1/customers/${encodeURIComponent(customerID)}/statements`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  issueCreditStatement(id: string, signal?: AbortSignal): Promise<CreditStatement> {
+    return this.request<CreditStatement>(
+      `/api/v1/customer-statements/${encodeURIComponent(id)}/issue`,
+      { method: 'POST', signal },
+    );
+  }
+
+  scanCreditAlerts(signal?: AbortSignal): Promise<{ created: number }> {
+    return this.request('/api/v1/credit-alerts/scan', { method: 'POST', signal });
+  }
+
+  listCreditAlerts(
+    opts: { status?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<CreditAlert>> {
+    const qs = opts.status ? `?status=${encodeURIComponent(opts.status)}` : '';
+    return this.request<Paginated<CreditAlert>>(`/api/v1/credit-alerts${qs}`, { signal });
+  }
+
+  transitionCreditAlert(
+    id: string,
+    action: 'acknowledge' | 'resolve' | 'dismiss',
+    req: { reason?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ id: string; status: string }> {
+    return this.request(`/api/v1/credit-alerts/${encodeURIComponent(id)}/${action}`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   // ----------- Revenue close & dashboard (Phase 6) -----------

@@ -858,6 +858,27 @@ export interface VehicleConsumption {
   distance?: string;
 }
 
+export interface CreditStatement {
+  id: string;
+  customer_id: string;
+  period_start: string;
+  period_end: string;
+  opening_balance: string;
+  charges: string;
+  payments: string;
+  closing_balance: string;
+  status: string;
+}
+
+export interface CreditAlert {
+  id: string;
+  customer_id: string;
+  alert_type: string;
+  severity: string;
+  status: string;
+  detail?: string;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;

@@ -469,6 +469,22 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermissionHeld("fleet_report.read")).
 							Get("/fleet/consumption", s.handleFleetConsumption)
 
+						// Statements & credit alerts (Stages 12-13).
+						r.With(s.requirePermissionHeld("customer.read")).Group(func(r chi.Router) {
+							r.Get("/customers/{id}/statements", s.handleListStatements)
+							r.Get("/credit-alerts", s.handleListCreditAlerts)
+						})
+						r.With(s.requirePermission("customer_statement.issue", nil)).Group(func(r chi.Router) {
+							r.Post("/customers/{id}/statements", s.handleGenerateStatement)
+							r.Post("/customer-statements/{id}/issue", s.handleIssueStatement)
+						})
+						r.With(s.requirePermission("customer_credit_alert.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/credit-alerts/scan", s.handleScanCreditAlerts)
+							r.Post("/credit-alerts/{id}/acknowledge", s.handleTransitionCreditAlert("acknowledged"))
+							r.Post("/credit-alerts/{id}/resolve", s.handleTransitionCreditAlert("resolved"))
+							r.Post("/credit-alerts/{id}/dismiss", s.handleTransitionCreditAlert("dismissed"))
+						})
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

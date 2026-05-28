@@ -280,3 +280,70 @@ func TestPhase8_OdometerConsumption(t *testing.T) {
 		t.Fatalf("consumption row = %v", row)
 	}
 }
+
+// TestPhase8_StatementsAndAlerts covers Category E: statement generation from
+// the AR ledger and deterministic credit-alert scanning + lifecycle.
+func TestPhase8_StatementsAndAlerts(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	// A customer with a small limit and a credit charge that exceeds it.
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin, map[string]any{"code": "STMTCO", "name": "Stmt Co", "credit_limit": "1000"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d", code)
+	}
+	custID := cust["id"].(string)
+
+	// Seed an AR charge directly (a credit sale would do this in production).
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO ar_entries (tenant_id, customer_id, entry_type, amount, balance_after, recorded_by, recorded_at)
+		VALUES ($1, $2, 'charge', 1500, 1500, $3, '2026-06-10')
+	`, h.ids.tenantID, custID, mustAdminID(t, ctx, h)); err != nil {
+		t.Fatalf("seed AR: %v", err)
+	}
+
+	// Generate + issue a June statement: closing balance 1,500.
+	code, stmt := h.invPostJSON(t, "/api/v1/customers/"+custID+"/statements", admin,
+		map[string]any{"period_start": "2026-06-01", "period_end": "2026-06-30"})
+	if code != http.StatusCreated || stmt["closing_balance"] != "1500.00" || stmt["charges"] != "1500.00" {
+		t.Fatalf("generate statement = %d %v", code, stmt)
+	}
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/customer-statements/"+stmt["id"].(string)+"/issue", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("issue statement: %d", code)
+	}
+
+	// Scanning raises an over_limit alert (1,500 > 1,000).
+	code, scan := h.invPostJSON(t, "/api/v1/credit-alerts/scan", admin, map[string]any{})
+	if code != http.StatusOK || scan["created"].(float64) < 1 {
+		t.Fatalf("scan alerts = %d %v", code, scan)
+	}
+	code, alerts := h.getJSON(t, "/api/v1/credit-alerts?status=open", admin)
+	items, _ := alerts["items"].([]any)
+	if code != http.StatusOK || len(items) < 1 {
+		t.Fatalf("list alerts = %d %v", code, alerts)
+	}
+	alertID := items[0].(map[string]any)["id"].(string)
+	// Acknowledge then resolve the alert.
+	if code, _ := h.invPostJSON(t, "/api/v1/credit-alerts/"+alertID+"/acknowledge", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("acknowledge alert: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/credit-alerts/"+alertID+"/resolve", admin, map[string]any{"reason": "limit raised"}); code != http.StatusOK {
+		t.Fatalf("resolve alert: %d", code)
+	}
+	// A re-scan does not duplicate the now-resolved alert type unless still open.
+	if code, _ := h.invPostJSON(t, "/api/v1/credit-alerts/scan", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("rescan: %d", code)
+	}
+}
+
+// mustAdminID returns the seeded admin user id for direct SQL inserts.
+func mustAdminID(t *testing.T, ctx context.Context, h *harness) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE tenant_id = $1 AND email = $2`, h.ids.tenantID, h.ids.adminEmail).Scan(&id); err != nil {
+		t.Fatalf("admin id: %v", err)
+	}
+	return id
+}
