@@ -841,6 +841,26 @@ export interface JournalEntry {
   lines?: JournalLine[];
 }
 
+export interface Payable {
+  id: string;
+  supplier_id: string;
+  source_invoice_id: string;
+  invoice_number?: string;
+  invoice_date?: string;
+  due_date?: string;
+  amount: string;
+  outstanding_amount: string;
+  station_id?: string;
+  status: string;
+  journal_entry_id?: string;
+}
+
+export interface SupplierAging {
+  supplier_id: string;
+  outstanding: string;
+  open_count: number;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

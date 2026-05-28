@@ -178,7 +178,15 @@ func (r *Repo) getEntry(ctx context.Context, q database.Querier, tenantID, id uu
 		}
 		e.Lines = append(e.Lines, l)
 	}
-	return &e, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := q.QueryRow(ctx, `
+		SELECT COALESCE(SUM(debit), 0)::text FROM journal_lines WHERE tenant_id = $1 AND journal_entry_id = $2
+	`, tenantID, id).Scan(&e.Total); err != nil {
+		return nil, err
+	}
+	return &e, nil
 }
 
 // ListEntries returns recent journal entries (headers + total debit) for the

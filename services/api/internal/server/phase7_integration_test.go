@@ -8,6 +8,8 @@ import (
 	"context"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestPhase7_AccountingFoundation(t *testing.T) {
@@ -87,5 +89,70 @@ func TestPhase7_AccountingFoundation(t *testing.T) {
 	}
 	if code, _ := h.invPostJSON(t, "/api/v1/journal-entries", admin, balanced); code != http.StatusConflict {
 		t.Fatalf("post into locked period: %d, want 409", code)
+	}
+}
+
+func TestPhase7_Payables(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	// No approved Phase-5 invoices yet -> import is a no-op.
+	if code, imp := h.invPostJSON(t, "/api/v1/payables/import", admin, map[string]any{}); code != http.StatusOK || imp["imported"].(float64) != 0 {
+		t.Fatalf("import (empty): %d %v", code, imp)
+	}
+
+	// Seed a payable directly (the table is decoupled from Phase-5 by design).
+	supplierID := uuid.New()
+	var payableID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO payables (tenant_id, supplier_id, source_invoice_id, invoice_number, invoice_date, due_date, amount, outstanding_amount, status)
+		VALUES ($1, $2, $3, 'INV-1', '2026-06-05', '2026-07-05', 100000, 100000, 'open') RETURNING id
+	`, h.ids.tenantID, supplierID, uuid.New()).Scan(&payableID); err != nil {
+		t.Fatalf("seed payable: %v", err)
+	}
+
+	if code, list := h.getJSON(t, "/api/v1/payables", admin); code != http.StatusOK || list["count"].(float64) != 1 {
+		t.Fatalf("list payables: %d %v", code, list)
+	}
+
+	// Pay 40,000 against it -> outstanding 60,000, partially_paid, balanced journal.
+	code, pay := h.invPostJSON(t, "/api/v1/supplier-payments", admin, map[string]any{
+		"supplier_id": supplierID.String(), "payment_date": "2026-06-10", "method": "bank",
+		"allocations": []map[string]any{{"payable_id": payableID.String(), "amount": "40000"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("supplier payment: %d %v", code, pay)
+	}
+	jid := pay["journal_entry_id"].(string)
+	if code, je := h.getJSON(t, "/api/v1/journal-entries/"+jid, admin); code != http.StatusOK || je["total"] != "40000.00" {
+		t.Fatalf("payment journal: %d %v", code, je)
+	}
+
+	if code, list := h.getJSON(t, "/api/v1/payables", admin); code == http.StatusOK {
+		p := list["items"].([]any)[0].(map[string]any)
+		if p["outstanding_amount"] != "60000.00" || p["status"] != "partially_paid" {
+			t.Fatalf("payable after payment = %v", p)
+		}
+	}
+	if code, aging := h.getJSON(t, "/api/v1/ap-aging", admin); code != http.StatusOK || aging["items"].([]any)[0].(map[string]any)["outstanding"] != "60000.00" {
+		t.Fatalf("ap aging = %v", aging)
+	}
+
+	// Over-allocation (70,000 > 60,000 outstanding) is rejected.
+	if code, _ := h.invPostJSON(t, "/api/v1/supplier-payments", admin, map[string]any{
+		"supplier_id": supplierID.String(), "payment_date": "2026-06-11", "method": "bank",
+		"allocations": []map[string]any{{"payable_id": payableID.String(), "amount": "70000"}},
+	}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("over-allocation: %d, want 422", code)
 	}
 }

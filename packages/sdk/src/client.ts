@@ -2,6 +2,8 @@ import type {
   Account,
   AccountingPeriod,
   JournalEntry,
+  Payable,
+  SupplierAging,
   AuditLogEntry,
   CalibratedVolume,
   CalibrationChart,
@@ -1429,6 +1431,34 @@ export class Client {
       body: { memo },
       signal,
     });
+  }
+
+  // ----------- Payables & supplier payments (Phase 7) -----------
+
+  listPayables(signal?: AbortSignal): Promise<Paginated<Payable>> {
+    return this.request<Paginated<Payable>>('/api/v1/payables', { signal });
+  }
+
+  importPayables(signal?: AbortSignal): Promise<{ imported: number }> {
+    return this.request('/api/v1/payables/import', { method: 'POST', signal });
+  }
+
+  getApAging(signal?: AbortSignal): Promise<Paginated<SupplierAging>> {
+    return this.request<Paginated<SupplierAging>>('/api/v1/ap-aging', { signal });
+  }
+
+  recordSupplierPayment(
+    req: {
+      supplier_id: string;
+      payment_date: string;
+      method: string;
+      reference?: string;
+      source_account_key?: string;
+      allocations: { payable_id: string; amount: string }[];
+    },
+    signal?: AbortSignal,
+  ): Promise<{ payment_id: string; journal_entry_id: string }> {
+    return this.request('/api/v1/supplier-payments', { method: 'POST', body: req, signal });
   }
 
   // ----------- Users -----------

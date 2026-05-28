@@ -26,6 +26,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
+	"github.com/japharyroman/fuelgrid-os/internal/payables"
 	"github.com/japharyroman/fuelgrid-os/internal/payments"
 	"github.com/japharyroman/fuelgrid-os/internal/pricing"
 	"github.com/japharyroman/fuelgrid-os/internal/procurement"
@@ -76,6 +77,7 @@ type Server struct {
 	operations     *operations.Repo
 	readings       *readings.Repo
 	inventory      *inventory.Repo
+	payables       *payables.Repo
 	payments       *payments.Repo
 	pricing        *pricing.Repo
 	procurement    *procurement.Repo
@@ -116,6 +118,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.operations = operations.New(deps.DB)
 		s.readings = readings.New(deps.DB)
 		s.inventory = inventory.New(deps.DB)
+		s.payables = payables.New(deps.DB)
 		s.payments = payments.New(deps.DB)
 		s.pricing = pricing.New(deps.DB)
 		s.procurement = procurement.New(deps.DB)
@@ -424,6 +427,17 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/journal-entries", s.handlePostAdjustment)
 							r.Post("/journal-entries/{id}/reverse", s.handleReverseJournalEntry)
 						})
+
+						// Payables & supplier payments (Phase 7, Stages 7-8).
+						r.With(s.requirePermissionHeld("payable.read")).Group(func(r chi.Router) {
+							r.Get("/payables", s.handleListPayables)
+							r.Get("/ap-aging", s.handleAPaging)
+							r.Get("/supplier-payments", s.handleListSupplierPayments)
+						})
+						r.With(s.requirePermission("payable.manage", nil)).
+							Post("/payables/import", s.handleImportPayables)
+						r.With(s.requirePermission("supplier_payment.manage", nil)).
+							Post("/supplier-payments", s.handleRecordSupplierPayment)
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
