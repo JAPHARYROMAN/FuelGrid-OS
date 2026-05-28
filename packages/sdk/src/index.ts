@@ -10,6 +10,7 @@ export type {
   MePermissions,
   Paginated,
   PermissionItem,
+  Product,
   Region,
   Role,
   Session,

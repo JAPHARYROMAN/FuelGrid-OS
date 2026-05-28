@@ -9,6 +9,7 @@ const nav = [
   { href: '/settings/companies', label: 'Companies' },
   { href: '/settings/regions', label: 'Regions' },
   { href: '/settings/stations', label: 'Stations' },
+  { href: '/settings/products', label: 'Products' },
   { href: '/settings/users', label: 'Users' },
   { href: '/settings/roles', label: 'Roles' },
 ];

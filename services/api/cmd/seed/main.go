@@ -155,6 +155,20 @@ func run() error {
 		return err
 	}
 
+	// Product catalogue. Colours reuse the --color-fuel-* tokens from
+	// packages/config/tailwind.preset.css.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO products
+		    (tenant_id, code, name, category, unit, default_price, tax_rate,
+		     density_kg_m3, loss_tolerance_percent, color)
+		VALUES
+		    ($1, 'PMS', 'Premium Motor Spirit', 'fuel', 'litre', 2950.00, 18.00, 740.000, 0.50, '#f97316'),
+		    ($1, 'AGO', 'Automotive Gas Oil (Diesel)', 'fuel', 'litre', 2820.00, 18.00, 832.000, 0.50, '#2563eb'),
+		    ($1, 'KERO', 'Kerosene', 'fuel', 'litre', 2480.00, 18.00, 800.000, 0.50, '#a855f7')
+	`, tenantID); err != nil {
+		return err
+	}
+
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO users (tenant_id, email, full_name, status,
 		                  password_hash, password_changed_at)
@@ -222,6 +236,7 @@ func run() error {
 		"station1_code", "MIK-01",
 		"station2_id", station2ID,
 		"station2_code", "MSA-01",
+		"products", "PMS, AGO, KERO",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

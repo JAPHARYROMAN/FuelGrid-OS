@@ -74,6 +74,21 @@ export interface Station {
   status: string;
 }
 
+export interface Product {
+  id: string;
+  tenant_id: string;
+  code: string;
+  name: string;
+  category: string;
+  unit: string;
+  default_price: number;
+  tax_rate: number;
+  density_kg_m3?: number;
+  loss_tolerance_percent: number;
+  color: string;
+  status: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

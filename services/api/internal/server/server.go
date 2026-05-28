@@ -20,6 +20,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
+	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
@@ -50,6 +51,7 @@ type Server struct {
 	companies   *companies.Repo
 	regions     *regions.Repo
 	stations    *stations.Repo
+	products    *products.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -74,6 +76,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.companies = companies.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
+		s.products = products.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -179,6 +182,16 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/stations", s.handleCreateStation)
 							r.Patch("/stations/{stationID}", s.handleUpdateStation)
 							r.Delete("/stations/{stationID}", s.handleDeleteStation)
+						})
+
+						r.With(s.requirePermission("station.read", nil)).Group(func(r chi.Router) {
+							r.Get("/products", s.handleListProducts)
+							r.Get("/products/{id}", s.handleGetProduct)
+						})
+						r.With(s.requirePermission("products.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/products", s.handleCreateProduct)
+							r.Patch("/products/{id}", s.handleUpdateProduct)
+							r.Delete("/products/{id}", s.handleDeleteProduct)
 						})
 
 						r.With(s.requirePermission("users.manage", nil)).

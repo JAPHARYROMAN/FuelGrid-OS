@@ -35,13 +35,13 @@ The catalog operators install. Pure CRUD + wiring; no operational state yet.
 
 **Goal:** Every tenant has a product catalogue that the rest of the OS references by id.
 
-- [ ] Migration `0009_products`: `products` (id, tenant_id, code, name, category, unit, default_price, tax_rate, density_kg_m3, loss_tolerance_percent, color, status, timestamps)
-- [ ] Seed system permissions: `products.manage` (tenant-wide)
-- [ ] Repo `internal/products` with the standard CRUD shape from Phase 1
-- [ ] Handlers + SDK methods: list / get / create / update / delete
-- [ ] `/settings/products` admin page with color swatch in the table and a color picker in the create/edit dialog
-- [ ] Seed three products on the demo tenant: **PMS** (orange), **AGO/Diesel** (blue), **Kerosene** (purple). Wire `color` to existing `--color-fuel-*` tokens.
-- [ ] Audit + outbox for every mutation (`product.created`, `product.updated`, `product.deleted`)
+- [x] Migration `0009_products`: `products` (id, tenant_id, code, name, category, unit, default_price, tax_rate, density_kg_m3, loss_tolerance_percent, color, status, timestamps)
+- [x] Seed system permissions: `products.manage` (tenant-wide)
+- [x] Repo `internal/products` with the standard CRUD shape from Phase 1
+- [x] Handlers + SDK methods: list / get / create / update / delete
+- [x] `/settings/products` admin page with color swatch in the table and a color picker in the create/edit dialog
+- [x] Seed three products on the demo tenant: **PMS** (orange), **AGO/Diesel** (blue), **Kerosene** (purple). Wire `color` to existing `--color-fuel-*` tokens.
+- [x] Audit + outbox for every mutation (`product.created`, `product.updated`, `product.deleted`)
 
 **Done when:** `/settings/products` lists three seeded products with their visual identities and the demo admin can add a fourth (LPG) through the UI alone.
 

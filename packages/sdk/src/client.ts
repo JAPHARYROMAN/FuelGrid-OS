@@ -6,6 +6,7 @@ import type {
   Me,
   MePermissions,
   Paginated,
+  Product,
   Region,
   Role,
   Session,
@@ -301,6 +302,38 @@ export class Client {
 
   deleteStation(id: string, signal?: AbortSignal): Promise<void> {
     return this.request<void>(`/api/v1/stations/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  // ----------- Products -----------
+
+  listProducts(signal?: AbortSignal): Promise<Paginated<Product>> {
+    return this.request<Paginated<Product>>('/api/v1/products', { signal });
+  }
+
+  getProduct(id: string, signal?: AbortSignal): Promise<Product> {
+    return this.request<Product>(`/api/v1/products/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createProduct(
+    req: Partial<Product> & { code: string; name: string },
+    signal?: AbortSignal,
+  ): Promise<Product> {
+    return this.request<Product>('/api/v1/products', { method: 'POST', body: req, signal });
+  }
+
+  updateProduct(id: string, req: Partial<Product>, signal?: AbortSignal): Promise<Product> {
+    return this.request<Product>(`/api/v1/products/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteProduct(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/products/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       signal,
     });
