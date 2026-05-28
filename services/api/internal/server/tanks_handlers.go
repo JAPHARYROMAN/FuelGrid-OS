@@ -243,9 +243,10 @@ type updateTankRequest struct {
 	DeadStockLitres  *float64   `json:"dead_stock_litres,omitempty"`
 	HasWaterSensor   *bool      `json:"has_water_sensor,omitempty"`
 	HasTempSensor    *bool      `json:"has_temp_sensor,omitempty"`
-	Status           *string    `json:"status,omitempty"`
 	InstallationDate *string    `json:"installation_date,omitempty"`
 	DecommissionDate *string    `json:"decommission_date,omitempty"`
+	// status is intentionally not editable here — lifecycle changes go
+	// through PATCH /tanks/{id}/status so transition rules apply.
 }
 
 func (s *Server) handleUpdateTank(w http.ResponseWriter, r *http.Request) {
@@ -316,7 +317,7 @@ func (s *Server) handleUpdateTank(w http.ResponseWriter, r *http.Request) {
 		CapacityLitres: req.CapacityLitres, SafeMinLitres: req.SafeMinLitres,
 		SafeMaxLitres: req.SafeMaxLitres, DeadStockLitres: req.DeadStockLitres,
 		HasWaterSensor: req.HasWaterSensor, HasTempSensor: req.HasTempSensor,
-		Status: req.Status, InstallationDate: installDate, DecommissionDate: decomDate,
+		InstallationDate: installDate, DecommissionDate: decomDate,
 	})
 	if errors.Is(err, tanks.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -438,10 +439,6 @@ func (s *Server) handleUpdateTankStatus(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !lifecycleStatuses[req.Status] {
-		writeError(w, http.StatusBadRequest, "status must be active, inactive, maintenance, or decommissioned")
-		return
-	}
 
 	ctx := r.Context()
 	before, err := s.tanks.Get(ctx, actor.TenantID, id)
@@ -455,6 +452,11 @@ func (s *Server) handleUpdateTankStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !s.authorizeStation(w, r, actor, "tanks.manage", before.StationID) {
+		return
+	}
+
+	if code, msg := checkLifecycleTransition(before.Status, req.Status, req.Reason); code != 0 {
+		writeError(w, code, msg)
 		return
 	}
 

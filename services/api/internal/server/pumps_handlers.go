@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,49 @@ import (
 // removal goes through DELETE, not a status PATCH.
 var lifecycleStatuses = map[string]bool{
 	"active": true, "inactive": true, "maintenance": true, "decommissioned": true,
+}
+
+// lifecycleTransitions is the allowed-move graph shared by pumps and tanks.
+// `decommissioned` is terminal: retired equipment can't silently come back
+// to life via a status PATCH (a later phase will own any re-commission
+// workflow).
+var lifecycleTransitions = map[string][]string{
+	"active":         {"inactive", "maintenance", "decommissioned"},
+	"inactive":       {"active", "maintenance", "decommissioned"},
+	"maintenance":    {"active", "inactive", "decommissioned"},
+	"decommissioned": {},
+}
+
+// transitionsRequiringReason are the target states sensitive enough to
+// demand a rationale (taking equipment offline / retiring it).
+var transitionsRequiringReason = map[string]bool{
+	"maintenance":    true,
+	"decommissioned": true,
+}
+
+// checkLifecycleTransition validates a status move. It returns (0, "") when
+// the move is allowed, or an HTTP status + message to write otherwise.
+func checkLifecycleTransition(from, to, reason string) (int, string) {
+	if !lifecycleStatuses[to] {
+		return http.StatusBadRequest, "status must be active, inactive, maintenance, or decommissioned"
+	}
+	if from == to {
+		return http.StatusConflict, "already in status " + to
+	}
+	allowed := false
+	for _, t := range lifecycleTransitions[from] {
+		if t == to {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return http.StatusConflict, "cannot transition from " + from + " to " + to
+	}
+	if transitionsRequiringReason[to] && strings.TrimSpace(reason) == "" {
+		return http.StatusBadRequest, "a reason is required to move to " + to
+	}
+	return 0, ""
 }
 
 type pumpDTO struct {
@@ -187,8 +231,9 @@ type updatePumpRequest struct {
 	Manufacturer     *string `json:"manufacturer,omitempty"`
 	Model            *string `json:"model,omitempty"`
 	SerialNumber     *string `json:"serial_number,omitempty"`
-	Status           *string `json:"status,omitempty"`
 	InstallationDate *string `json:"installation_date,omitempty"`
+	// status is intentionally not editable here — lifecycle changes go
+	// through PATCH /pumps/{id}/status so transition rules apply.
 }
 
 func (s *Server) handleUpdatePump(w http.ResponseWriter, r *http.Request) {
@@ -241,7 +286,7 @@ func (s *Server) handleUpdatePump(w http.ResponseWriter, r *http.Request) {
 
 	after, err := s.pumps.Update(ctx, tx, actor.TenantID, id, pumps.UpdateInput{
 		Number: req.Number, Name: req.Name, Manufacturer: req.Manufacturer,
-		Model: req.Model, SerialNumber: req.SerialNumber, Status: req.Status,
+		Model: req.Model, SerialNumber: req.SerialNumber,
 		InstallationDate: installDate,
 	})
 	if errors.Is(err, pumps.ErrNotFound) {
@@ -522,10 +567,6 @@ func (s *Server) handleUpdatePumpStatus(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !lifecycleStatuses[req.Status] {
-		writeError(w, http.StatusBadRequest, "status must be active, inactive, maintenance, or decommissioned")
-		return
-	}
 
 	ctx := r.Context()
 	before, err := s.pumps.Get(ctx, actor.TenantID, id)
@@ -539,6 +580,11 @@ func (s *Server) handleUpdatePumpStatus(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !s.authorizeStation(w, r, actor, "pumps.manage", before.StationID) {
+		return
+	}
+
+	if code, msg := checkLifecycleTransition(before.Status, req.Status, req.Reason); code != 0 {
+		writeError(w, code, msg)
 		return
 	}
 
