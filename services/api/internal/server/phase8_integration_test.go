@@ -225,3 +225,58 @@ func TestPhase8_Authorization(t *testing.T) {
 		t.Fatalf("expected account_hold denial = %d %v", code, denied)
 	}
 }
+
+// TestPhase8_OdometerConsumption covers Category D: odometer capture with
+// monotonic validation and a per-vehicle fleet consumption report.
+func TestPhase8_OdometerConsumption(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin, map[string]any{"code": "ODOCO", "name": "Odo Co", "credit_limit": "50000"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d", code)
+	}
+	custID := cust["id"].(string)
+	code, veh := h.invPostJSON(t, "/api/v1/fleet/vehicles", admin, map[string]any{
+		"customer_id": custID, "registration": "ODO-1", "odometer_required": true,
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create vehicle: %d", code)
+	}
+	vehID := veh["id"].(string)
+
+	// First reading is valid; a lower reading flags a warning; override accepts it.
+	if code, o := h.invPostJSON(t, "/api/v1/fleet/vehicles/"+vehID+"/odometer", admin, map[string]any{"reading": "10000"}); code != http.StatusCreated || o["validation_status"] != "valid" {
+		t.Fatalf("first odometer = %d %v", code, o)
+	}
+	if code, o := h.invPostJSON(t, "/api/v1/fleet/vehicles/"+vehID+"/odometer", admin, map[string]any{"reading": "9000"}); code != http.StatusCreated || o["validation_status"] != "warning" {
+		t.Fatalf("regressive odometer = %d %v", code, o)
+	}
+	if code, o := h.invPostJSON(t, "/api/v1/fleet/vehicles/"+vehID+"/odometer", admin, map[string]any{"reading": "10500"}); code != http.StatusCreated || o["validation_status"] != "valid" {
+		t.Fatalf("advancing odometer = %d %v", code, o)
+	}
+
+	// A fulfilled authorization contributes to the consumption report.
+	station := h.ids.station1.String()
+	code, auth := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin, map[string]any{
+		"customer_id": custID, "vehicle_id": vehID, "station_id": station, "requested_amount": "4000",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("authorization: %d %v", code, auth)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+auth["id"].(string)+"/fulfill", admin, map[string]any{"consumed_by": uuid.New().String()}); code != http.StatusOK {
+		t.Fatalf("fulfill: %d", code)
+	}
+
+	code, rep := h.getJSON(t, "/api/v1/fleet/consumption?customer_id="+custID+"&from=2026-01-01&to=2026-12-31", admin)
+	items, _ := rep["items"].([]any)
+	if code != http.StatusOK || len(items) != 1 {
+		t.Fatalf("consumption report = %d %v", code, rep)
+	}
+	row := items[0].(map[string]any)
+	if row["fuelings"].(float64) != 1 || row["amount_total"] != "4000.00" {
+		t.Fatalf("consumption row = %v", row)
+	}
+}

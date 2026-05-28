@@ -839,6 +839,25 @@ export interface AuthorizationDenied {
   detail: string;
 }
 
+export interface OdometerReading {
+  id: string;
+  reading: string;
+  distance_since?: string;
+  validation_status: string;
+  note?: string;
+  captured_at: string;
+}
+
+export interface VehicleConsumption {
+  vehicle_id: string;
+  registration: string;
+  fuelings: number;
+  amount_total: string;
+  odometer_start?: string;
+  odometer_end?: string;
+  distance?: string;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;

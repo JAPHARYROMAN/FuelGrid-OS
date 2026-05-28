@@ -68,7 +68,9 @@ import type {
   Driver,
   FuelAuthorization,
   FuelCredential,
+  OdometerReading,
   Vehicle,
+  VehicleConsumption,
   Payment,
   RevenueDay,
   RevenueOverview,
@@ -1687,6 +1689,46 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<{ id: string }> {
     return this.request('/api/v1/fuel-limits', { method: 'POST', body: req, signal });
+  }
+
+  // ----------- Odometer & fleet consumption (Phase 8) -----------
+
+  listOdometerReadings(
+    vehicleID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<OdometerReading>> {
+    return this.request<Paginated<OdometerReading>>(
+      `/api/v1/fleet/vehicles/${encodeURIComponent(vehicleID)}/odometer`,
+      { signal },
+    );
+  }
+
+  recordOdometer(
+    vehicleID: string,
+    req: {
+      reading: string;
+      authorization_id?: string;
+      station_id?: string;
+      note?: string;
+      override?: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<OdometerReading> {
+    return this.request<OdometerReading>(
+      `/api/v1/fleet/vehicles/${encodeURIComponent(vehicleID)}/odometer`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  getFleetConsumption(
+    customerID: string,
+    opts: { from?: string; to?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ from: string; to: string; items: VehicleConsumption[]; count: number }> {
+    const qs = new URLSearchParams({ customer_id: customerID });
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    return this.request(`/api/v1/fleet/consumption?${qs.toString()}`, { signal });
   }
 
   // ----------- Revenue close & dashboard (Phase 6) -----------

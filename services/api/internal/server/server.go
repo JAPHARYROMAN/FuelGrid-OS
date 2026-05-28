@@ -461,6 +461,14 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("fuel_limit.manage", nil)).
 							Post("/fuel-limits", s.handleCreateFuelLimit)
 
+						// Odometer & fleet consumption (Stages 10-11).
+						r.With(s.requirePermissionHeld("customer.read")).
+							Get("/fleet/vehicles/{id}/odometer", s.handleListOdometer)
+						r.With(s.requirePermission("fuel_authorization.create", nil)).
+							Post("/fleet/vehicles/{id}/odometer", s.handleRecordOdometer)
+						r.With(s.requirePermissionHeld("fleet_report.read")).
+							Get("/fleet/consumption", s.handleFleetConsumption)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)
