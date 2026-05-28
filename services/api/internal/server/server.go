@@ -21,6 +21,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/incidents"
+	"github.com/japharyroman/fuelgrid-os/internal/inventory"
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
@@ -66,6 +67,7 @@ type Server struct {
 	incidents   *incidents.Repo
 	operations  *operations.Repo
 	readings    *readings.Repo
+	inventory   *inventory.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -98,6 +100,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.incidents = incidents.New(deps.DB)
 		s.operations = operations.New(deps.DB)
 		s.readings = readings.New(deps.DB)
+		s.inventory = inventory.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -260,6 +263,13 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/tanks/{id}/calibrated-volume", s.handleCalibratedVolume)
 						})
 						r.Post("/tanks/{id}/calibration-charts", s.handleUploadCalibrationChart)
+
+						// Stock ledger (Phase 4, Stage 1). Per-tank append-only
+						// movement history and derived book balance; both gated by
+						// the station-scoped inventory.read, authorized in-handler
+						// against the tank's station.
+						r.Get("/tanks/{id}/ledger", s.handleListTankLedger)
+						r.Get("/tanks/{id}/book-balance", s.handleGetTankBookBalance)
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped
