@@ -37,3 +37,9 @@ export { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 
 export { Badge, badgeVariants } from './components/badge';
 export type { BadgeProps } from './components/badge';
+
+export { TankVisual } from './components/tank-visual';
+export type { TankVisualProps } from './components/tank-visual';
+
+export { PumpCard } from './components/pump-card';
+export type { PumpCardProps, PumpCardNozzle } from './components/pump-card';

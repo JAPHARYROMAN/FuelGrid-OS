@@ -157,20 +157,20 @@ The daily operator UX. Read-only views aimed at station managers / supervisors, 
 
 **Goal:** Deliver the signature surfaces from the UI/UX doc (§11.3 Tank View, §11.4 Pump and Nozzle View). This is the moment the product stops looking like an admin tool and starts looking like a command center.
 
-- [ ] `packages/ui/src/components/tank-visual.tsx`:
+- [x] `packages/ui/src/components/tank-visual.tsx`:
   - SVG-based vertical fill bar
   - Animated fill on mount (Framer Motion) with product color tinting
   - Safe-min / safe-max markers
   - Ullage badge (capacity minus current)
   - Empty placeholder content for current-volume (filled in Phase 3 from dip readings)
-- [ ] `packages/ui/src/components/pump-card.tsx`:
+- [x] `packages/ui/src/components/pump-card.tsx`:
   - Header: pump number + status pulse (green / amber / grey)
   - Body: nozzle rows with product chip + tank source + price
   - Click → pump detail
-- [ ] Replace the Stage-6 plain tank cards with `<TankVisual>` on `/stations/{id}`
-- [ ] Per-product color tokens already exist in `globals.css` (PMS, Diesel, Kerosene, LPG, Lubricants, AdBlue); `<TankVisual>` accepts a `color` prop that resolves to the right CSS variable
+- [x] Replace the Stage-6 plain tank cards with `<TankVisual>` on `/stations/{id}`
+- [x] `<TankVisual>` accepts a `color` prop. *(Note: the per-product colours are stored as hex on the product row and passed through directly — the `--color-fuel-*` tokens live in `packages/config/tailwind.preset.css`, not `globals.css`, and aren't wired into the web app's token set.)*
 - [ ] Storybook-style mock on `/dev/visuals` *(deferred to a Phase-11+ UI workshop)* — for now, the visuals exist on the live station page only
-- [ ] Mobile responsive: tanks stack vertically below 768px; pump cards become single-column
+- [x] Mobile responsive: tanks stack vertically below 768px; pump cards become single-column
 
 **Done when:** The station dashboard at `/stations/MIK-01` shows animated tank visuals with the right product colors and a clickable pump grid that matches the mood-board screenshots in `docs/ui-ux.md` §11.
 

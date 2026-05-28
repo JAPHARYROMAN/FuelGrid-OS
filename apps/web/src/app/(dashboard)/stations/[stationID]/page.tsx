@@ -1,22 +1,20 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 
 import { SdkError, type Tank } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
   EmptyState,
   ErrorState,
   LoadingState,
+  PumpCard,
+  TankVisual,
   Table,
   TableBody,
   TableCell,
@@ -43,7 +41,7 @@ function severityTone(s: string): 'neutral' | 'info' | 'warning' | 'danger' {
 export default function StationDashboardPage() {
   const params = useParams<{ stationID: string }>();
   const stationID = params.stationID;
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const router = useRouter();
 
   const overview = useQuery({
     queryKey: ['station-overview', stationID],
@@ -62,15 +60,6 @@ export default function StationDashboardPage() {
     () => new Map((overview.data?.tanks ?? []).map((t: Tank) => [t.id, t])),
     [overview.data],
   );
-
-  function toggle(id: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
 
   function color(productID: string) {
     return productLookup.get(productID)?.color ?? '#64748b';
@@ -133,45 +122,19 @@ export default function StationDashboardPage() {
           />
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {tanks.map((t) => {
-              const product = productLookup.get(t.product_id);
-              return (
-                <Card key={t.id} className="relative overflow-hidden">
-                  <span
-                    className="absolute inset-y-0 left-0 w-1.5"
-                    style={{ backgroundColor: color(t.product_id) }}
-                    aria-hidden
-                  />
-                  <CardHeader className="pl-5">
-                    <CardTitle className="flex items-center justify-between gap-2 text-base">
-                      <span>{t.name}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{t.code}</span>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-1 pl-5 text-sm">
-                    <span className="inline-flex items-center gap-2">
-                      <span
-                        className="inline-block size-3 rounded-full border border-border"
-                        style={{ backgroundColor: color(t.product_id) }}
-                        aria-hidden
-                      />
-                      {product?.name ?? '—'}
-                    </span>
-                    <span className="text-muted-foreground">
-                      Capacity{' '}
-                      <span className="tabular-nums text-foreground">
-                        {t.capacity_litres.toLocaleString()} L
-                      </span>
-                    </span>
-                    {t.status !== 'active' ? (
-                      <Badge tone="warning" className="mt-1 w-fit">
-                        {t.status}
-                      </Badge>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              );
-            })}
+            {tanks.map((t) => (
+              <TankVisual
+                key={t.id}
+                name={t.name}
+                code={t.code}
+                color={color(t.product_id)}
+                capacityLitres={t.capacity_litres}
+                safeMinLitres={t.safe_min_litres}
+                safeMaxLitres={t.safe_max_litres}
+                currentLitres={null}
+                status={t.status}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -193,77 +156,22 @@ export default function StationDashboardPage() {
           />
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
-            {pumps.map((pump) => {
-              const isOpen = expanded.has(pump.id);
-              return (
-                <Card key={pump.id}>
-                  <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
-                    <button
-                      type="button"
-                      className="flex items-center gap-2 text-left"
-                      onClick={() => toggle(pump.id)}
-                    >
-                      {isOpen ? (
-                        <ChevronDown className="size-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="size-4 text-muted-foreground" />
-                      )}
-                      <span className="font-semibold">Pump {pump.number}</span>
-                      <Badge tone={pump.status === 'active' ? 'success' : 'warning'}>
-                        {pump.status}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">
-                        {pump.nozzles.length} nozzle{pump.nozzles.length === 1 ? '' : 's'}
-                      </span>
-                    </button>
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/stations/${stationID}/pumps/${pump.id}`}>Details</Link>
-                    </Button>
-                  </CardHeader>
-                  {isOpen ? (
-                    <CardContent>
-                      {pump.nozzles.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">No nozzles.</p>
-                      ) : (
-                        <div className="flex flex-col divide-y divide-border">
-                          {pump.nozzles
-                            .slice()
-                            .sort((a, b) => a.number - b.number)
-                            .map((n) => {
-                              const product = productLookup.get(n.product_id);
-                              const tank = tankLookup.get(n.tank_id);
-                              return (
-                                <div
-                                  key={n.id}
-                                  className="flex items-center justify-between gap-3 py-2 text-sm"
-                                >
-                                  <div className="flex items-center gap-3">
-                                    <span className="w-10 font-mono text-xs text-muted-foreground">
-                                      N{n.number}
-                                    </span>
-                                    <span className="inline-flex items-center gap-2">
-                                      <span
-                                        className="inline-block size-3 rounded-full border border-border"
-                                        style={{ backgroundColor: color(n.product_id) }}
-                                        aria-hidden
-                                      />
-                                      {product?.name ?? '—'}
-                                    </span>
-                                    <span className="text-muted-foreground">
-                                      ← {tank ? tank.code : 'tank'}
-                                    </span>
-                                  </div>
-                                  <span className="tabular-nums">{n.default_price.toFixed(2)}</span>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      )}
-                    </CardContent>
-                  ) : null}
-                </Card>
-              );
-            })}
+            {pumps.map((pump) => (
+              <PumpCard
+                key={pump.id}
+                number={pump.number}
+                status={pump.status}
+                nozzles={pump.nozzles.map((n) => ({
+                  id: n.id,
+                  number: n.number,
+                  productName: productLookup.get(n.product_id)?.name ?? '—',
+                  productColor: color(n.product_id),
+                  tankCode: tankLookup.get(n.tank_id)?.code ?? 'tank',
+                  price: n.default_price,
+                }))}
+                onActivate={() => router.push(`/stations/${stationID}/pumps/${pump.id}`)}
+              />
+            ))}
           </div>
         )}
       </section>
