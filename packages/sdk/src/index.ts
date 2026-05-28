@@ -2,6 +2,8 @@ export { Client, SdkError } from './client';
 export type { ClientConfig } from './client';
 export type {
   Account,
+  AccountingExport,
+  AccountingExportResult,
   AccountingPeriod,
   ApiError,
   BalanceSheet,
@@ -20,6 +22,7 @@ export type {
   CalibrationChart,
   CalibrationPreview,
   CashSubmission,
+  CloseChecklist,
   Company,
   Customer,
   CustomerBalance,

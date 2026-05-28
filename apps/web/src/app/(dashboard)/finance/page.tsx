@@ -30,11 +30,19 @@ export default function FinancePage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-        <p className="text-sm text-muted-foreground">
-          Balance sheet, profit &amp; loss, payables, and recent journal activity.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
+          <p className="text-sm text-muted-foreground">
+            Balance sheet, profit &amp; loss, payables, and recent journal activity.
+          </p>
+        </div>
+        <a
+          href="/finance/close"
+          className="rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+        >
+          Period close →
+        </a>
       </header>
 
       {overview.isPending ? (

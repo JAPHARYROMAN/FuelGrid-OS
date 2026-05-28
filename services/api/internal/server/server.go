@@ -522,7 +522,13 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/finance/reports/profit-loss", s.handleIncomeStatement)
 							r.Get("/finance/reports/balance-sheet", s.handleBalanceSheet)
 							r.Get("/finance/reports/general-ledger", s.handleGeneralLedger)
+							r.Get("/finance/close-checklist", s.handleCloseChecklist)
+							r.Get("/finance/exports", s.handleListExports)
 						})
+
+						// Accounting exports (Phase 7, Stage 14) — sensitive, audited.
+						r.With(s.requirePermission("finance.export", nil)).
+							Post("/finance/exports/{type}", s.handleGenerateExport)
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped

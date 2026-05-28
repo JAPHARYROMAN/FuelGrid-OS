@@ -494,3 +494,60 @@ func TestPhase7_ExpensesAndPettyCash(t *testing.T) {
 		t.Fatalf("trial balance not balanced: %v", tb)
 	}
 }
+
+// TestPhase7_ExportsAndClose covers Stage 14 (accounting exports) and the
+// Stage 16 close checklist: a trial-balance export over a locked period is
+// final and reproducible (same checksum on re-run), and the close checklist
+// reports no blockers for a clean tenant.
+func TestPhase7_ExportsAndClose(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	code, period := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"})
+	if code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+	periodID := period["id"].(string)
+
+	// Post a balanced cash sale, then lock the period.
+	if code, _ := h.invPostJSON(t, "/api/v1/journal-entries", admin, map[string]any{
+		"entry_date": "2026-06-12", "memo": "cash sale",
+		"lines": []map[string]any{
+			{"system_key": "cash_on_hand", "debit": "5000", "credit": "0"},
+			{"system_key": "sales_revenue", "debit": "0", "credit": "5000"},
+		},
+	}); code != http.StatusCreated {
+		t.Fatalf("post entry: %d", code)
+	}
+	for _, action := range []string{"start-close", "close", "lock"} {
+		if code, raw := h.do(t, http.MethodPost, "/api/v1/accounting-periods/"+periodID+"/"+action, admin, nil, ""); code != http.StatusOK {
+			t.Fatalf("period %s: %d %s", action, code, raw)
+		}
+	}
+
+	// Export the trial balance for the locked period: final + reproducible.
+	code, exp1 := h.invPostJSON(t, "/api/v1/finance/exports/trial-balance?as_of=2026-06-30", admin, map[string]any{})
+	if code != http.StatusCreated || exp1["provisional"].(bool) || exp1["row_count"].(float64) != 2 {
+		t.Fatalf("export 1 = %d %v", code, exp1)
+	}
+	code, exp2 := h.invPostJSON(t, "/api/v1/finance/exports/trial-balance?as_of=2026-06-30", admin, map[string]any{})
+	if code != http.StatusCreated || exp1["checksum"] != exp2["checksum"] {
+		t.Fatalf("re-export checksum mismatch: %v vs %v", exp1["checksum"], exp2["checksum"])
+	}
+	// Both runs are recorded.
+	if code, runs := h.getJSON(t, "/api/v1/finance/exports", admin); code != http.StatusOK || runs["count"].(float64) != 2 {
+		t.Fatalf("export runs = %v", runs)
+	}
+
+	// A journal export over an unlocked range would be provisional; here the
+	// only period is locked, so the close checklist reports no blockers.
+	if code, cl := h.getJSON(t, "/api/v1/finance/close-checklist", admin); code != http.StatusOK || !cl["can_close"].(bool) {
+		t.Fatalf("close checklist = %d %v", code, cl)
+	}
+}

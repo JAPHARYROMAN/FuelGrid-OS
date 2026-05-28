@@ -1029,6 +1029,28 @@ export interface PettyCashTransaction {
   created_at?: string;
 }
 
+export interface AccountingExport {
+  id: string;
+  export_type: string;
+  format: string;
+  row_count: number;
+  checksum: string;
+  provisional: boolean;
+  generated_at?: string;
+}
+
+export interface AccountingExportResult extends AccountingExport {
+  export_id: string;
+  csv: string;
+}
+
+export interface CloseChecklist {
+  checks: Record<string, number>;
+  blockers: number;
+  can_close: boolean;
+  periods: Array<{ id: string; start_date: string; end_date: string; status: string }>;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

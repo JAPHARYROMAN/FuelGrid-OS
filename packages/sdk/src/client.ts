@@ -1,11 +1,14 @@
 import type {
   Account,
+  AccountingExport,
+  AccountingExportResult,
   AccountingPeriod,
   BalanceSheet,
   BankAccount,
   BankDeposit,
   BankStatementLine,
   CashReconciliation,
+  CloseChecklist,
   FinanceOverview,
   GeneralLedgerRow,
   IncomeStatement,
@@ -1511,6 +1514,33 @@ export class Client {
       `/api/v1/finance/reports/general-ledger?account_id=${encodeURIComponent(accountID)}`,
       { signal },
     );
+  }
+
+  /** The period-close checklist: blocker counts and whether a close is clear. */
+  getCloseChecklist(signal?: AbortSignal): Promise<CloseChecklist> {
+    return this.request<CloseChecklist>('/api/v1/finance/close-checklist', { signal });
+  }
+
+  // ----------- Accounting exports (Phase 7) -----------
+
+  generateExport(
+    type: 'journal-entries' | 'trial-balance' | 'ap-aging' | 'ar-aging',
+    opts: { from?: string; to?: string; asOf?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<AccountingExportResult> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    if (opts.asOf) qs.set('as_of', opts.asOf);
+    const q = qs.toString();
+    return this.request<AccountingExportResult>(
+      `/api/v1/finance/exports/${encodeURIComponent(type)}${q ? `?${q}` : ''}`,
+      { method: 'POST', signal },
+    );
+  }
+
+  listAccountingExports(signal?: AbortSignal): Promise<Paginated<AccountingExport>> {
+    return this.request<Paginated<AccountingExport>>('/api/v1/finance/exports', { signal });
   }
 
   // ----------- Cash & banking (Phase 7) -----------
