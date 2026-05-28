@@ -26,6 +26,18 @@ tags:
     description: Regions under a company
   - name: Stations
     description: Physical fueling locations
+  - name: Products
+    description: Per-tenant fuel product catalogue
+  - name: Tanks
+    description: Station tanks + status lifecycle
+  - name: Calibration
+    description: Tank strapping charts + dip-to-volume lookups
+  - name: Pumps
+    description: Dispensing units, status lifecycle, calibration events
+  - name: Nozzles
+    description: Nozzles bound to a pump + tank (product-consistent)
+  - name: Incidents
+    description: Station incident queue
   - name: Users
     description: Tenant user administration
   - name: Roles
@@ -368,6 +380,359 @@ paths:
       parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
       responses:
         '204': { description: Deleted }
+
+  /api/v1/stations/{stationID}/overview:
+    get:
+      tags: [Stations]
+      summary: Station dashboard overview (tanks + pumps/nozzles + open incidents)
+      description: One call returning the station with its tanks, pumps (each with nested nozzles), and active incidents. Station-scoped by station.read.
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StationOverview' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/products:
+    get:
+      tags: [Products]
+      summary: List products (tenant-wide)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProductList' } } } }
+    post:
+      tags: [Products]
+      summary: Create a product
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProductCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '409': { description: Duplicate product code }
+
+  /api/v1/products/{id}:
+    get:
+      tags: [Products]
+      summary: Get one product
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Products]
+      summary: Update a product
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ProductUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Duplicate product code }
+    delete:
+      tags: [Products]
+      summary: Soft-delete a product
+      description: 409 when live tanks still reference the product.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Product in use by tanks }
+
+  /api/v1/tanks:
+    get:
+      tags: [Tanks]
+      summary: List tanks (filtered to the actor's station scope)
+      parameters: [{ in: query, name: station_id, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TankList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Tanks]
+      summary: Create a tank
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TankCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Tank' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station or product not found }
+        '409': { description: Duplicate tank code at station }
+
+  /api/v1/tanks/{id}:
+    get:
+      tags: [Tanks]
+      summary: Get one tank
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Tank' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Tanks]
+      summary: Update a tank (status excluded — use /status)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TankUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Tank' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Tanks]
+      summary: Soft-delete a tank
+      description: 409 when live nozzles still draw from the tank.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Tank feeds live nozzles }
+
+  /api/v1/tanks/{id}/status:
+    patch:
+      tags: [Tanks]
+      summary: Transition a tank's status
+      description: State machine — active/inactive/maintenance interchange; decommissioned is terminal; reason required for maintenance/decommissioned.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StatusChange' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Tank' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid transition }
+
+  /api/v1/tanks/{id}/calibration-charts:
+    get:
+      tags: [Calibration]
+      summary: List a tank's calibration charts
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CalibrationChartList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Calibration]
+      summary: Upload a strapping-chart CSV (multipart)
+      description: >
+        CSV header `dip_mm,volume_litres`; strict, all-or-nothing validation
+        (whole-number dips, strictly increasing dip, non-decreasing volume,
+        max volume within tank capacity). `?dry_run=true` validates and
+        previews without persisting. A real upload supersedes the prior
+        active chart.
+      parameters:
+        - { in: path,  name: id,      required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: dry_run, schema: { type: boolean } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, name]
+              properties:
+                file:           { type: string, format: binary }
+                name:           { type: string }
+                source:         { type: string }
+                effective_from: { type: string, format: date-time }
+      responses:
+        '200': { description: Dry-run preview, content: { application/json: { schema: { $ref: '#/components/schemas/CalibrationPreview' } } } }
+        '201': { description: Chart created + activated, content: { application/json: { schema: { $ref: '#/components/schemas/CalibrationChart' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Chart volume exceeds tank capacity }
+
+  /api/v1/tanks/{id}/calibration-charts/active:
+    get:
+      tags: [Calibration]
+      summary: Get the tank's active chart
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CalibrationChart' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No active chart }
+
+  /api/v1/tanks/{id}/calibrated-volume:
+    get:
+      tags: [Calibration]
+      summary: Interpolate litres for a dip
+      parameters:
+        - { in: path,  name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: dip_mm, required: true, schema: { type: number } }
+      responses:
+        '200':
+          description: Interpolated volume
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tank_id:       { type: string, format: uuid }
+                  chart_id:      { type: string, format: uuid }
+                  dip_mm:        { type: number }
+                  volume_litres: { type: number }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No active chart }
+        '422': { description: Dip outside the chart's range }
+
+  /api/v1/pumps:
+    get:
+      tags: [Pumps]
+      summary: List pumps (filtered to the actor's station scope)
+      parameters: [{ in: query, name: station_id, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PumpList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Pumps]
+      summary: Create a pump
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PumpCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Pump' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+        '409': { description: Duplicate pump number at station }
+
+  /api/v1/pumps/{id}:
+    get:
+      tags: [Pumps]
+      summary: Get one pump
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Pump' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Pumps]
+      summary: Update a pump (status excluded — use /status)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PumpUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Pump' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Pumps]
+      summary: Soft-delete a pump
+      description: 409 when the pump still has live nozzles.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Pump has live nozzles }
+
+  /api/v1/pumps/{id}/status:
+    patch:
+      tags: [Pumps]
+      summary: Transition a pump's status
+      description: Same state machine as tanks (decommissioned terminal; reason required for maintenance/decommissioned).
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/StatusChange' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Pump' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid transition }
+
+  /api/v1/pumps/{id}/calibrations:
+    get:
+      tags: [Pumps]
+      summary: A pump's calibration history
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/PumpCalibrationList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Pumps]
+      summary: Record a calibration event
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PumpCalibrationCreate' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/PumpCalibration' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/nozzles:
+    get:
+      tags: [Nozzles]
+      summary: List nozzles (filtered to the actor's station scope)
+      parameters:
+        - { in: query, name: station_id, schema: { type: string, format: uuid } }
+        - { in: query, name: pump_id,    schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NozzleList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Nozzles]
+      summary: Create a nozzle
+      description: station + product are derived from the chosen tank; price defaults to the product's default price.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NozzleCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Nozzle' } } } }
+        '400': { description: Pump and tank at different stations }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Pump or tank not found }
+        '409': { description: Duplicate nozzle number on pump }
+
+  /api/v1/nozzles/{id}:
+    patch:
+      tags: [Nozzles]
+      summary: Update a nozzle
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NozzleUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Nozzle' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Nozzles]
+      summary: Soft-delete a nozzle
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/incidents:
+    get:
+      tags: [Incidents]
+      summary: List incidents (filtered to the actor's station scope)
+      parameters:
+        - { in: query, name: station_id, schema: { type: string, format: uuid } }
+        - { in: query, name: status,     schema: { type: string, enum: [open, investigating, resolved, closed] } }
+        - { in: query, name: severity,   schema: { type: string, enum: [low, medium, high, critical] } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Incidents]
+      summary: Open an incident
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentCreate' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Incident' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+
+  /api/v1/incidents/{id}/status:
+    patch:
+      tags: [Incidents]
+      summary: Transition an incident's status
+      description: Moving to resolved/closed stamps resolved_at/by.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, investigating, resolved, closed] }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Incident' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/users:
     get:
@@ -750,3 +1115,282 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/AuditLog' } }
         count: { type: integer }
         limit: { type: integer }
+
+    StatusChange:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, inactive, maintenance, decommissioned] }
+        reason: { type: string, description: Required when moving to maintenance or decommissioned }
+
+    Product:
+      type: object
+      properties:
+        id:                     { type: string, format: uuid }
+        tenant_id:              { type: string, format: uuid }
+        code:                   { type: string }
+        name:                   { type: string }
+        category:               { type: string, enum: [fuel, gas, lubricant, additive, other] }
+        unit:                   { type: string, enum: [litre, kg, unit] }
+        default_price:          { type: number }
+        tax_rate:               { type: number }
+        density_kg_m3:          { type: number }
+        loss_tolerance_percent: { type: number }
+        color:                  { type: string, description: Hex colour, e.g. '#f97316' }
+        status:                 { type: string }
+    ProductCreate:
+      type: object
+      required: [code, name]
+      properties:
+        code:                   { type: string }
+        name:                   { type: string }
+        category:               { type: string }
+        unit:                   { type: string }
+        default_price:          { type: number }
+        tax_rate:               { type: number }
+        density_kg_m3:          { type: number }
+        loss_tolerance_percent: { type: number }
+        color:                  { type: string }
+    ProductUpdate:
+      type: object
+      properties:
+        code:                   { type: string }
+        name:                   { type: string }
+        category:               { type: string }
+        unit:                   { type: string }
+        default_price:          { type: number }
+        tax_rate:               { type: number }
+        density_kg_m3:          { type: number }
+        loss_tolerance_percent: { type: number }
+        color:                  { type: string }
+        status:                 { type: string }
+    ProductList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Product' } }
+        count: { type: integer }
+
+    Tank:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        tenant_id:         { type: string, format: uuid }
+        station_id:        { type: string, format: uuid }
+        product_id:        { type: string, format: uuid }
+        name:              { type: string }
+        code:              { type: string }
+        capacity_litres:   { type: number }
+        safe_min_litres:   { type: number }
+        safe_max_litres:   { type: number }
+        dead_stock_litres: { type: number }
+        has_water_sensor:  { type: boolean }
+        has_temp_sensor:   { type: boolean }
+        status:            { type: string }
+        installation_date: { type: string, format: date }
+        decommission_date: { type: string, format: date }
+    TankCreate:
+      type: object
+      required: [station_id, product_id, name, code, capacity_litres]
+      properties:
+        station_id:        { type: string, format: uuid }
+        product_id:        { type: string, format: uuid }
+        name:              { type: string }
+        code:              { type: string }
+        capacity_litres:   { type: number }
+        safe_min_litres:   { type: number }
+        safe_max_litres:   { type: number }
+        dead_stock_litres: { type: number }
+        has_water_sensor:  { type: boolean }
+        has_temp_sensor:   { type: boolean }
+        installation_date: { type: string, format: date }
+    TankUpdate:
+      type: object
+      properties:
+        product_id:        { type: string, format: uuid }
+        name:              { type: string }
+        code:              { type: string }
+        capacity_litres:   { type: number }
+        safe_min_litres:   { type: number }
+        safe_max_litres:   { type: number }
+        dead_stock_litres: { type: number }
+        has_water_sensor:  { type: boolean }
+        has_temp_sensor:   { type: boolean }
+        installation_date: { type: string, format: date }
+        decommission_date: { type: string, format: date }
+    TankList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Tank' } }
+        count: { type: integer }
+
+    CalibrationChart:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        tenant_id:       { type: string, format: uuid }
+        tank_id:         { type: string, format: uuid }
+        name:            { type: string }
+        effective_from:  { type: string, format: date-time }
+        effective_until: { type: string, format: date-time }
+        status:          { type: string, enum: [active, superseded] }
+        source:          { type: string }
+        entry_count:     { type: integer }
+    CalibrationChartList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/CalibrationChart' } }
+        count: { type: integer }
+    CalibrationPreview:
+      type: object
+      properties:
+        preview:     { type: boolean }
+        entry_count: { type: integer }
+        min_dip_mm:  { type: number }
+        max_dip_mm:  { type: number }
+        min_volume:  { type: number }
+        max_volume:  { type: number }
+
+    Pump:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        tenant_id:         { type: string, format: uuid }
+        station_id:        { type: string, format: uuid }
+        number:            { type: integer }
+        name:              { type: string }
+        manufacturer:      { type: string }
+        model:             { type: string }
+        serial_number:     { type: string }
+        status:            { type: string }
+        installation_date: { type: string, format: date }
+    PumpCreate:
+      type: object
+      required: [station_id, number]
+      properties:
+        station_id:        { type: string, format: uuid }
+        number:            { type: integer }
+        name:              { type: string }
+        manufacturer:      { type: string }
+        model:             { type: string }
+        serial_number:     { type: string }
+        installation_date: { type: string, format: date }
+    PumpUpdate:
+      type: object
+      properties:
+        number:            { type: integer }
+        name:              { type: string }
+        manufacturer:      { type: string }
+        model:             { type: string }
+        serial_number:     { type: string }
+        installation_date: { type: string, format: date }
+    PumpList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Pump' } }
+        count: { type: integer }
+
+    PumpCalibration:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        tenant_id:         { type: string, format: uuid }
+        pump_id:           { type: string, format: uuid }
+        performed_at:      { type: string, format: date-time }
+        performed_by:      { type: string, format: uuid }
+        notes:             { type: string }
+        tolerance_percent: { type: number }
+        status:            { type: string, enum: [passed, failed, adjusted] }
+    PumpCalibrationCreate:
+      type: object
+      properties:
+        performed_at:      { type: string, format: date-time }
+        notes:             { type: string }
+        tolerance_percent: { type: number }
+        status:            { type: string, enum: [passed, failed, adjusted] }
+    PumpCalibrationList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/PumpCalibration' } }
+        count: { type: integer }
+
+    Nozzle:
+      type: object
+      properties:
+        id:                   { type: string, format: uuid }
+        tenant_id:            { type: string, format: uuid }
+        station_id:           { type: string, format: uuid }
+        pump_id:              { type: string, format: uuid }
+        tank_id:              { type: string, format: uuid }
+        product_id:           { type: string, format: uuid }
+        number:               { type: integer }
+        default_price:        { type: number }
+        meter_decimal_places: { type: integer }
+        status:               { type: string }
+    NozzleCreate:
+      type: object
+      required: [pump_id, tank_id, number]
+      properties:
+        pump_id:              { type: string, format: uuid }
+        tank_id:              { type: string, format: uuid }
+        number:               { type: integer }
+        default_price:        { type: number }
+        meter_decimal_places: { type: integer }
+    NozzleUpdate:
+      type: object
+      properties:
+        tank_id:              { type: string, format: uuid }
+        number:               { type: integer }
+        default_price:        { type: number }
+        meter_decimal_places: { type: integer }
+        status:               { type: string }
+    NozzleList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Nozzle' } }
+        count: { type: integer }
+
+    Incident:
+      type: object
+      properties:
+        id:                  { type: string, format: uuid }
+        tenant_id:           { type: string, format: uuid }
+        station_id:          { type: string, format: uuid }
+        related_entity_type: { type: string }
+        related_entity_id:   { type: string, format: uuid }
+        type:                { type: string, enum: [equipment, leak, variance, safety, calibration, other] }
+        severity:            { type: string, enum: [low, medium, high, critical] }
+        description:         { type: string }
+        status:              { type: string, enum: [open, investigating, resolved, closed] }
+        opened_at:           { type: string, format: date-time }
+        opened_by:           { type: string, format: uuid }
+        resolved_at:         { type: string, format: date-time }
+        resolved_by:         { type: string, format: uuid }
+    IncidentCreate:
+      type: object
+      required: [station_id, description]
+      properties:
+        station_id:          { type: string, format: uuid }
+        related_entity_type: { type: string }
+        related_entity_id:   { type: string, format: uuid }
+        type:                { type: string }
+        severity:            { type: string }
+        description:         { type: string }
+    IncidentList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Incident' } }
+        count: { type: integer }
+
+    PumpWithNozzles:
+      allOf:
+        - $ref: '#/components/schemas/Pump'
+        - type: object
+          properties:
+            nozzles: { type: array, items: { $ref: '#/components/schemas/Nozzle' } }
+    StationOverview:
+      type: object
+      properties:
+        station:        { $ref: '#/components/schemas/Station' }
+        tanks:          { type: array, items: { $ref: '#/components/schemas/Tank' } }
+        pumps:          { type: array, items: { $ref: '#/components/schemas/PumpWithNozzles' } }
+        open_incidents: { type: array, items: { $ref: '#/components/schemas/Incident' } }
