@@ -1,0 +1,10 @@
+# Redocly lint config for the hand-maintained docs/openapi.yaml.
+# The spec is reviewed by hand until automatic generation lands, so two
+# default rules are noise we deliberately downgrade:
+#   - operation-operationId: we don't hand-assign operationIds yet.
+#   - operation-4xx-response: shared 4xx responses are documented via
+#     $ref components; not every operation repeats them inline.
+rules:
+  operation-operationId: off
+  operation-4xx-response: off
+  no-server-example.com: off

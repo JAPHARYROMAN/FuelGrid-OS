@@ -14,15 +14,26 @@ servers:
     description: Local dev (`go run ./services/api/cmd/api`)
 
 tags:
-  - { name: Health,     description: Liveness, readiness, and metrics }
-  - { name: Auth,       description: Login, logout, refresh, password reset, MFA }
-  - { name: Me,         description: Current actor's identity, permissions, sessions }
-  - { name: Companies,  description: Tenant CRUD over the companies hierarchy }
-  - { name: Regions,    description: Regions under a company }
-  - { name: Stations,   description: Physical fueling locations }
-  - { name: Users,      description: Tenant user administration }
-  - { name: Roles,      description: System + tenant role catalogue }
-  - { name: Audit,      description: Append-only sensitive-action log }
+  - name: Health
+    description: Liveness, readiness, and metrics
+  - name: Auth
+    description: Login, logout, refresh, password reset, MFA
+  - name: Me
+    description: Current actor's identity, permissions, sessions
+  - name: Companies
+    description: Tenant CRUD over the companies hierarchy
+  - name: Regions
+    description: Regions under a company
+  - name: Stations
+    description: Physical fueling locations
+  - name: Users
+    description: Tenant user administration
+  - name: Roles
+    description: System + tenant role catalogue
+  - name: Audit
+    description: Append-only sensitive-action log
+  - name: Platform
+    description: Platform-admin operations (tenant provisioning)
 
 security:
   - bearerAuth: []

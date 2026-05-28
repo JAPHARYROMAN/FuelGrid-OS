@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -32,6 +33,20 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
+
+/**
+ * safeRedirect guards the post-login `?next=` against open-redirect.
+ * A value must be a same-origin absolute path: it starts with a single
+ * "/" and not "//" (protocol-relative, e.g. //evil.com) or "/\" (which
+ * some browsers also treat as protocol-relative). Anything else falls
+ * back to the command center.
+ */
+function safeRedirect(next: string | null): string {
+  if (!next) return '/command-center';
+  if (!next.startsWith('/')) return '/command-center';
+  if (next.startsWith('//') || next.startsWith('/\\')) return '/command-center';
+  return next;
+}
 
 export function LoginForm() {
   const router = useRouter();
@@ -67,9 +82,7 @@ export function LoginForm() {
 
       setSession(res.token, res.expires_at);
 
-      const next = searchParams.get('next');
-      const safeNext = next && next.startsWith('/') ? next : '/command-center';
-      router.replace(safeNext);
+      router.replace(safeRedirect(searchParams.get('next')));
     } catch (err) {
       if (err instanceof SdkError) {
         if (err.status === 401) {
@@ -156,6 +169,13 @@ export function LoginForm() {
           <Button type="submit" disabled={isSubmitting}>
             {isSubmitting ? 'Signing in…' : 'Sign in'}
           </Button>
+
+          <Link
+            href="/forgot-password"
+            className="self-center text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            Forgot password?
+          </Link>
         </form>
       </CardContent>
     </Card>
