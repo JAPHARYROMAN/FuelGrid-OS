@@ -89,6 +89,170 @@ export interface Product {
   status: string;
 }
 
+export interface Supplier {
+  id: string;
+  tenant_id: string;
+  code: string;
+  name: string;
+  contact_name?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  payment_terms_days: number;
+  status: string;
+  deactivated_at?: string;
+  product_ids: string[];
+}
+
+export interface PurchaseOrderLine {
+  id: string;
+  tenant_id: string;
+  purchase_order_id: string;
+  product_id: string;
+  ordered_litres: number;
+  unit_price: string;
+  received_litres: number;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  supplier_id: string;
+  expected_delivery_date?: string;
+  status: string;
+  raised_by: string;
+  submitted_by?: string;
+  submitted_at?: string;
+  confirmed_by?: string;
+  confirmed_at?: string;
+  cancelled_by?: string;
+  cancelled_at?: string;
+  closed_by?: string;
+  closed_at?: string;
+  notes?: string;
+  created_at: string;
+  lines: PurchaseOrderLine[];
+}
+
+export interface Delivery {
+  id: string;
+  tenant_id: string;
+  tank_id: string;
+  supplier_ref?: string;
+  supplier_id?: string;
+  purchase_order_id?: string;
+  po_line_id?: string;
+  volume_litres: number;
+  dip_before_litres?: number;
+  dip_after_litres?: number;
+  dip_variance_litres?: number;
+  line_unit_price?: string;
+  freight_amount: string;
+  duty_amount: string;
+  levies_amount: string;
+  landed_cost_total?: string;
+  landed_cost_per_litre?: string;
+  match_status: string;
+  quantity_variance_litres?: number;
+  received_by: string;
+  received_at: string;
+  notes?: string;
+}
+
+export interface StockMovement {
+  id: string;
+  tenant_id: string;
+  tank_id: string;
+  movement_type: string;
+  source_ref_type?: string;
+  source_ref_id?: string;
+  litres: number;
+  balance_after: number;
+  supplier_id?: string;
+  purchase_order_id?: string;
+  landed_cost_total?: string;
+  landed_cost_per_litre?: string;
+  status: string;
+  supersedes_id?: string;
+  recorded_by: string;
+  recorded_at: string;
+  notes?: string;
+}
+
+export interface ProcurementDiscrepancy {
+  id: string;
+  tenant_id: string;
+  supplier_invoice_id: string;
+  purchase_order_id: string;
+  delivery_id?: string;
+  po_line_id?: string;
+  type: string;
+  severity: string;
+  detail: string;
+  variance_litres?: number;
+  variance_amount?: string;
+  status: string;
+  raised_at: string;
+  resolved_by?: string;
+  resolved_at?: string;
+}
+
+export interface SupplierInvoiceLine {
+  id: string;
+  tenant_id: string;
+  supplier_invoice_id: string;
+  purchase_order_id: string;
+  po_line_id: string;
+  delivery_id?: string;
+  product_id: string;
+  invoiced_litres: number;
+  unit_price: string;
+  amount: string;
+}
+
+export interface SupplierInvoice {
+  id: string;
+  tenant_id: string;
+  supplier_id: string;
+  purchase_order_id: string;
+  station_id: string;
+  invoice_number: string;
+  status: string;
+  received_at: string;
+  due_date?: string;
+  total_amount: string;
+  recorded_by: string;
+  approved_by?: string;
+  approved_at?: string;
+  notes?: string;
+  lines: SupplierInvoiceLine[];
+  discrepancies: ProcurementDiscrepancy[];
+}
+
+export interface SupplierBalance {
+  supplier_id: string;
+  supplier_name: string;
+  outstanding_amount: string;
+  invoice_count: number;
+}
+
+export interface PriceTrendPoint {
+  supplier_id: string;
+  supplier_name: string;
+  product_id: string;
+  product_name: string;
+  received_at: string;
+  landed_cost_per_litre: string;
+}
+
+export interface ProcurementOverview {
+  station: Station;
+  open_purchase_orders: PurchaseOrder[];
+  recent_receipts: Delivery[];
+  supplier_balances: SupplierBalance[];
+  price_trend: PriceTrendPoint[];
+}
+
 export interface Tank {
   id: string;
   tenant_id: string;
@@ -463,6 +627,31 @@ export interface ReconciliationOverview {
   day: OperatingDay | null;
   all_shifts_approved: boolean;
   tanks: ReconciliationOverviewTank[];
+}
+
+// ---- Phase 6: Sales, Payments & Revenue ----
+
+export interface PriceChange {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  product_id: string;
+  unit_price: string;
+  effective_from: string;
+  previous_price?: string;
+  reason?: string;
+  set_by: string;
+  created_at: string;
+}
+
+export interface PriceBoardEntry {
+  product_id: string;
+  product_code: string;
+  product_name: string;
+  product_color: string;
+  active_price?: string;
+  next_price?: string;
+  next_effective_from?: string;
 }
 
 export interface UserSummary {

@@ -25,6 +25,8 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
+	"github.com/japharyroman/fuelgrid-os/internal/pricing"
+	"github.com/japharyroman/fuelgrid-os/internal/procurement"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/pumps"
 	"github.com/japharyroman/fuelgrid-os/internal/readings"
@@ -69,6 +71,8 @@ type Server struct {
 	operations     *operations.Repo
 	readings       *readings.Repo
 	inventory      *inventory.Repo
+	pricing        *pricing.Repo
+	procurement    *procurement.Repo
 	reconciliation *reconciliation.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
@@ -103,6 +107,8 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.operations = operations.New(deps.DB)
 		s.readings = readings.New(deps.DB)
 		s.inventory = inventory.New(deps.DB)
+		s.pricing = pricing.New(deps.DB)
+		s.procurement = procurement.New(deps.DB)
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
@@ -285,6 +291,32 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Post("/tanks/{id}/deliveries", s.handleReceiveDelivery)
 						r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/deliveries", s.handleListStationDeliveries)
+						r.Get("/deliveries/{id}", s.handleGetDeliveryReceipt)
+
+						// Procurement (Phase 5): supplier master, station-scoped
+						// purchase orders, PO-backed goods receipts, supplier
+						// invoice matching, and overview surfaces.
+						r.With(s.requirePermissionHeld("purchase_order.read")).Group(func(r chi.Router) {
+							r.Get("/suppliers", s.handleListSuppliers)
+							r.Get("/suppliers/{id}", s.handleGetSupplier)
+							r.Get("/purchase-orders", s.handleListPurchaseOrders)
+						})
+						r.With(s.requirePermission("supplier.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/suppliers", s.handleCreateSupplier)
+							r.Patch("/suppliers/{id}", s.handleUpdateSupplier)
+							r.Delete("/suppliers/{id}", s.handleDeactivateSupplier)
+						})
+						r.Post("/purchase-orders", s.handleCreatePurchaseOrder)
+						r.Get("/purchase-orders/{id}", s.handleGetPurchaseOrder)
+						r.Patch("/purchase-orders/{id}", s.handleUpdatePurchaseOrder)
+						r.Post("/purchase-orders/{id}/status", s.handleTransitionPurchaseOrder)
+						r.Post("/purchase-orders/{id}/receipts", s.handleReceivePurchaseOrderReceipt)
+						r.Post("/supplier-invoices", s.handleRecordSupplierInvoice)
+						r.Get("/supplier-invoices/{id}", s.handleGetSupplierInvoice)
+						r.Post("/supplier-invoices/{id}/approve", s.handleApproveSupplierInvoice)
+						r.Patch("/procurement-discrepancies/{id}/status", s.handleResolveProcurementDiscrepancy)
+						r.With(s.requirePermission("purchase_order.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/procurement-overview", s.handleProcurementOverview)
 
 						// Reconciliation (Phase 4, Stages 5-6). Preview/get/list ride
 						// reconciliation.read; run/adjust/seal are reconciliation.manage,
@@ -303,6 +335,15 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							Get("/stations/{stationID}/inventory-overview", s.handleInventoryOverview)
 						r.With(s.requirePermission("reconciliation.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/reconciliation-overview", s.handleReconciliationOverview)
+
+						// Pricing (Phase 6, Stages 1-2): selling price book. Writes are
+						// station-scoped (price.change); reads ride pricing.read.
+						r.With(s.requirePermission("price.change", stationFromURLParam("stationID"))).
+							Post("/stations/{stationID}/prices", s.handleSetPrice)
+						r.With(s.requirePermission("pricing.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
+							r.Get("/stations/{stationID}/price-board", s.handlePriceBoard)
+							r.Get("/stations/{stationID}/price-history", s.handlePriceHistory)
+						})
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped

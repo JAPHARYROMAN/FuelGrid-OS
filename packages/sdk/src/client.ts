@@ -19,9 +19,14 @@ import type {
   OperatingDay,
   OperationsOverview,
   Paginated,
+  PriceBoardEntry,
+  PriceChange,
   Product,
+  ProcurementDiscrepancy,
+  ProcurementOverview,
   Pump,
   PumpCalibration,
+  PurchaseOrder,
   Reconciliation,
   ReconciliationOverview,
   Region,
@@ -34,8 +39,12 @@ import type {
   ShiftException,
   Station,
   StationOverview,
+  StockMovement,
+  Supplier,
+  SupplierInvoice,
   Tank,
   UserSummary,
+  Delivery,
 } from './types';
 
 /**
@@ -386,6 +395,203 @@ export class Client {
       method: 'DELETE',
       signal,
     });
+  }
+
+  // ----------- Procurement: suppliers, orders, receipts, invoices -----------
+
+  listSuppliers(signal?: AbortSignal): Promise<Paginated<Supplier>> {
+    return this.request<Paginated<Supplier>>('/api/v1/suppliers', { signal });
+  }
+
+  getSupplier(id: string, signal?: AbortSignal): Promise<Supplier> {
+    return this.request<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createSupplier(
+    req: {
+      code: string;
+      name: string;
+      contact_name?: string;
+      contact_email?: string;
+      contact_phone?: string;
+      payment_terms_days?: number;
+      product_ids?: string[];
+    },
+    signal?: AbortSignal,
+  ): Promise<Supplier> {
+    return this.request<Supplier>('/api/v1/suppliers', { method: 'POST', body: req, signal });
+  }
+
+  updateSupplier(id: string, req: Partial<Supplier>, signal?: AbortSignal): Promise<Supplier> {
+    return this.request<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  deactivateSupplier(id: string, signal?: AbortSignal): Promise<Supplier> {
+    return this.request<Supplier>(`/api/v1/suppliers/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  listPurchaseOrders(
+    opts: { stationID?: string; supplierID?: string; status?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<PurchaseOrder>> {
+    const qs = new URLSearchParams();
+    if (opts.stationID) qs.set('station_id', opts.stationID);
+    if (opts.supplierID) qs.set('supplier_id', opts.supplierID);
+    if (opts.status) qs.set('status', opts.status);
+    const q = qs.toString();
+    return this.request<Paginated<PurchaseOrder>>(`/api/v1/purchase-orders${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  getPurchaseOrder(id: string, signal?: AbortSignal): Promise<PurchaseOrder> {
+    return this.request<PurchaseOrder>(`/api/v1/purchase-orders/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  createPurchaseOrder(
+    req: {
+      station_id: string;
+      supplier_id: string;
+      expected_delivery_date?: string;
+      notes?: string;
+      lines: Array<{ product_id: string; ordered_litres: number; unit_price: string }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<PurchaseOrder> {
+    return this.request<PurchaseOrder>('/api/v1/purchase-orders', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  updatePurchaseOrder(
+    id: string,
+    req: {
+      expected_delivery_date?: string;
+      notes?: string;
+      lines?: Array<{ product_id: string; ordered_litres: number; unit_price: string }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<PurchaseOrder> {
+    return this.request<PurchaseOrder>(`/api/v1/purchase-orders/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  transitionPurchaseOrder(
+    id: string,
+    status: string,
+    signal?: AbortSignal,
+  ): Promise<PurchaseOrder> {
+    return this.request<PurchaseOrder>(`/api/v1/purchase-orders/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: { status },
+      signal,
+    });
+  }
+
+  receivePurchaseOrderReceipt(
+    purchaseOrderID: string,
+    req: {
+      tank_id: string;
+      po_line_id: string;
+      volume_litres: number;
+      dip_before_litres?: number;
+      dip_after_litres?: number;
+      line_unit_price?: string;
+      freight_amount?: string;
+      duty_amount?: string;
+      levies_amount?: string;
+      notes?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<{
+    delivery: Delivery;
+    movement: StockMovement;
+    dip_mismatch: boolean;
+    quantity_discrepancy: boolean;
+    quantity_variance_litres: number;
+    purchase_order_status: string;
+  }> {
+    return this.request(`/api/v1/purchase-orders/${encodeURIComponent(purchaseOrderID)}/receipts`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listStationDeliveries(stationID: string, signal?: AbortSignal): Promise<Paginated<Delivery>> {
+    return this.request<Paginated<Delivery>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/deliveries`,
+      { signal },
+    );
+  }
+
+  getDeliveryReceipt(id: string, signal?: AbortSignal): Promise<Delivery> {
+    return this.request<Delivery>(`/api/v1/deliveries/${encodeURIComponent(id)}`, { signal });
+  }
+
+  recordSupplierInvoice(
+    req: {
+      purchase_order_id: string;
+      invoice_number: string;
+      received_at?: string;
+      due_date?: string;
+      notes?: string;
+      lines: Array<{
+        po_line_id: string;
+        delivery_id?: string;
+        invoiced_litres: number;
+        unit_price: string;
+        amount?: string;
+      }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<SupplierInvoice> {
+    return this.request<SupplierInvoice>('/api/v1/supplier-invoices', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  getSupplierInvoice(id: string, signal?: AbortSignal): Promise<SupplierInvoice> {
+    return this.request<SupplierInvoice>(`/api/v1/supplier-invoices/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  approveSupplierInvoice(id: string, signal?: AbortSignal): Promise<SupplierInvoice> {
+    return this.request<SupplierInvoice>(
+      `/api/v1/supplier-invoices/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', signal },
+    );
+  }
+
+  resolveProcurementDiscrepancy(id: string, signal?: AbortSignal): Promise<ProcurementDiscrepancy> {
+    return this.request<ProcurementDiscrepancy>(
+      `/api/v1/procurement-discrepancies/${encodeURIComponent(id)}/status`,
+      { method: 'PATCH', body: { status: 'resolved' }, signal },
+    );
+  }
+
+  getProcurementOverview(stationID: string, signal?: AbortSignal): Promise<ProcurementOverview> {
+    return this.request<ProcurementOverview>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/procurement-overview`,
+      { signal },
+    );
   }
 
   // ----------- Tanks -----------
@@ -934,6 +1140,44 @@ export class Client {
     return this.request<Reconciliation>(
       `/api/v1/reconciliations/${encodeURIComponent(reconciliationID)}/seal`,
       { method: 'POST', signal },
+    );
+  }
+
+  // ----------- Pricing (Phase 6) -----------
+
+  setPrice(
+    stationID: string,
+    req: {
+      product_id: string;
+      unit_price: string;
+      effective_from?: string;
+      reason?: string;
+      allow_below_cost?: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<PriceChange> {
+    return this.request<PriceChange>(`/api/v1/stations/${encodeURIComponent(stationID)}/prices`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  getPriceBoard(stationID: string, signal?: AbortSignal): Promise<Paginated<PriceBoardEntry>> {
+    return this.request<Paginated<PriceBoardEntry>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/price-board`,
+      { signal },
+    );
+  }
+
+  getPriceHistory(
+    stationID: string,
+    productID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<PriceChange>> {
+    return this.request<Paginated<PriceChange>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/price-history?product_id=${encodeURIComponent(productID)}`,
+      { signal },
     );
   }
 
