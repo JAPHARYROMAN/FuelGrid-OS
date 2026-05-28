@@ -911,6 +911,56 @@ export interface GeneralLedgerRow {
   credit: string;
 }
 
+export interface CashReconciliation {
+  id: string;
+  station_id: string;
+  operating_day_id: string;
+  expected_cash: string;
+  counted_cash: string;
+  variance: string;
+  status: string;
+  notes?: string;
+  journal_entry_id?: string;
+  reviewed_by?: string;
+}
+
+export interface BankAccount {
+  id: string;
+  name: string;
+  account_number?: string;
+  currency: string;
+  status: string;
+}
+
+export interface BankDeposit {
+  id: string;
+  station_id: string;
+  bank_account_id: string;
+  slip_number?: string;
+  amount: string;
+  reference?: string;
+  expected_bank_date?: string;
+  actual_bank_date?: string;
+  status: string;
+  prepared_entry_id?: string;
+  confirmed_entry_id?: string;
+}
+
+export interface BankStatementLine {
+  id: string;
+  import_id: string;
+  bank_account_id: string;
+  txn_date: string;
+  value_date?: string;
+  amount: string;
+  reference?: string;
+  description?: string;
+  status: string;
+  matched_doc_type?: string;
+  matched_doc_id?: string;
+  journal_entry_id?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

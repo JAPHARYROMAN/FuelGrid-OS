@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/japharyroman/fuelgrid-os/internal/accounting"
+	"github.com/japharyroman/fuelgrid-os/internal/banking"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
@@ -65,6 +66,7 @@ type Server struct {
 	metrics  *observability.Metrics
 
 	accounting     *accounting.Repo
+	banking        *banking.Repo
 	companies      *companies.Repo
 	regions        *regions.Repo
 	stations       *stations.Repo
@@ -106,6 +108,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// gate themselves on s.deps.DB == nil checks at registration time.
 	if deps.DB != nil {
 		s.accounting = accounting.New(deps.DB)
+		s.banking = banking.New(deps.DB)
 		s.companies = companies.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
@@ -438,6 +441,36 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							Post("/payables/import", s.handleImportPayables)
 						r.With(s.requirePermission("supplier_payment.manage", nil)).
 							Post("/supplier-payments", s.handleRecordSupplierPayment)
+
+						// Cash & banking (Phase 7, Stages 4-6). Reads ride
+						// finance.read; writes gate on the cash/bank permissions.
+						r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
+							r.Get("/stations/{stationID}/cash-reconciliations", s.handleListCashReconciliations)
+							r.Get("/cash-reconciliations/{id}", s.handleGetCashReconciliation)
+							r.Get("/bank-accounts", s.handleListBankAccounts)
+							r.Get("/bank-deposits", s.handleListBankDeposits)
+							r.Get("/bank-statement-lines", s.handleListBankStatementLines)
+						})
+						r.With(s.requirePermission("cash_reconciliation.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/stations/{stationID}/cash-reconciliations", s.handleCreateCashReconciliation)
+							r.Post("/cash-reconciliations/{id}/submit", s.handleSubmitCashReconciliation)
+						})
+						r.With(s.requirePermission("cash_reconciliation.approve", nil)).
+							Post("/cash-reconciliations/{id}/approve", s.handleApproveCashReconciliation)
+						r.With(s.requirePermission("bank_account.manage", nil)).
+							Post("/bank-accounts", s.handleCreateBankAccount)
+						r.With(s.requirePermission("bank_deposit.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/bank-deposits", s.handleCreateBankDeposit)
+							r.Post("/bank-deposits/{id}/prepare", s.handlePrepareBankDeposit)
+						})
+						r.With(s.requirePermission("bank_deposit.confirm", nil)).
+							Post("/bank-deposits/{id}/confirm", s.handleConfirmBankDeposit)
+						r.With(s.requirePermission("bank_statement.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/bank-statements/import", s.handleImportBankStatement)
+							r.Post("/bank-statement-lines/{id}/match", s.handleMatchBankStatementLine)
+							r.Post("/bank-statement-lines/{id}/unmatch", s.handleUnmatchBankStatementLine)
+							r.Post("/bank-statement-lines/{id}/bank-fee", s.handleBankFeeStatementLine)
+						})
 
 						// Finance reports + dashboard (Phase 7, Stages 13, 15) —
 						// read-only over posted journal lines, gated by finance.read.

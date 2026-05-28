@@ -196,3 +196,127 @@ func TestPhase7_Reports(t *testing.T) {
 		t.Fatalf("finance overview = %v", ov)
 	}
 }
+
+// TestPhase7_CashAndBanking covers Category B: a station day's cash is
+// reconciled against Phase-6 expected cash (variance to over/short), grouped
+// into a bank deposit (cash -> clearing -> bank), and a bank statement is
+// imported and a fee line posted. Throughout, the trial balance stays balanced.
+func TestPhase7_CashAndBanking(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+
+	// A closed shift with 50,000 of cash collected (Phase-6 tender).
+	day, shift := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
+	if code, _ := h.invPostJSON(t, "/api/v1/shifts/"+shift.String()+"/payments", admin,
+		map[string]any{"tender_type": "cash", "amount": "50000"}); code != http.StatusCreated {
+		t.Fatalf("record cash: %d", code)
+	}
+
+	station := "/api/v1/stations/" + h.ids.station1.String()
+
+	// Create the reconciliation: expected cash = 50,000 (sourced from tenders).
+	code, cr := h.invPostJSON(t, station+"/cash-reconciliations", admin, map[string]any{"operating_day_id": day.String()})
+	if code != http.StatusCreated || cr["expected_cash"] != "50000.00" {
+		t.Fatalf("create cash recon = %d %v", code, cr)
+	}
+	crID := cr["id"].(string)
+	// A second reconciliation for the same day is refused.
+	if code, _ := h.invPostJSON(t, station+"/cash-reconciliations", admin, map[string]any{"operating_day_id": day.String()}); code != http.StatusConflict {
+		t.Fatalf("duplicate reconciliation: %d, want 409", code)
+	}
+
+	// Submit a 49,500 count: a 500 short variance.
+	code, sub := h.invPostJSON(t, "/api/v1/cash-reconciliations/"+crID+"/submit", admin, map[string]any{"counted_cash": "49500"})
+	if code != http.StatusOK || sub["variance"] != "-500.00" || sub["status"] != "submitted" {
+		t.Fatalf("submit = %d %v", code, sub)
+	}
+
+	// Approve posts a balanced entry and finalizes the reconciliation.
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/cash-reconciliations/"+crID+"/approve", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("approve = %d %s", code, raw)
+	}
+	if code, got := h.getJSON(t, "/api/v1/cash-reconciliations/"+crID, admin); code != http.StatusOK ||
+		got["status"] != "posted" || got["journal_entry_id"] == nil {
+		t.Fatalf("reconciliation after approve = %v", got)
+	}
+
+	// Open a bank account and deposit the counted cash.
+	code, ba := h.invPostJSON(t, "/api/v1/bank-accounts", admin,
+		map[string]any{"name": "Main Operating", "account_number": "0123456789"})
+	if code != http.StatusCreated {
+		t.Fatalf("bank account = %d %v", code, ba)
+	}
+	baID := ba["id"].(string)
+
+	code, dep := h.invPostJSON(t, "/api/v1/bank-deposits", admin, map[string]any{
+		"station_id": h.ids.station1.String(), "bank_account_id": baID,
+		"slip_number": "SLP-1", "expected_bank_date": "2026-06-06",
+		"lines": []map[string]any{{"cash_reconciliation_id": crID, "amount": "49500"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("deposit = %d %v", code, dep)
+	}
+	depID := dep["id"].(string)
+
+	// Prepare (cash -> clearing) then confirm (clearing -> bank).
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/bank-deposits/"+depID+"/prepare", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("prepare = %d %s", code, raw)
+	}
+	code, conf := h.invPostJSON(t, "/api/v1/bank-deposits/"+depID+"/confirm", admin,
+		map[string]any{"actual_bank_date": "2026-06-07", "reference": "BANKREF-9"})
+	if code != http.StatusOK || conf["status"] != "posted" || conf["amount"] != "49500.00" {
+		t.Fatalf("confirm = %d %v", code, conf)
+	}
+
+	// The same reconciliation cannot be deposited twice.
+	if code, _ := h.invPostJSON(t, "/api/v1/bank-deposits", admin, map[string]any{
+		"station_id": h.ids.station1.String(), "bank_account_id": baID,
+		"lines": []map[string]any{{"cash_reconciliation_id": crID, "amount": "49500"}},
+	}); code != http.StatusConflict {
+		t.Fatalf("double deposit: %d, want 409", code)
+	}
+
+	// Import a statement with one bank-fee line; a re-import is rejected.
+	statement := map[string]any{
+		"bank_account_id": baID, "statement_start": "2026-06-01", "statement_end": "2026-06-30",
+		"lines": []map[string]any{{"txn_date": "2026-06-07", "amount": "-200", "description": "Monthly fee"}},
+	}
+	if code, imp := h.invPostJSON(t, "/api/v1/bank-statements/import", admin, statement); code != http.StatusCreated || imp["lines"].(float64) != 1 {
+		t.Fatalf("import = %d %v", code, imp)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/bank-statements/import", admin, statement); code != http.StatusConflict {
+		t.Fatalf("re-import: %d, want 409", code)
+	}
+
+	// The unmatched line can be posted as a bank fee.
+	code, lines := h.getJSON(t, "/api/v1/bank-statement-lines?bank_account_id="+baID, admin)
+	arr, _ := lines["items"].([]any)
+	if code != http.StatusOK || len(arr) != 1 {
+		t.Fatalf("list lines = %d %v", code, lines)
+	}
+	lineID := arr[0].(map[string]any)["id"].(string)
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/bank-statement-lines/"+lineID+"/bank-fee", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("bank fee = %d %s", code, raw)
+	}
+
+	// Despite cash short and a posted bank fee, the books still balance.
+	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
+		t.Fatalf("trial balance not balanced: %v", tb)
+	}
+}

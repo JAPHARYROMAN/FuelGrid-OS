@@ -2,6 +2,10 @@ import type {
   Account,
   AccountingPeriod,
   BalanceSheet,
+  BankAccount,
+  BankDeposit,
+  BankStatementLine,
+  CashReconciliation,
   FinanceOverview,
   GeneralLedgerRow,
   IncomeStatement,
@@ -1501,6 +1505,175 @@ export class Client {
       `/api/v1/finance/reports/general-ledger?account_id=${encodeURIComponent(accountID)}`,
       { signal },
     );
+  }
+
+  // ----------- Cash & banking (Phase 7) -----------
+
+  listCashReconciliations(
+    stationID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<CashReconciliation>> {
+    return this.request<Paginated<CashReconciliation>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/cash-reconciliations`,
+      { signal },
+    );
+  }
+
+  getCashReconciliation(id: string, signal?: AbortSignal): Promise<CashReconciliation> {
+    return this.request<CashReconciliation>(
+      `/api/v1/cash-reconciliations/${encodeURIComponent(id)}`,
+      { signal },
+    );
+  }
+
+  createCashReconciliation(
+    stationID: string,
+    operatingDayID: string,
+    signal?: AbortSignal,
+  ): Promise<CashReconciliation> {
+    return this.request<CashReconciliation>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/cash-reconciliations`,
+      { method: 'POST', body: { operating_day_id: operatingDayID }, signal },
+    );
+  }
+
+  submitCashReconciliation(
+    id: string,
+    req: { counted_cash: string; notes?: string },
+    signal?: AbortSignal,
+  ): Promise<CashReconciliation> {
+    return this.request<CashReconciliation>(
+      `/api/v1/cash-reconciliations/${encodeURIComponent(id)}/submit`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  approveCashReconciliation(id: string, signal?: AbortSignal): Promise<CashReconciliation> {
+    return this.request<CashReconciliation>(
+      `/api/v1/cash-reconciliations/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', signal },
+    );
+  }
+
+  listBankAccounts(signal?: AbortSignal): Promise<Paginated<BankAccount>> {
+    return this.request<Paginated<BankAccount>>('/api/v1/bank-accounts', { signal });
+  }
+
+  createBankAccount(
+    req: { name: string; account_number?: string; currency?: string },
+    signal?: AbortSignal,
+  ): Promise<BankAccount> {
+    return this.request<BankAccount>('/api/v1/bank-accounts', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listBankDeposits(
+    opts: { stationID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<BankDeposit>> {
+    const qs = opts.stationID ? `?station_id=${encodeURIComponent(opts.stationID)}` : '';
+    return this.request<Paginated<BankDeposit>>(`/api/v1/bank-deposits${qs}`, { signal });
+  }
+
+  createBankDeposit(
+    req: {
+      station_id: string;
+      bank_account_id: string;
+      slip_number?: string;
+      reference?: string;
+      expected_bank_date?: string;
+      lines: Array<{ cash_reconciliation_id: string; amount: string }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<BankDeposit> {
+    return this.request<BankDeposit>('/api/v1/bank-deposits', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  prepareBankDeposit(id: string, signal?: AbortSignal): Promise<BankDeposit> {
+    return this.request<BankDeposit>(`/api/v1/bank-deposits/${encodeURIComponent(id)}/prepare`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  confirmBankDeposit(
+    id: string,
+    req: { actual_bank_date: string; reference?: string },
+    signal?: AbortSignal,
+  ): Promise<BankDeposit> {
+    return this.request<BankDeposit>(`/api/v1/bank-deposits/${encodeURIComponent(id)}/confirm`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listBankStatementLines(
+    opts: { bankAccountID?: string; status?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<BankStatementLine>> {
+    const qs = new URLSearchParams();
+    if (opts.bankAccountID) qs.set('bank_account_id', opts.bankAccountID);
+    if (opts.status) qs.set('status', opts.status);
+    const q = qs.toString();
+    return this.request<Paginated<BankStatementLine>>(
+      `/api/v1/bank-statement-lines${q ? `?${q}` : ''}`,
+      { signal },
+    );
+  }
+
+  importBankStatement(
+    req: {
+      bank_account_id: string;
+      statement_start?: string;
+      statement_end?: string;
+      lines: Array<{
+        txn_date: string;
+        value_date?: string;
+        amount: string;
+        reference?: string;
+        description?: string;
+      }>;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ import_id: string; lines: number }> {
+    return this.request('/api/v1/bank-statements/import', { method: 'POST', body: req, signal });
+  }
+
+  matchBankStatementLine(
+    id: string,
+    req: { doc_type: string; doc_id: string },
+    signal?: AbortSignal,
+  ): Promise<{ status: string }> {
+    return this.request(`/api/v1/bank-statement-lines/${encodeURIComponent(id)}/match`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  unmatchBankStatementLine(id: string, signal?: AbortSignal): Promise<{ status: string }> {
+    return this.request(`/api/v1/bank-statement-lines/${encodeURIComponent(id)}/unmatch`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  markBankFeeStatementLine(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<{ status: string; journal_entry_id: string }> {
+    return this.request(`/api/v1/bank-statement-lines/${encodeURIComponent(id)}/bank-fee`, {
+      method: 'POST',
+      signal,
+    });
   }
 
   // ----------- Users -----------
