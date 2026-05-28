@@ -654,6 +654,36 @@ export interface PriceBoardEntry {
   next_effective_from?: string;
 }
 
+export interface Sale {
+  id: string;
+  shift_id: string;
+  station_id: string;
+  operating_day_id: string;
+  nozzle_id: string;
+  product_id: string;
+  tank_id: string;
+  litres: number;
+  unit_price: string;
+  gross_amount: string;
+  tax_rate: string;
+  tax_amount: string;
+  net_amount: string;
+  unit_cost?: string;
+  cogs_amount?: string;
+  margin_amount?: string;
+  recorded_at: string;
+}
+
+export interface TankValuation {
+  tank_id: string;
+  code: string;
+  name: string;
+  product_id: string;
+  book_litres: number;
+  avg_cost?: string;
+  stock_value?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

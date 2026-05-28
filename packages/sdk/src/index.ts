@@ -47,6 +47,7 @@ export type {
   RecentVariance,
   Region,
   Role,
+  Sale,
   Session,
   Shift,
   ShiftAttendant,
@@ -63,6 +64,7 @@ export type {
   SupplierInvoice,
   SupplierInvoiceLine,
   Tank,
+  TankValuation,
   UserSummary,
   Delivery,
 } from './types';

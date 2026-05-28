@@ -32,6 +32,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/readings"
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
+	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
@@ -74,6 +75,7 @@ type Server struct {
 	pricing        *pricing.Repo
 	procurement    *procurement.Repo
 	reconciliation *reconciliation.Repo
+	revenue        *revenue.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
 
@@ -110,6 +112,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.pricing = pricing.New(deps.DB)
 		s.procurement = procurement.New(deps.DB)
 		s.reconciliation = reconciliation.New(deps.DB)
+		s.revenue = revenue.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -344,6 +347,15 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/stations/{stationID}/price-board", s.handlePriceBoard)
 							r.Get("/stations/{stationID}/price-history", s.handlePriceHistory)
 						})
+
+						// Recognized sales & valuation (Phase 6, Stages 3-4). Shift
+						// sales authorize revenue.read in-handler against the shift's
+						// station; station reads ride the URL station.
+						r.Get("/shifts/{id}/sales", s.handleListShiftSales)
+						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/sales", s.handleListStationSales)
+						r.With(s.requirePermission("margin.view", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/inventory-valuation", s.handleInventoryValuation)
 
 						// Pump calibration events + status lifecycle. Reads ride
 						// station.read; calibration is station-scoped

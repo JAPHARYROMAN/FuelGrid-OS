@@ -103,6 +103,12 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Phase 6: recognize priced revenue for the shift in the same tx —
+	// value the metered litres at the resolved price into sale records.
+	if !s.recognizeShiftRevenue(w, r, actor, tx, before.ID) {
+		return
+	}
+
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "shift.approved", EventType: "ShiftApproved",

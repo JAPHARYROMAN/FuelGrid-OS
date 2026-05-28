@@ -31,6 +31,8 @@ import type {
   ReconciliationOverview,
   Region,
   Role,
+  Sale,
+  TankValuation,
   CashSubmission,
   Session,
   Shift,
@@ -1177,6 +1179,35 @@ export class Client {
   ): Promise<Paginated<PriceChange>> {
     return this.request<Paginated<PriceChange>>(
       `/api/v1/stations/${encodeURIComponent(stationID)}/price-history?product_id=${encodeURIComponent(productID)}`,
+      { signal },
+    );
+  }
+
+  // ----------- Recognized sales & valuation (Phase 6) -----------
+
+  listShiftSales(shiftID: string, signal?: AbortSignal): Promise<Paginated<Sale>> {
+    return this.request<Paginated<Sale>>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/sales`, {
+      signal,
+    });
+  }
+
+  listStationSales(
+    stationID: string,
+    operatingDayID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<Sale>> {
+    return this.request<Paginated<Sale>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/sales?operating_day_id=${encodeURIComponent(operatingDayID)}`,
+      { signal },
+    );
+  }
+
+  getInventoryValuation(
+    stationID: string,
+    signal?: AbortSignal,
+  ): Promise<Paginated<TankValuation>> {
+    return this.request<Paginated<TankValuation>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/inventory-valuation`,
       { signal },
     );
   }
