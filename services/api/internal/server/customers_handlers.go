@@ -16,15 +16,22 @@ import (
 )
 
 type customerDTO struct {
-	ID           uuid.UUID `json:"id"`
-	TenantID     uuid.UUID `json:"tenant_id"`
-	Code         string    `json:"code"`
-	Name         string    `json:"name"`
-	ContactName  *string   `json:"contact_name,omitempty"`
-	ContactPhone *string   `json:"contact_phone,omitempty"`
-	ContactEmail *string   `json:"contact_email,omitempty"`
-	CreditLimit  string    `json:"credit_limit"`
-	Status       string    `json:"status"`
+	ID               uuid.UUID `json:"id"`
+	TenantID         uuid.UUID `json:"tenant_id"`
+	Code             string    `json:"code"`
+	Name             string    `json:"name"`
+	ContactName      *string   `json:"contact_name,omitempty"`
+	ContactPhone     *string   `json:"contact_phone,omitempty"`
+	ContactEmail     *string   `json:"contact_email,omitempty"`
+	CreditLimit      string    `json:"credit_limit"`
+	Status           string    `json:"status"`
+	LegalName        *string   `json:"legal_name,omitempty"`
+	TradingName      *string   `json:"trading_name,omitempty"`
+	TaxID            *string   `json:"tax_id,omitempty"`
+	BillingAddress   *string   `json:"billing_address,omitempty"`
+	AccountType      string    `json:"account_type"`
+	DefaultTermsDays int       `json:"default_terms_days"`
+	Notes            *string   `json:"notes,omitempty"`
 }
 
 func toCustomerDTO(c *receivables.Customer) customerDTO {
@@ -32,6 +39,8 @@ func toCustomerDTO(c *receivables.Customer) customerDTO {
 		ID: c.ID, TenantID: c.TenantID, Code: c.Code, Name: c.Name,
 		ContactName: c.ContactName, ContactPhone: c.ContactPhone, ContactEmail: c.ContactEmail,
 		CreditLimit: c.CreditLimit, Status: c.Status,
+		LegalName: c.LegalName, TradingName: c.TradingName, TaxID: c.TaxID, BillingAddress: c.BillingAddress,
+		AccountType: c.AccountType, DefaultTermsDays: c.DefaultTermsDays, Notes: c.Notes,
 	}
 }
 
@@ -56,12 +65,29 @@ func toAREntryDTO(e *receivables.AREntry) arEntryDTO {
 }
 
 type customerRequest struct {
-	Code         string  `json:"code"`
-	Name         string  `json:"name"`
-	ContactName  *string `json:"contact_name,omitempty"`
-	ContactPhone *string `json:"contact_phone,omitempty"`
-	ContactEmail *string `json:"contact_email,omitempty"`
-	CreditLimit  string  `json:"credit_limit"`
+	Code             string  `json:"code"`
+	Name             string  `json:"name"`
+	ContactName      *string `json:"contact_name,omitempty"`
+	ContactPhone     *string `json:"contact_phone,omitempty"`
+	ContactEmail     *string `json:"contact_email,omitempty"`
+	CreditLimit      string  `json:"credit_limit"`
+	LegalName        *string `json:"legal_name,omitempty"`
+	TradingName      *string `json:"trading_name,omitempty"`
+	TaxID            *string `json:"tax_id,omitempty"`
+	BillingAddress   *string `json:"billing_address,omitempty"`
+	AccountType      string  `json:"account_type,omitempty"`
+	DefaultTermsDays *int    `json:"default_terms_days,omitempty"`
+	Notes            *string `json:"notes,omitempty"`
+}
+
+func (req customerRequest) toInput() receivables.CustomerInput {
+	return receivables.CustomerInput{
+		Code: req.Code, Name: req.Name, ContactName: req.ContactName,
+		ContactPhone: req.ContactPhone, ContactEmail: req.ContactEmail, CreditLimit: req.CreditLimit,
+		LegalName: req.LegalName, TradingName: req.TradingName, TaxID: req.TaxID,
+		BillingAddress: req.BillingAddress, AccountType: req.AccountType,
+		DefaultTermsDays: req.DefaultTermsDays, Notes: req.Notes,
+	}
 }
 
 func (s *Server) handleListCustomers(w http.ResponseWriter, r *http.Request) {
@@ -112,10 +138,7 @@ func (s *Server) handleCreateCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	c, err := s.receivables.CreateCustomer(ctx, tx, actor.TenantID, receivables.CustomerInput{
-		Code: req.Code, Name: req.Name, ContactName: req.ContactName,
-		ContactPhone: req.ContactPhone, ContactEmail: req.ContactEmail, CreditLimit: req.CreditLimit,
-	})
+	c, err := s.receivables.CreateCustomer(ctx, tx, actor.TenantID, req.toInput())
 	if isUniqueViolation(err) {
 		writeError(w, http.StatusConflict, "a customer with that code already exists")
 		return
@@ -171,10 +194,7 @@ func (s *Server) handleUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	c, err := s.receivables.UpdateCustomer(ctx, tx, actor.TenantID, id, receivables.CustomerInput{
-		Name: req.Name, ContactName: req.ContactName, ContactPhone: req.ContactPhone,
-		ContactEmail: req.ContactEmail, CreditLimit: req.CreditLimit,
-	})
+	c, err := s.receivables.UpdateCustomer(ctx, tx, actor.TenantID, id, req.toInput())
 	if errors.Is(err, receivables.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "customer not found")
 		return

@@ -716,6 +716,62 @@ export interface Customer {
   contact_email?: string;
   credit_limit: string;
   status: string;
+  legal_name?: string;
+  trading_name?: string;
+  tax_id?: string;
+  billing_address?: string;
+  account_type?: string;
+  default_terms_days?: number;
+  notes?: string;
+}
+
+export interface CustomerContact {
+  id: string;
+  name: string;
+  role?: string;
+  email?: string;
+  phone?: string;
+  statement_preference: string;
+  notification_preference: string;
+}
+
+export interface CreditProfile {
+  customer_id: string;
+  payment_terms_days: number;
+  grace_days: number;
+  statement_cycle_days: number;
+  risk_category: string;
+  warning_threshold_pct: string;
+  hold: boolean;
+  hold_reason?: string;
+}
+
+export interface CreditPosition {
+  customer_id: string;
+  credit_limit: string;
+  exposure: string;
+  available_credit: string;
+  overdue_amount: string;
+  status: string;
+  hold: boolean;
+  hold_reason?: string;
+  over_limit: boolean;
+  warning: boolean;
+}
+
+export interface CustomerPriceAgreement {
+  id: string;
+  customer_id: string;
+  product_id: string;
+  station_id?: string;
+  price_type: string;
+  fixed_price?: string;
+  discount?: string;
+  markup?: string;
+  effective_from: string;
+  effective_to?: string;
+  status: string;
+  version: number;
 }
 
 export interface ARentry {

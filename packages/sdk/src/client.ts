@@ -55,10 +55,14 @@ import type {
   Sale,
   TankValuation,
   ARentry,
+  CreditPosition,
+  CreditProfile,
   Customer,
   CustomerBalance,
+  CustomerContact,
   CustomerInvoice,
   CustomerPayment,
+  CustomerPriceAgreement,
   CustomerStatement,
   Payment,
   RevenueDay,
@@ -1324,6 +1328,142 @@ export class Client {
       body: req,
       signal,
     });
+  }
+
+  // ----------- Customer credit & fleet (Phase 8) -----------
+
+  setCustomerStatus(id: string, status: string, signal?: AbortSignal): Promise<Customer> {
+    return this.request<Customer>(`/api/v1/customers/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: { status },
+      signal,
+    });
+  }
+
+  listCustomerContacts(id: string, signal?: AbortSignal): Promise<Paginated<CustomerContact>> {
+    return this.request<Paginated<CustomerContact>>(
+      `/api/v1/customers/${encodeURIComponent(id)}/contacts`,
+      { signal },
+    );
+  }
+
+  createCustomerContact(
+    id: string,
+    req: {
+      name: string;
+      role?: string;
+      email?: string;
+      phone?: string;
+      statement_preference?: string;
+      notification_preference?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request(`/api/v1/customers/${encodeURIComponent(id)}/contacts`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  deleteCustomerContact(id: string, contactID: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(
+      `/api/v1/customers/${encodeURIComponent(id)}/contacts/${encodeURIComponent(contactID)}`,
+      { method: 'DELETE', signal },
+    );
+  }
+
+  getCreditProfile(id: string, signal?: AbortSignal): Promise<CreditProfile> {
+    return this.request<CreditProfile>(
+      `/api/v1/customers/${encodeURIComponent(id)}/credit-profile`,
+      {
+        signal,
+      },
+    );
+  }
+
+  upsertCreditProfile(
+    id: string,
+    req: {
+      payment_terms_days?: number;
+      grace_days?: number;
+      statement_cycle_days?: number;
+      risk_category?: string;
+      warning_threshold_pct?: string;
+      review_date?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<CreditProfile> {
+    return this.request<CreditProfile>(
+      `/api/v1/customers/${encodeURIComponent(id)}/credit-profile`,
+      {
+        method: 'PUT',
+        body: req,
+        signal,
+      },
+    );
+  }
+
+  getCreditPosition(id: string, signal?: AbortSignal): Promise<CreditPosition> {
+    return this.request<CreditPosition>(
+      `/api/v1/customers/${encodeURIComponent(id)}/credit-position`,
+      { signal },
+    );
+  }
+
+  setCreditHold(
+    id: string,
+    req: { hold: boolean; reason?: string },
+    signal?: AbortSignal,
+  ): Promise<{ customer_id: string; hold: boolean }> {
+    return this.request(`/api/v1/customers/${encodeURIComponent(id)}/credit-hold`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  listCustomerPriceAgreements(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<CustomerPriceAgreement>> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request<Paginated<CustomerPriceAgreement>>(
+      `/api/v1/customer-price-agreements${qs}`,
+      { signal },
+    );
+  }
+
+  createCustomerPriceAgreement(
+    req: {
+      customer_id: string;
+      product_id: string;
+      station_id?: string;
+      price_type: 'fixed' | 'discount' | 'markup';
+      fixed_price?: string;
+      discount?: string;
+      markup?: string;
+      effective_from?: string;
+      effective_to?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<CustomerPriceAgreement> {
+    return this.request<CustomerPriceAgreement>('/api/v1/customer-price-agreements', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  transitionCustomerPriceAgreement(
+    id: string,
+    action: 'approve' | 'activate' | 'cancel',
+    signal?: AbortSignal,
+  ): Promise<CustomerPriceAgreement> {
+    return this.request<CustomerPriceAgreement>(
+      `/api/v1/customer-price-agreements/${encodeURIComponent(id)}/${action}`,
+      { method: 'POST', signal },
+    );
   }
 
   // ----------- Revenue close & dashboard (Phase 6) -----------

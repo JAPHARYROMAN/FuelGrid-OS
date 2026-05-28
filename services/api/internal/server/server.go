@@ -20,6 +20,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/expenses"
+	"github.com/japharyroman/fuelgrid-os/internal/fleet"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
@@ -69,6 +70,7 @@ type Server struct {
 	accounting     *accounting.Repo
 	banking        *banking.Repo
 	expenses       *expenses.Repo
+	fleet          *fleet.Repo
 	companies      *companies.Repo
 	regions        *regions.Repo
 	stations       *stations.Repo
@@ -112,6 +114,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.accounting = accounting.New(deps.DB)
 		s.banking = banking.New(deps.DB)
 		s.expenses = expenses.New(deps.DB)
+		s.fleet = fleet.New(deps.DB)
 		s.companies = companies.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
@@ -386,11 +389,39 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermissionHeld("customer.read")).Group(func(r chi.Router) {
 							r.Get("/customers", s.handleListCustomers)
 							r.Get("/customers/{id}/statement", s.handleCustomerStatement)
+							r.Get("/customers/{id}/contacts", s.handleListCustomerContacts)
 						})
 						r.With(s.requirePermission("credit.manage", nil)).Group(func(r chi.Router) {
 							r.Post("/customers", s.handleCreateCustomer)
 							r.Patch("/customers/{id}", s.handleUpdateCustomer)
 							r.Post("/customers/{id}/payments", s.handleRecordCustomerPayment)
+						})
+
+						// ===== Phase 8: Customer Credit & Fleet Fuel OS =====
+						// Customer master lifecycle + contacts (Stage 1).
+						r.With(s.requirePermission("customer.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/customers/{id}/status", s.handleSetCustomerStatus)
+							r.Post("/customers/{id}/contacts", s.handleCreateCustomerContact)
+							r.Delete("/customers/{id}/contacts/{contactID}", s.handleDeleteCustomerContact)
+						})
+						// Credit profile, position & holds (Stage 2).
+						r.With(s.requirePermissionHeld("customer_credit.read")).Group(func(r chi.Router) {
+							r.Get("/customers/{id}/credit-profile", s.handleGetCreditProfile)
+							r.Get("/customers/{id}/credit-position", s.handleCreditPosition)
+						})
+						r.With(s.requirePermission("customer_credit.manage", nil)).Group(func(r chi.Router) {
+							r.Put("/customers/{id}/credit-profile", s.handleUpsertCreditProfile)
+							r.Post("/customers/{id}/credit-hold", s.handleSetCreditHold)
+						})
+						// Customer price agreements (Stage 3).
+						r.With(s.requirePermissionHeld("customer_credit.read")).
+							Get("/customer-price-agreements", s.handleListPriceAgreements)
+						r.With(s.requirePermission("customer_pricing.manage", nil)).
+							Post("/customer-price-agreements", s.handleCreatePriceAgreement)
+						r.With(s.requirePermission("customer_pricing.approve", nil)).Group(func(r chi.Router) {
+							r.Post("/customer-price-agreements/{id}/approve", s.handleTransitionPriceAgreement("approve"))
+							r.Post("/customer-price-agreements/{id}/activate", s.handleTransitionPriceAgreement("activate"))
+							r.Post("/customer-price-agreements/{id}/cancel", s.handleTransitionPriceAgreement("cancel"))
 						})
 
 						// Revenue close & dashboard (Phase 6, Stages 7-8).

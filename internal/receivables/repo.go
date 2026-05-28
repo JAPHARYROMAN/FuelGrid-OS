@@ -22,17 +22,24 @@ var (
 )
 
 type Customer struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	Code         string
-	Name         string
-	ContactName  *string
-	ContactPhone *string
-	ContactEmail *string
-	CreditLimit  string
-	Status       string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID               uuid.UUID
+	TenantID         uuid.UUID
+	Code             string
+	Name             string
+	ContactName      *string
+	ContactPhone     *string
+	ContactEmail     *string
+	CreditLimit      string
+	Status           string
+	LegalName        *string
+	TradingName      *string
+	TaxID            *string
+	BillingAddress   *string
+	AccountType      string
+	DefaultTermsDays int
+	Notes            *string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type AREntry struct {
@@ -50,12 +57,19 @@ type AREntry struct {
 }
 
 type CustomerInput struct {
-	Code         string
-	Name         string
-	ContactName  *string
-	ContactPhone *string
-	ContactEmail *string
-	CreditLimit  string
+	Code             string
+	Name             string
+	ContactName      *string
+	ContactPhone     *string
+	ContactEmail     *string
+	CreditLimit      string
+	LegalName        *string
+	TradingName      *string
+	TaxID            *string
+	BillingAddress   *string
+	AccountType      string
+	DefaultTermsDays *int
+	Notes            *string
 }
 
 type Repo struct{ pool *database.Pool }
@@ -64,13 +78,15 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const customerColumns = `
     id, tenant_id, code, name, contact_name, contact_phone, contact_email,
-    credit_limit::text, status, created_at, updated_at
+    credit_limit::text, status, legal_name, trading_name, tax_id, billing_address,
+    account_type, default_terms_days, notes, created_at, updated_at
 `
 
 func scanCustomer(row pgx.Row, c *Customer) error {
 	return row.Scan(
 		&c.ID, &c.TenantID, &c.Code, &c.Name, &c.ContactName, &c.ContactPhone, &c.ContactEmail,
-		&c.CreditLimit, &c.Status, &c.CreatedAt, &c.UpdatedAt,
+		&c.CreditLimit, &c.Status, &c.LegalName, &c.TradingName, &c.TaxID, &c.BillingAddress,
+		&c.AccountType, &c.DefaultTermsDays, &c.Notes, &c.CreatedAt, &c.UpdatedAt,
 	)
 }
 
@@ -123,10 +139,14 @@ func (r *Repo) GetCustomer(ctx context.Context, tenantID, id uuid.UUID) (*Custom
 func (r *Repo) CreateCustomer(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CustomerInput) (*Customer, error) {
 	var c Customer
 	if err := scanCustomer(tx.QueryRow(ctx, `
-		INSERT INTO customers (tenant_id, code, name, contact_name, contact_phone, contact_email, credit_limit)
-		VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::numeric, 0))
+		INSERT INTO customers
+		    (tenant_id, code, name, contact_name, contact_phone, contact_email, credit_limit,
+		     legal_name, trading_name, tax_id, billing_address, account_type, default_terms_days, notes)
+		VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::numeric, 0),
+		        $8, $9, $10, $11, COALESCE(NULLIF($12, ''), 'standard'), COALESCE($13, 0), $14)
 		RETURNING `+customerColumns,
 		tenantID, in.Code, in.Name, in.ContactName, in.ContactPhone, in.ContactEmail, nullableMoney(in.CreditLimit),
+		in.LegalName, in.TradingName, in.TaxID, in.BillingAddress, in.AccountType, in.DefaultTermsDays, in.Notes,
 	), &c); err != nil {
 		return nil, err
 	}
@@ -137,14 +157,40 @@ func (r *Repo) UpdateCustomer(ctx context.Context, tx pgx.Tx, tenantID, id uuid.
 	var c Customer
 	err := scanCustomer(tx.QueryRow(ctx, `
 		UPDATE customers SET
-		    name          = COALESCE(NULLIF($3, ''), name),
-		    contact_name  = $4,
-		    contact_phone = $5,
-		    contact_email = $6,
-		    credit_limit  = COALESCE($7::numeric, credit_limit)
+		    name             = COALESCE(NULLIF($3, ''), name),
+		    contact_name     = $4,
+		    contact_phone    = $5,
+		    contact_email    = $6,
+		    credit_limit     = COALESCE($7::numeric, credit_limit),
+		    legal_name       = COALESCE($8, legal_name),
+		    trading_name     = COALESCE($9, trading_name),
+		    tax_id           = COALESCE($10, tax_id),
+		    billing_address  = COALESCE($11, billing_address),
+		    account_type     = COALESCE(NULLIF($12, ''), account_type),
+		    default_terms_days = COALESCE($13, default_terms_days),
+		    notes            = COALESCE($14, notes)
 		WHERE tenant_id = $1 AND id = $2 AND status <> 'deleted'
 		RETURNING `+customerColumns,
 		tenantID, id, in.Name, in.ContactName, in.ContactPhone, in.ContactEmail, nullableMoney(in.CreditLimit),
+		in.LegalName, in.TradingName, in.TaxID, in.BillingAddress, in.AccountType, in.DefaultTermsDays, in.Notes,
+	), &c)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// SetCustomerStatus transitions a customer's account lifecycle
+// (prospect -> active -> on_hold -> suspended -> closed).
+func (r *Repo) SetCustomerStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) (*Customer, error) {
+	var c Customer
+	err := scanCustomer(tx.QueryRow(ctx, `
+		UPDATE customers SET status = $3 WHERE tenant_id = $1 AND id = $2 AND status <> 'deleted'
+		RETURNING `+customerColumns,
+		tenantID, id, status,
 	), &c)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
