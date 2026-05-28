@@ -77,3 +77,53 @@ func TestPhase9_Governance(t *testing.T) {
 		t.Fatalf("reject = %d %v", code, dec)
 	}
 }
+
+// TestPhase9_Dashboards covers Category B: the station-KPI projection rebuild,
+// the executive overview aggregate, and station ranking.
+func TestPhase9_Dashboards(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO revenue_days (tenant_id, station_id, operating_day_id, business_date, gross_revenue, net_revenue, cogs_total, margin_total, status)
+		VALUES ($1, $2, $3, '2026-06-05', 12000, 12000, 9000, 3000, 'locked')
+	`, h.ids.tenantID, h.ids.station1, day); err != nil {
+		t.Fatalf("seed revenue day: %v", err)
+	}
+
+	// Rebuild the projection from posted revenue days.
+	if code, rb := h.invPostJSON(t, "/api/v1/enterprise/projections/rebuild", admin, map[string]any{}); code != http.StatusOK || rb["rows"].(float64) < 1 {
+		t.Fatalf("rebuild projection = %d %v", code, rb)
+	}
+
+	// Overview aggregates the network KPIs.
+	code, ov := h.getJSON(t, "/api/v1/enterprise/overview?from=2026-01-01&to=2026-12-31", admin)
+	if code != http.StatusOK || ov["gross_revenue"] != "12000.00" || ov["margin_total"] != "3000.00" {
+		t.Fatalf("overview = %d %v", code, ov)
+	}
+
+	// Station ranking lists the revenue-bearing station first.
+	code, rank := h.getJSON(t, "/api/v1/enterprise/station-ranking?from=2026-01-01&to=2026-12-31", admin)
+	items, _ := rank["items"].([]any)
+	if code != http.StatusOK || len(items) < 1 {
+		t.Fatalf("ranking = %d %v", code, rank)
+	}
+	if items[0].(map[string]any)["gross_revenue"] != "12000.00" {
+		t.Fatalf("top station gross = %v", items[0])
+	}
+
+	// Rebuild is idempotent (re-running does not double-count).
+	if code, _ := h.invPostJSON(t, "/api/v1/enterprise/projections/rebuild", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("re-rebuild: %d", code)
+	}
+	if code, ov := h.getJSON(t, "/api/v1/enterprise/overview?from=2026-01-01&to=2026-12-31", admin); code != http.StatusOK || ov["gross_revenue"] != "12000.00" {
+		t.Fatalf("overview after re-rebuild = %v", ov)
+	}
+}

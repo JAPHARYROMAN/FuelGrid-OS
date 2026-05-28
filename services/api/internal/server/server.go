@@ -509,6 +509,15 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("approval_request.decide", nil)).
 							Post("/approval-requests/{id}/decide", s.handleDecideApproval)
 
+						// Read models & command dashboards (Stages 4-6).
+						r.With(s.requirePermissionHeld("enterprise.read")).Group(func(r chi.Router) {
+							r.Get("/enterprise/overview", s.handleEnterpriseOverview)
+							r.Get("/enterprise/station-ranking", s.handleStationRanking)
+							r.Get("/enterprise/regions/{id}", s.handleStationRanking)
+						})
+						r.With(s.requirePermission("enterprise_projection.admin", nil)).
+							Post("/enterprise/projections/rebuild", s.handleRebuildProjections)
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

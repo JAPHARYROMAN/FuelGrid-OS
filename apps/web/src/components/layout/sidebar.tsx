@@ -33,6 +33,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { label: 'Command Center', href: '/command-center', icon: LayoutDashboard },
+  { label: 'Enterprise', href: '/enterprise', icon: Building2 },
   { label: 'My Shift', href: '/my-shift', icon: Gauge },
   { label: 'Operations', href: '/operations', icon: ClipboardCheck },
   { label: 'Stations', href: '/stations', icon: Building2 },

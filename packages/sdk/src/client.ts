@@ -4,7 +4,9 @@ import type {
   AccountingExportResult,
   AccountingPeriod,
   ApprovalRequest,
+  EnterpriseOverview,
   StationGroup,
+  StationRank,
   BalanceSheet,
   BankAccount,
   BankDeposit,
@@ -2469,6 +2471,39 @@ export class Client {
       `/api/v1/approval-requests/${encodeURIComponent(id)}/decide`,
       { method: 'POST', body: req, signal },
     );
+  }
+
+  // ----------- Enterprise dashboards (Phase 9) -----------
+
+  getEnterpriseOverview(
+    opts: { from?: string; to?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<EnterpriseOverview> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    const q = qs.toString();
+    return this.request<EnterpriseOverview>(`/api/v1/enterprise/overview${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  getStationRanking(
+    opts: { regionID?: string; from?: string; to?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ items: StationRank[]; count: number }> {
+    const qs = new URLSearchParams();
+    if (opts.regionID) qs.set('region_id', opts.regionID);
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    const q = qs.toString();
+    return this.request(`/api/v1/enterprise/station-ranking${q ? `?${q}` : ''}`, { signal });
+  }
+
+  rebuildEnterpriseProjections(
+    signal?: AbortSignal,
+  ): Promise<{ projection: string; rows: number }> {
+    return this.request('/api/v1/enterprise/projections/rebuild', { method: 'POST', signal });
   }
 
   // ----------- Users -----------

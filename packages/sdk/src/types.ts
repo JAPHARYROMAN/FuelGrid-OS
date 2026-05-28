@@ -898,6 +898,26 @@ export interface ApprovalRequest {
   requested_by: string;
 }
 
+export interface EnterpriseOverview {
+  from: string;
+  to: string;
+  gross_revenue: string;
+  net_revenue: string;
+  margin_total: string;
+  ap_outstanding: string;
+  ar_outstanding: string;
+  open_incidents: number;
+  approvals_waiting: number;
+  projection_rebuilt_at?: string;
+}
+
+export interface StationRank {
+  station_id: string;
+  name: string;
+  gross_revenue: string;
+  margin_total: string;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;
