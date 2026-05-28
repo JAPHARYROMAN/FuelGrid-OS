@@ -41,11 +41,12 @@ type CreateInput struct {
 	OpenedBy          uuid.UUID
 }
 
-// ListFilter narrows the incident queue. Nil fields are ignored.
+// ListFilter narrows the incident queue. Nil/empty fields are ignored.
+// StationIDs, when non-empty, restricts results to those stations.
 type ListFilter struct {
-	StationID *uuid.UUID
-	Status    *string
-	Severity  *string
+	StationIDs []uuid.UUID
+	Status     *string
+	Severity   *string
 }
 
 type Repo struct{ pool *database.Pool }
@@ -73,11 +74,11 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([]In
 		SELECT `+columns+`
 		FROM incidents
 		WHERE tenant_id = $1
-		  AND ($2::uuid IS NULL OR station_id = $2)
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
 		  AND ($3::text IS NULL OR status = $3)
 		  AND ($4::text IS NULL OR severity = $4)
 		ORDER BY opened_at DESC
-	`, tenantID, f.StationID, f.Status, f.Severity)
+	`, tenantID, database.UUIDStrings(f.StationIDs), f.Status, f.Severity)
 	if err != nil {
 		return nil, err
 	}

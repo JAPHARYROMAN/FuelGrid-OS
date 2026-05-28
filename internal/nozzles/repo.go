@@ -71,17 +71,19 @@ func scan(row pgx.Row, n *Nozzle) error {
 	)
 }
 
-// List filters by tenant and, optionally, station and/or pump.
-func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, stationID, pumpID *uuid.UUID) ([]Nozzle, error) {
+// List filters by tenant and, optionally, a set of stations and/or a pump.
+// When stationIDs is non-empty the result is restricted to those stations;
+// nil/empty means no station filter.
+func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, pumpID *uuid.UUID) ([]Nozzle, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT `+columns+`
 		FROM nozzles
 		WHERE tenant_id = $1
-		  AND ($2::uuid IS NULL OR station_id = $2)
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
 		  AND ($3::uuid IS NULL OR pump_id = $3)
 		  AND status <> 'deleted'
 		ORDER BY pump_id, number
-	`, tenantID, stationID, pumpID)
+	`, tenantID, database.UUIDStrings(stationIDs), pumpID)
 	if err != nil {
 		return nil, err
 	}

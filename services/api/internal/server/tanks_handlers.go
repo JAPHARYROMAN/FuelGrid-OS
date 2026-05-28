@@ -76,16 +76,11 @@ func (s *Server) handleListTanks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	var stationID *uuid.UUID
-	if v := r.URL.Query().Get("station_id"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid station_id")
-			return
-		}
-		stationID = &id
+	filter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
 	}
-	rows, err := s.tanks.List(r.Context(), actor.TenantID, stationID)
+	rows, err := s.tanks.List(r.Context(), actor.TenantID, filter)
 	if err != nil {
 		s.logger.Error("list tanks", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -117,6 +112,9 @@ func (s *Server) handleGetTank(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("get tank", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", t.StationID) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toTankDTO(t))

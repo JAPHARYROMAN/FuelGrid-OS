@@ -51,16 +51,11 @@ func (s *Server) handleListPumps(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	var stationID *uuid.UUID
-	if v := r.URL.Query().Get("station_id"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid station_id")
-			return
-		}
-		stationID = &id
+	filter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
 	}
-	rows, err := s.pumps.List(r.Context(), actor.TenantID, stationID)
+	rows, err := s.pumps.List(r.Context(), actor.TenantID, filter)
 	if err != nil {
 		s.logger.Error("list pumps", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -92,6 +87,9 @@ func (s *Server) handleGetPump(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("get pump", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", p.StationID) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toPumpDTO(p))
@@ -386,12 +384,16 @@ func (s *Server) handleListPumpCalibrations(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid pump id")
 		return
 	}
-	if _, err := s.pumps.Get(r.Context(), actor.TenantID, id); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "pump not found")
-			return
-		}
+	pump, err := s.pumps.Get(r.Context(), actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "pump not found")
+		return
+	}
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", pump.StationID) {
 		return
 	}
 	rows, err := s.pumps.ListCalibrations(r.Context(), actor.TenantID, id)

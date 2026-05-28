@@ -43,15 +43,11 @@ func (s *Server) handleListNozzles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	var stationID, pumpID *uuid.UUID
-	if v := r.URL.Query().Get("station_id"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid station_id")
-			return
-		}
-		stationID = &id
+	filter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
 	}
+	var pumpID *uuid.UUID
 	if v := r.URL.Query().Get("pump_id"); v != "" {
 		id, err := uuid.Parse(v)
 		if err != nil {
@@ -60,7 +56,7 @@ func (s *Server) handleListNozzles(w http.ResponseWriter, r *http.Request) {
 		}
 		pumpID = &id
 	}
-	rows, err := s.nozzles.List(r.Context(), actor.TenantID, stationID, pumpID)
+	rows, err := s.nozzles.List(r.Context(), actor.TenantID, filter, pumpID)
 	if err != nil {
 		s.logger.Error("list nozzles", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

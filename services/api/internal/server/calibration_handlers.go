@@ -77,8 +77,11 @@ func (s *Server) handleListCalibrationCharts(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	tankID, _, ok := s.tankForCalibration(w, r, actor)
+	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
 		return
 	}
 	rows, err := s.calibration.ListCharts(r.Context(), actor.TenantID, tankID)
@@ -100,8 +103,11 @@ func (s *Server) handleGetActiveCalibrationChart(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	tankID, _, ok := s.tankForCalibration(w, r, actor)
+	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
 		return
 	}
 	chart, err := s.calibration.ActiveChart(r.Context(), actor.TenantID, tankID)
@@ -133,8 +139,11 @@ func (s *Server) handleCalibratedVolume(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "dip_mm must be a number")
 		return
 	}
-	tankID, _, ok := s.tankForCalibration(w, r, actor)
+	tankID, stationID, ok := s.tankForCalibration(w, r, actor)
 	if !ok {
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
 		return
 	}
 

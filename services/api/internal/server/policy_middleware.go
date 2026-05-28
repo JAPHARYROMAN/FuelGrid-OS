@@ -32,6 +32,71 @@ func stationFromURLParam(param string) stationExtractor {
 	}
 }
 
+// stationScope resolves the actor's read scope for list endpoints. It
+// returns tenantWide=true when the actor sees every station in the tenant
+// (no filter); otherwise stationIDs holds exactly the stations they may
+// read. On a load error it writes the response and returns ok=false.
+//
+// A station-restricted actor (one with user_station_access rows) always has
+// at least one id here, so callers can treat a non-tenant-wide result with
+// an empty set as "no access".
+func (s *Server) stationScope(w http.ResponseWriter, r *http.Request, actor identity.Actor) (tenantWide bool, stationIDs []uuid.UUID, ok bool) {
+	ps, err := s.policy.LoadFor(r.Context(), actor)
+	if err != nil {
+		if errors.Is(err, identity.ErrUnauthenticated) {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return false, nil, false
+		}
+		s.logger.Error("station scope load", "error", err)
+		writeError(w, http.StatusInternalServerError, "authorization error")
+		return false, nil, false
+	}
+	if ps.TenantWide {
+		return true, nil, true
+	}
+	ids := make([]uuid.UUID, 0, len(ps.StationIDs))
+	for id := range ps.StationIDs {
+		ids = append(ids, id)
+	}
+	return false, ids, true
+}
+
+// stationReadFilter turns an optional ?station_id query param plus the
+// actor's scope into the station-id slice to hand a repo's List (nil = no
+// filter / all in tenant). It enforces that a restricted actor can't read a
+// station outside their scope, writing a 403 and returning ok=false.
+func (s *Server) stationReadFilter(w http.ResponseWriter, r *http.Request, actor identity.Actor) (filter []uuid.UUID, ok bool) {
+	tenantWide, scope, scopeOK := s.stationScope(w, r, actor)
+	if !scopeOK {
+		return nil, false
+	}
+	if v := r.URL.Query().Get("station_id"); v != "" {
+		id, err := uuid.Parse(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid station_id")
+			return nil, false
+		}
+		if !tenantWide && !containsUUID(scope, id) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return nil, false
+		}
+		return []uuid.UUID{id}, true
+	}
+	if tenantWide {
+		return nil, true
+	}
+	return scope, true
+}
+
+func containsUUID(ids []uuid.UUID, id uuid.UUID) bool {
+	for _, x := range ids {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
 // authorizeStation runs a station-scoped permission check from inside a
 // handler, for the cases the URL-param middleware can't cover: the station
 // id lives in the request body (create) or on the target row (update /

@@ -54,19 +54,20 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tankRows, err := s.tanks.List(ctx, actor.TenantID, &id)
+	stationFilter := []uuid.UUID{id}
+	tankRows, err := s.tanks.List(ctx, actor.TenantID, stationFilter)
 	if err != nil {
 		s.logger.Error("station overview: tanks", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	pumpRows, err := s.pumps.List(ctx, actor.TenantID, &id)
+	pumpRows, err := s.pumps.List(ctx, actor.TenantID, stationFilter)
 	if err != nil {
 		s.logger.Error("station overview: pumps", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	nozzleRows, err := s.nozzles.List(ctx, actor.TenantID, &id, nil)
+	nozzleRows, err := s.nozzles.List(ctx, actor.TenantID, stationFilter, nil)
 	if err != nil {
 		s.logger.Error("station overview: nozzles", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

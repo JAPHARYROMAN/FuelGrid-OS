@@ -82,26 +82,17 @@ func scan(row pgx.Row, t *Tank) error {
 	)
 }
 
-func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, stationID *uuid.UUID) ([]Tank, error) {
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	if stationID != nil {
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+columns+`
-			FROM tanks
-			WHERE tenant_id = $1 AND station_id = $2 AND status <> 'deleted'
-			ORDER BY code
-		`, tenantID, *stationID)
-	} else {
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+columns+`
-			FROM tanks
-			WHERE tenant_id = $1 AND status <> 'deleted'
-			ORDER BY code
-		`, tenantID)
-	}
+// List returns the tenant's tanks. When stationIDs is non-empty the result
+// is restricted to those stations; nil/empty means no station filter.
+func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID) ([]Tank, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM tanks
+		WHERE tenant_id = $1
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
+		  AND status <> 'deleted'
+		ORDER BY code
+	`, tenantID, database.UUIDStrings(stationIDs))
 	if err != nil {
 		return nil, err
 	}

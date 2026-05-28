@@ -52,15 +52,11 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	var f incidents.ListFilter
-	if v := r.URL.Query().Get("station_id"); v != "" {
-		id, err := uuid.Parse(v)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid station_id")
-			return
-		}
-		f.StationID = &id
+	stationFilter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
 	}
+	f := incidents.ListFilter{StationIDs: stationFilter}
 	if v := r.URL.Query().Get("status"); v != "" {
 		if !incidentStatuses[v] {
 			writeError(w, http.StatusBadRequest, "invalid status filter")
