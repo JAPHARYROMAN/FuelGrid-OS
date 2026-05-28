@@ -424,6 +424,26 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Post("/customer-price-agreements/{id}/cancel", s.handleTransitionPriceAgreement("cancel"))
 						})
 
+						// Fleet identity: vehicles, drivers, credentials (Stages 4-6).
+						r.With(s.requirePermissionHeld("customer.read")).Group(func(r chi.Router) {
+							r.Get("/fleet/vehicles", s.handleListVehicles)
+							r.Get("/fleet/drivers", s.handleListDrivers)
+							r.Get("/fleet/credentials", s.handleListCredentials)
+						})
+						r.With(s.requirePermission("customer.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/fleet/vehicles", s.handleCreateVehicle)
+							r.Post("/fleet/vehicles/{id}/status", s.handleSetVehicleStatus)
+							r.Post("/fleet/drivers", s.handleCreateDriver)
+							r.Post("/fleet/drivers/{id}/status", s.handleSetDriverStatus)
+							r.Post("/fleet/drivers/{id}/reset-pin", s.handleResetDriverPIN)
+						})
+						r.With(s.requirePermission("fuel_credential.issue", nil)).
+							Post("/fleet/credentials", s.handleIssueCredential)
+						r.With(s.requirePermission("fuel_credential.manage", nil)).Group(func(r chi.Router) {
+							r.Post("/fleet/credentials/{id}/status", s.handleSetCredentialStatus)
+							r.Post("/fleet/credentials/validate", s.handleValidateCredential)
+						})
+
 						// Revenue close & dashboard (Phase 6, Stages 7-8).
 						r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
 							r.Post("/stations/{stationID}/revenue-days", s.handleComputeRevenueDay)

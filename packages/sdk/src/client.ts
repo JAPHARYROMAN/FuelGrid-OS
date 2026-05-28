@@ -64,6 +64,10 @@ import type {
   CustomerPayment,
   CustomerPriceAgreement,
   CustomerStatement,
+  CredentialValidation,
+  Driver,
+  FuelCredential,
+  Vehicle,
   Payment,
   RevenueDay,
   RevenueOverview,
@@ -1464,6 +1468,132 @@ export class Client {
       `/api/v1/customer-price-agreements/${encodeURIComponent(id)}/${action}`,
       { method: 'POST', signal },
     );
+  }
+
+  // ----------- Fleet identity (Phase 8) -----------
+
+  listVehicles(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Vehicle>> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request<Paginated<Vehicle>>(`/api/v1/fleet/vehicles${qs}`, { signal });
+  }
+
+  createVehicle(
+    req: {
+      customer_id: string;
+      registration: string;
+      fleet_number?: string;
+      vin?: string;
+      vehicle_type?: string;
+      default_product_id?: string;
+      tank_capacity?: string;
+      odometer_required?: boolean;
+    },
+    signal?: AbortSignal,
+  ): Promise<Vehicle> {
+    return this.request<Vehicle>('/api/v1/fleet/vehicles', { method: 'POST', body: req, signal });
+  }
+
+  setVehicleStatus(id: string, status: string, signal?: AbortSignal): Promise<Vehicle> {
+    return this.request<Vehicle>(`/api/v1/fleet/vehicles/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: { status },
+      signal,
+    });
+  }
+
+  listDrivers(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Driver>> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request<Paginated<Driver>>(`/api/v1/fleet/drivers${qs}`, { signal });
+  }
+
+  createDriver(
+    req: {
+      customer_id: string;
+      name: string;
+      phone?: string;
+      license_number?: string;
+      pin?: string;
+      allowed_product_ids?: string[];
+      assignment_rule?: 'any' | 'assigned' | 'primary';
+    },
+    signal?: AbortSignal,
+  ): Promise<Driver> {
+    return this.request<Driver>('/api/v1/fleet/drivers', { method: 'POST', body: req, signal });
+  }
+
+  setDriverStatus(id: string, status: string, signal?: AbortSignal): Promise<Driver> {
+    return this.request<Driver>(`/api/v1/fleet/drivers/${encodeURIComponent(id)}/status`, {
+      method: 'POST',
+      body: { status },
+      signal,
+    });
+  }
+
+  resetDriverPIN(
+    id: string,
+    pin: string,
+    signal?: AbortSignal,
+  ): Promise<{ driver_id: string; pin_set: boolean }> {
+    return this.request(`/api/v1/fleet/drivers/${encodeURIComponent(id)}/reset-pin`, {
+      method: 'POST',
+      body: { pin },
+      signal,
+    });
+  }
+
+  listFuelCredentials(
+    opts: { customerID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<FuelCredential>> {
+    const qs = opts.customerID ? `?customer_id=${encodeURIComponent(opts.customerID)}` : '';
+    return this.request<Paginated<FuelCredential>>(`/api/v1/fleet/credentials${qs}`, { signal });
+  }
+
+  issueFuelCredential(
+    req: {
+      customer_id: string;
+      vehicle_id?: string;
+      driver_id?: string;
+      credential_type: 'card' | 'qr' | 'rfid' | 'manual_code';
+      token: string;
+      expiry_date?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<FuelCredential> {
+    return this.request<FuelCredential>('/api/v1/fleet/credentials', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  setFuelCredentialStatus(
+    id: string,
+    status: string,
+    signal?: AbortSignal,
+  ): Promise<FuelCredential> {
+    return this.request<FuelCredential>(
+      `/api/v1/fleet/credentials/${encodeURIComponent(id)}/status`,
+      {
+        method: 'POST',
+        body: { status },
+        signal,
+      },
+    );
+  }
+
+  validateFuelCredential(token: string, signal?: AbortSignal): Promise<CredentialValidation> {
+    return this.request<CredentialValidation>('/api/v1/fleet/credentials/validate', {
+      method: 'POST',
+      body: { token },
+      signal,
+    });
   }
 
   // ----------- Revenue close & dashboard (Phase 6) -----------

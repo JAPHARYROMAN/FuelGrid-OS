@@ -774,6 +774,49 @@ export interface CustomerPriceAgreement {
   version: number;
 }
 
+export interface Vehicle {
+  id: string;
+  customer_id: string;
+  registration: string;
+  fleet_number?: string;
+  vin?: string;
+  vehicle_type?: string;
+  default_product_id?: string;
+  tank_capacity?: string;
+  odometer_required: boolean;
+  status: string;
+}
+
+export interface Driver {
+  id: string;
+  customer_id: string;
+  name: string;
+  phone?: string;
+  license_number?: string;
+  has_pin: boolean;
+  status: string;
+  allowed_product_ids: string[];
+  assignment_rule: string;
+}
+
+export interface FuelCredential {
+  id: string;
+  customer_id: string;
+  vehicle_id?: string;
+  driver_id?: string;
+  credential_type: string;
+  masked_label: string;
+  status: string;
+  issued_at: string;
+  expiry_date?: string;
+}
+
+export interface CredentialValidation extends FuelCredential {
+  customer_name: string;
+  expired: boolean;
+  usable: boolean;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;

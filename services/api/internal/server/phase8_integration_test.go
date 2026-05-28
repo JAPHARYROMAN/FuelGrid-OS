@@ -90,3 +90,71 @@ func TestPhase8_CreditFoundation(t *testing.T) {
 		t.Fatalf("list agreements = %v", list)
 	}
 }
+
+// TestPhase8_FleetIdentity covers Category B: vehicles, drivers (with PIN), and
+// fuel credentials with tokenized storage and a forecourt validation endpoint.
+func TestPhase8_FleetIdentity(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin, map[string]any{"code": "HAULCO", "name": "Haul Co"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d", code)
+	}
+	custID := cust["id"].(string)
+
+	// Vehicle.
+	code, veh := h.invPostJSON(t, "/api/v1/fleet/vehicles", admin, map[string]any{
+		"customer_id": custID, "registration": "T123ABC", "vehicle_type": "truck",
+		"default_product_id": h.ids.agoProduct.String(), "odometer_required": true,
+	})
+	if code != http.StatusCreated || veh["odometer_required"] != true {
+		t.Fatalf("create vehicle = %d %v", code, veh)
+	}
+	vehID := veh["id"].(string)
+	if code, _ := h.invPostJSON(t, "/api/v1/fleet/vehicles/"+vehID+"/status", admin, map[string]any{"status": "on_hold"}); code != http.StatusOK {
+		t.Fatalf("vehicle status: %d", code)
+	}
+
+	// Driver with a PIN.
+	code, drv := h.invPostJSON(t, "/api/v1/fleet/drivers", admin, map[string]any{
+		"customer_id": custID, "name": "Sam Driver", "pin": "4821",
+	})
+	if code != http.StatusCreated || drv["has_pin"] != true {
+		t.Fatalf("create driver = %d %v", code, drv)
+	}
+	drvID := drv["id"].(string)
+	if code, _ := h.invPostJSON(t, "/api/v1/fleet/drivers/"+drvID+"/reset-pin", admin, map[string]any{"pin": "9999"}); code != http.StatusOK {
+		t.Fatalf("reset pin: %d", code)
+	}
+
+	// Credential: issue a QR token, masked to its last 4.
+	code, cred := h.invPostJSON(t, "/api/v1/fleet/credentials", admin, map[string]any{
+		"customer_id": custID, "vehicle_id": vehID, "credential_type": "qr", "token": "QR-HAUL-1234",
+	})
+	if code != http.StatusCreated || cred["masked_label"] != "****1234" || cred["status"] != "active" {
+		t.Fatalf("issue credential = %d %v", code, cred)
+	}
+	credID := cred["id"].(string)
+
+	// Validation resolves the raw token to its customer context and is usable.
+	code, val := h.invPostJSON(t, "/api/v1/fleet/credentials/validate", admin, map[string]any{"token": "QR-HAUL-1234"})
+	if code != http.StatusOK || !val["usable"].(bool) || val["customer_name"] != "Haul Co" {
+		t.Fatalf("validate credential = %d %v", code, val)
+	}
+
+	// Suspending the credential makes it unusable.
+	if code, _ := h.invPostJSON(t, "/api/v1/fleet/credentials/"+credID+"/status", admin, map[string]any{"status": "suspended"}); code != http.StatusOK {
+		t.Fatalf("suspend credential: %d", code)
+	}
+	if code, val := h.invPostJSON(t, "/api/v1/fleet/credentials/validate", admin, map[string]any{"token": "QR-HAUL-1234"}); code != http.StatusOK || val["usable"].(bool) {
+		t.Fatalf("validate after suspend = %d %v", code, val)
+	}
+
+	// An unknown token is rejected.
+	if code, _ := h.invPostJSON(t, "/api/v1/fleet/credentials/validate", admin, map[string]any{"token": "NOPE-0000"}); code != http.StatusNotFound {
+		t.Fatalf("validate unknown: %d, want 404", code)
+	}
+}
