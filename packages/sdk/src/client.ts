@@ -18,6 +18,7 @@ import type {
   Role,
   Session,
   Station,
+  StationOverview,
   Tank,
   UserSummary,
 } from './types';
@@ -296,6 +297,13 @@ export class Client {
     return this.request<Station>(`/api/v1/stations/${encodeURIComponent(stationID)}`, {
       signal,
     });
+  }
+
+  getStationOverview(stationID: string, signal?: AbortSignal): Promise<StationOverview> {
+    return this.request<StationOverview>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/overview`,
+      { signal },
+    );
   }
 
   createStation(

@@ -18,10 +18,12 @@ export type {
   Product,
   Pump,
   PumpCalibration,
+  PumpWithNozzles,
   Region,
   Role,
   Session,
   Station,
+  StationOverview,
   Tank,
   UserSummary,
 } from './types';

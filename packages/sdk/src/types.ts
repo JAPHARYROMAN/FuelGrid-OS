@@ -188,6 +188,17 @@ export interface Incident {
   resolved_by?: string;
 }
 
+export interface PumpWithNozzles extends Pump {
+  nozzles: Nozzle[];
+}
+
+export interface StationOverview {
+  station: Station;
+  tanks: Tank[];
+  pumps: PumpWithNozzles[];
+  open_incidents: Incident[];
+}
+
 export interface UserSummary {
   id: string;
   email: string;

@@ -139,15 +139,15 @@ The daily operator UX. Read-only views aimed at station managers / supervisors, 
 
 **Goal:** A station manager opens `/stations/{id}` and sees their physical inventory at a glance — every tank, every pump, every nozzle, every active incident.
 
-- [ ] Replace the Stage-5 placeholder `GET /api/v1/stations/{id}` page (currently just JSON) with a real operational dashboard route at `/stations/{id}`
-- [ ] Backend: `GET /api/v1/stations/{id}/overview` — single endpoint that returns the station + its tanks + its pumps (each with nested nozzles) + open incidents. Avoids N+1 from the frontend.
-- [ ] Frontend route `/stations/{stationID}` with three regions:
+- [x] Replace the Stage-5 placeholder `GET /api/v1/stations/{id}` page (currently just JSON) with a real operational dashboard route at `/stations/{id}`
+- [x] Backend: `GET /api/v1/stations/{id}/overview` — single endpoint that returns the station + its tanks + its pumps (each with nested nozzles) + open incidents. Avoids N+1 from the frontend.
+- [x] Frontend route `/stations/{stationID}` with three regions:
   - **Tanks strip** — one card per tank (product color stripe + capacity)
   - **Pumps strip** — one card per pump, expandable to nozzles
   - **Open incidents** — table with severity badges
-- [ ] Sidebar's "Stations" entry already exists; wire the click target to this page (currently 404)
-- [ ] Permission gate: `station.read` for the station the user is hitting
-- [ ] Empty states for "no tanks yet", "no pumps yet" with deep links to the relevant admin pages
+- [x] Sidebar's "Stations" entry already exists; wire the click target to this page (currently 404) — added a `/stations` list that links to each dashboard
+- [x] Permission gate: `station.read` for the station the user is hitting
+- [x] Empty states for "no tanks yet", "no pumps yet" with deep links to the relevant admin pages
 
 **Done when:** `/stations/MIK-01` renders all seeded tanks + pumps + nozzles correctly wired; a forbidden-station id returns 403 via the existing policy middleware.
 

@@ -94,6 +94,32 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([]In
 	return out, rows.Err()
 }
 
+// ListActiveForStation returns a station's unresolved incidents (anything
+// not yet resolved or closed), newest first — the set the station dashboard
+// surfaces.
+func (r *Repo) ListActiveForStation(ctx context.Context, tenantID, stationID uuid.UUID) ([]Incident, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM incidents
+		WHERE tenant_id = $1 AND station_id = $2 AND status NOT IN ('resolved', 'closed')
+		ORDER BY opened_at DESC
+	`, tenantID, stationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Incident
+	for rows.Next() {
+		var i Incident
+		if err := scan(rows, &i); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Incident, error) {
 	var i Incident
 	if err := scan(r.pool.QueryRow(ctx, `
