@@ -253,12 +253,6 @@ func (s *Server) handleDeleteProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	tx, err := s.deps.DB.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	before, err := s.products.Get(ctx, actor.TenantID, id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -269,6 +263,22 @@ func (s *Server) handleDeleteProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+
+	// Don't orphan tanks: a product still bound to live tanks can't be deleted.
+	if n, err := s.tanks.CountActiveForProduct(ctx, actor.TenantID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if n > 0 {
+		writeError(w, http.StatusConflict, "product is in use by tanks; remove or reassign them first")
+		return
+	}
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := s.products.SoftDelete(ctx, tx, actor.TenantID, id); err != nil {
 		if errors.Is(err, products.ErrNotFound) {

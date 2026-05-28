@@ -171,6 +171,17 @@ func (r *Repo) Update(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in
 	return &t, nil
 }
 
+// CountActiveForProduct counts non-deleted tanks bound to a product — used
+// to block soft-deleting a product that tanks still reference.
+func (r *Repo) CountActiveForProduct(ctx context.Context, tenantID, productID uuid.UUID) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT count(*) FROM tanks
+		WHERE tenant_id = $1 AND product_id = $2 AND status <> 'deleted'
+	`, tenantID, productID).Scan(&n)
+	return n, err
+}
+
 func (r *Repo) SoftDelete(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE tanks SET status = 'deleted'

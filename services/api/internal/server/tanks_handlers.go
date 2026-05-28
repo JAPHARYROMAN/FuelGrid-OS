@@ -378,6 +378,16 @@ func (s *Server) handleDeleteTank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Don't orphan nozzles: a tank still feeding live nozzles can't be
+	// deleted. (Calibration charts are pure history and don't block.)
+	if n, err := s.nozzles.CountActiveForTank(ctx, actor.TenantID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if n > 0 {
+		writeError(w, http.StatusConflict, "tank feeds live nozzles; remove them first")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

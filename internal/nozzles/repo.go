@@ -153,6 +153,17 @@ func (r *Repo) Update(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in
 	return &n, nil
 }
 
+// CountActiveForTank counts non-deleted nozzles drawing from a tank — used
+// to block soft-deleting a tank that nozzles still reference.
+func (r *Repo) CountActiveForTank(ctx context.Context, tenantID, tankID uuid.UUID) (int, error) {
+	var n int
+	err := r.pool.QueryRow(ctx, `
+		SELECT count(*) FROM nozzles
+		WHERE tenant_id = $1 AND tank_id = $2 AND status <> 'deleted'
+	`, tenantID, tankID).Scan(&n)
+	return n, err
+}
+
 func (r *Repo) SoftDelete(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE nozzles SET status = 'deleted'
