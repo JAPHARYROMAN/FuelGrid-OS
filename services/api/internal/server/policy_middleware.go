@@ -18,6 +18,8 @@ type stationExtractor func(*http.Request) (*uuid.UUID, error)
 // stationFromURLParam extracts a station id from the named chi URL param.
 // Returns (nil, nil) when the param is missing so callers can layer this
 // over routes where station id is optional.
+//
+//nolint:unparam // param is "stationID" for every current caller but the extractor is intentionally generic over the URL param name.
 func stationFromURLParam(param string) stationExtractor {
 	return func(r *http.Request) (*uuid.UUID, error) {
 		raw := chi.URLParam(r, param)

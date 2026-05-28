@@ -23,6 +23,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/incidents"
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
+	"github.com/japharyroman/fuelgrid-os/internal/operations"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
 	"github.com/japharyroman/fuelgrid-os/internal/pumps"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
@@ -62,6 +63,7 @@ type Server struct {
 	nozzles     *nozzles.Repo
 	calibration *calibration.Repo
 	incidents   *incidents.Repo
+	operations  *operations.Repo
 	userRepo    *repo.UserRepo
 	sessionRepo *repo.SessionRepo
 
@@ -92,6 +94,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.nozzles = nozzles.New(deps.DB)
 		s.calibration = calibration.New(deps.DB)
 		s.incidents = incidents.New(deps.DB)
+		s.operations = operations.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
@@ -264,6 +267,18 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							Get("/incidents", s.handleListIncidents)
 						r.Post("/incidents", s.handleCreateIncident)
 						r.Patch("/incidents/{id}/status", s.handleUpdateIncidentStatus)
+
+						// Operating days (Phase 3, Stage 1). Open/list are
+						// station-nested and gated by the URL station; close/lock
+						// are id-based and authorized in-handler against the day's
+						// station (operations.manage_day).
+						r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+							Get("/stations/{stationID}/operating-days", s.handleListOperatingDays)
+						r.With(s.requirePermission("operations.manage_day", stationFromURLParam("stationID"))).
+							Post("/stations/{stationID}/operating-days", s.handleOpenOperatingDay)
+						r.Get("/operating-days/{id}", s.handleGetOperatingDay)
+						r.Patch("/operating-days/{id}/status", s.handleUpdateOperatingDayStatus)
+						r.Patch("/operating-days/{id}/lock", s.handleLockOperatingDay)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)

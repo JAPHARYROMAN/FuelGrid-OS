@@ -293,6 +293,15 @@ func run() error {
 		return err
 	}
 
+	// An open operating day for MIK-01 on today's date, so Phase-3 shift
+	// flows have a day to hang off out of the box.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
+		VALUES ($1, $2, CURRENT_DATE, $3)
+	`, tenantID, station1ID, adminUserID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -310,6 +319,7 @@ func run() error {
 		"tanks", "MIK-01: T1(PMS), T2(AGO); MSA-01: T1(PMS)",
 		"pumps", "MIK-01: Pump 1 (2x PMS), Pump 2 (2x AGO)",
 		"calibration", "MIK-01 PMS tank: 51-point chart (0..3000mm)",
+		"operating_day", "MIK-01: open for today",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

@@ -10,6 +10,7 @@ import type {
   Me,
   MePermissions,
   Nozzle,
+  OperatingDay,
   Paginated,
   Product,
   Pump,
@@ -608,6 +609,53 @@ export class Client {
     return this.request<Incident>(`/api/v1/incidents/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
       body: { status },
+      signal,
+    });
+  }
+
+  // ----------- Operating days -----------
+
+  listOperatingDays(stationID: string, signal?: AbortSignal): Promise<Paginated<OperatingDay>> {
+    return this.request<Paginated<OperatingDay>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/operating-days`,
+      { signal },
+    );
+  }
+
+  getOperatingDay(id: string, signal?: AbortSignal): Promise<OperatingDay> {
+    return this.request<OperatingDay>(`/api/v1/operating-days/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  openOperatingDay(
+    stationID: string,
+    req: { business_date?: string; notes?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<OperatingDay> {
+    return this.request<OperatingDay>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/operating-days`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  updateOperatingDayStatus(
+    id: string,
+    status: string,
+    reason?: string,
+    signal?: AbortSignal,
+  ): Promise<OperatingDay> {
+    return this.request<OperatingDay>(`/api/v1/operating-days/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      body: { status, reason },
+      signal,
+    });
+  }
+
+  lockOperatingDay(id: string, reason?: string, signal?: AbortSignal): Promise<OperatingDay> {
+    return this.request<OperatingDay>(`/api/v1/operating-days/${encodeURIComponent(id)}/lock`, {
+      method: 'PATCH',
+      body: { reason },
       signal,
     });
   }

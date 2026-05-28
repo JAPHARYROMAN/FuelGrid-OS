@@ -41,16 +41,16 @@ The temporal skeleton: when work happens. Pure lifecycle + assignment; no readin
 
 **Goal:** A station's work is bucketed into operating days that can be opened, closed, and locked, so every later record (shift, reading, cash) hangs off a known business date.
 
-- [ ] Migration `0014_operating_days`: `operating_days` (id, tenant_id, station_id, business_date, status, opened_by, opened_at, closed_by, closed_at, locked_by, locked_at, notes, timestamps)
-- [ ] CHECK: `status IN ('open', 'closed', 'locked')`; partial unique index — at most one non-locked day per `(station_id, business_date)`
-- [ ] Composite tenant FKs to `stations` and `users`; expose `uq_operating_days_tenant_id (tenant_id, id)` as the FK target for shifts
-- [ ] Permission `operations.manage_day` (station-scoped) — open/close/lock a day. Reuses `period.lock` semantics for the final lock.
-- [ ] Repo + handlers + SDK: list (filter by station/date range), get, open, `PATCH …/status` (close), `PATCH …/lock`
-- [ ] Guard: a day can't be **closed** while it has open shifts; can't be **locked** until every shift is approved
-- [ ] Audit + outbox: `operating_day.opened`, `operating_day.closed`, `operating_day.locked`
-- [ ] Seed: an `open` operating day for `MIK-01` on the demo tenant's "today"
+- [x] Migration `0014_operating_days`: `operating_days` (id, tenant_id, station_id, business_date, status, opened_by, opened_at, closed_by, closed_at, locked_by, locked_at, notes, timestamps)
+- [x] CHECK: `status IN ('open', 'closed', 'locked')`; partial unique index — at most one non-locked day per `(station_id, business_date)`
+- [x] Composite tenant FKs to `stations` and `users`; expose `uq_operating_days_tenant_id (tenant_id, id)` as the FK target for shifts
+- [x] Permission `operations.manage_day` (station-scoped) — open/close/lock a day.
+- [x] Repo + handlers + SDK: list, get, open, `PATCH …/status` (close/reopen), `PATCH …/lock`
+- [ ] Guard: a day can't be **closed** while it has open shifts; can't be **locked** until every shift is approved *(deferred to Stage 2 — needs the shifts table; lifecycle transitions + locked-terminal enforced now)*
+- [x] Audit + outbox: `operating_day.opened`, `operating_day.closed`, `operating_day.locked`
+- [x] Seed: an `open` operating day for `MIK-01` on the demo tenant's "today"
 
-**Done when:** `POST /api/v1/stations/{id}/operating-days` opens a day; closing it is rejected (409) while a shift is open, and locking is rejected until all shifts are approved.
+**Done when:** `POST /api/v1/stations/{id}/operating-days` opens a day; closing it is rejected (409) while a shift is open, and locking is rejected until all shifts are approved. *(Day open/close/lock + locked-terminal verified live; the shift-dependent guards land in Stage 2.)*
 
 ---
 

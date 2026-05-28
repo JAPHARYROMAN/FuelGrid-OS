@@ -199,6 +199,21 @@ export interface StationOverview {
   open_incidents: Incident[];
 }
 
+export interface OperatingDay {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  business_date: string;
+  status: string;
+  opened_by: string;
+  opened_at: string;
+  closed_by?: string;
+  closed_at?: string;
+  locked_by?: string;
+  locked_at?: string;
+  notes?: string;
+}
+
 export interface UserSummary {
   id: string;
   email: string;

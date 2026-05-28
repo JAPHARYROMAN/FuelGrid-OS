@@ -13,6 +13,7 @@ export type {
   Me,
   MePermissions,
   Nozzle,
+  OperatingDay,
   Paginated,
   PermissionItem,
   Product,
