@@ -13,6 +13,7 @@ package server_test
 
 import (
 	"context"
+	"net/http"
 	"net/url"
 	"os"
 	"testing"
@@ -242,4 +243,30 @@ func TestRLS_PoolWrapperScoping(t *testing.T) {
 		t.Fatalf("unscoped wrapper sees %d companies, want 0 (RLS must fail closed)", u)
 	}
 }
+
+// TestRLS_EndToEndRequestScoping boots the full API with RLS enforced (the
+// fuelgrid_app app pool) and checks the real HTTP path: an authenticated admin
+// reads their OWN tenant's data normally. This is the catastrophic-failure
+// detector — if requireAuth failed to set app.current_tenant on the request
+// connection, RLS would return zero rows and this read would come back empty.
+func TestRLS_EndToEndRequestScoping(t *testing.T) {
+	h, cleanup := setupHarnessRLS(t, true)
+	defer cleanup()
+	ctx := context.Background()
+
+	var slug string
+	if err := h.pool.QueryRow(ctx, `SELECT slug FROM tenants WHERE id = $1`, h.ids.tenantID).Scan(&slug); err != nil {
+		t.Fatalf("tenant slug: %v", err)
+	}
+	admin := h.login(t, slug, h.ids.adminEmail)
+
+	code, body := h.getJSON(t, "/api/v1/stations", admin)
+	if code != http.StatusOK {
+		t.Fatalf("GET /stations under enforced RLS = %d, want 200", code)
+	}
+	if n, _ := body["count"].(float64); n < 1 {
+		t.Fatalf("RLS-on returned %v stations for the actor's own tenant — the request connection was not tenant-scoped", body["count"])
+	}
+}
+
 

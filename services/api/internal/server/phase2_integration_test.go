@@ -67,6 +67,13 @@ type harness struct {
 }
 
 func setupHarness(t *testing.T) (*harness, func()) {
+	return setupHarnessRLS(t, false)
+}
+
+// setupHarnessRLS is setupHarness with an option to connect request-scoped
+// queries as the non-owner fuelgrid_app role, so Postgres RLS is enforced
+// end-to-end through the real HTTP middleware (DATABASE_APP_URL behaviour).
+func setupHarnessRLS(t *testing.T, enableRLS bool) (*harness, func()) {
 	t.Helper()
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	redisURL := os.Getenv("TEST_REDIS_URL")
@@ -111,8 +118,32 @@ func setupHarness(t *testing.T) (*harness, func()) {
 		Env: "development", Host: "127.0.0.1", Port: port,
 		CORSOrigins: []string{"http://localhost:3000"}, ShutdownTimeout: 5 * time.Second,
 	}
+	var appDB *database.Pool
+	appClose := func() {}
+	if enableRLS {
+		if _, err := pool.Exec(ctx, `ALTER ROLE fuelgrid_app WITH LOGIN PASSWORD 'fuelgrid_app'`); err != nil {
+			pool.Close()
+			_ = redis.Close()
+			t.Fatalf("ensure fuelgrid_app password: %v", err)
+		}
+		appURL, aerr := appRoleURL(dbURL)
+		if aerr != nil {
+			pool.Close()
+			_ = redis.Close()
+			t.Fatalf("app url: %v", aerr)
+		}
+		ap, aerr := database.Connect(ctx, database.Config{URL: appURL})
+		if aerr != nil {
+			pool.Close()
+			_ = redis.Close()
+			t.Fatalf("app pool (fuelgrid_app): %v", aerr)
+		}
+		appDB = ap
+		appClose = ap.Close
+	}
+
 	srv := server.New(cfg, logger, server.Deps{
-		DB: pool, Redis: redis, Identity: identitySvc,
+		DB: pool, AppDB: appDB, Redis: redis, Identity: identitySvc,
 		Policy: policy.NewService(policy.NewDBLoader(pool)), Metrics: observability.NewMetrics(),
 	})
 	go func() { _ = srv.Start() }()
@@ -126,6 +157,7 @@ func setupHarness(t *testing.T) (*harness, func()) {
 		_ = srv.Shutdown(shutdownCtx)
 		cleanupTenant(ctx, pool, ids.tenantID)
 		_ = redis.Close()
+		appClose()
 		pool.Close()
 	}
 	return &harness{baseURL: base, pool: pool, ids: ids}, cleanup
