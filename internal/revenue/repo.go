@@ -106,6 +106,7 @@ func (r *Repo) RecognizeShiftSales(ctx context.Context, tx pgx.Tx, tenantID, shi
 		        FROM stock_movements sm
 		        WHERE sm.tenant_id = cl.tenant_id AND sm.tank_id = n.tank_id
 		          AND sm.movement_type = 'delivery' AND sm.landed_cost_per_litre IS NOT NULL AND sm.litres > 0
+		          AND sm.status = 'posted' AND sm.supersedes_id IS NULL
 		    ) cost ON true
 		    WHERE cl.tenant_id = $1 AND cl.shift_id = $2 AND cl.litres_sold <> 0
 		      AND price.unit_price IS NOT NULL
@@ -193,6 +194,7 @@ func (r *Repo) InventoryValuation(ctx context.Context, tenantID, stationID uuid.
 		    FROM stock_movements d
 		    WHERE d.tenant_id = t.tenant_id AND d.tank_id = t.id
 		      AND d.movement_type = 'delivery' AND d.landed_cost_per_litre IS NOT NULL AND d.litres > 0
+		      AND d.status = 'posted' AND d.supersedes_id IS NULL
 		) cost ON true
 		WHERE t.tenant_id = $1 AND t.station_id = $2 AND t.status <> 'deleted'
 		GROUP BY t.id, t.code, t.name, t.product_id, cost.avg_cost

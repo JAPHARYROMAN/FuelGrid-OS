@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 )
@@ -20,8 +21,10 @@ type Bus interface {
 	// special wildcard "*" matches every event type — useful for audit
 	// sinks, metrics, and tracing fan-out.
 	Subscribe(eventType string, h Handler)
-	// Publish dispatches an event to every matching handler. Errors from
-	// individual handlers are logged; Publish itself never errors today.
+	// Publish dispatches an event to every matching handler. If any handler
+	// fails, Publish returns a non-nil (joined) error so a durable caller
+	// (the outbox publisher) leaves the event unpublished and retries it.
+	// Delivery is therefore at-least-once: handlers must be idempotent.
 	Publish(ctx context.Context, e Event) error
 }
 
@@ -52,12 +55,17 @@ func (b *InProcessBus) Subscribe(eventType string, h Handler) {
 }
 
 // Publish runs every matching handler in series under the caller's context.
+// Every handler runs even if an earlier one fails; the errors are joined
+// and returned so the durable outbox publisher will not mark the event
+// published and will retry it on the next tick. Because all handlers re-run
+// on retry, handlers must be idempotent.
 func (b *InProcessBus) Publish(ctx context.Context, e Event) error {
 	b.mu.RLock()
 	hs := append([]Handler{}, b.handlers[e.Type]...)
 	hs = append(hs, b.handlers["*"]...)
 	b.mu.RUnlock()
 
+	var errs []error
 	for _, h := range hs {
 		if err := h(ctx, e); err != nil {
 			b.logger.Error("event handler failed",
@@ -65,7 +73,8 @@ func (b *InProcessBus) Publish(ctx context.Context, e Event) error {
 				"event_id", e.ID,
 				"error", err,
 			)
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

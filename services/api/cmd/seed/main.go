@@ -70,6 +70,16 @@ func run() error {
 	adminPassword := envOr("DEMO_ADMIN_PASSWORD", defaultAdminPassword)
 	pepper := os.Getenv("AUTH_PASSWORD_PEPPER")
 
+	// Backdoor guard: outside development, refuse to provision accounts with
+	// the well-known default passwords. Seeding demo data into production is
+	// discouraged; if you must, supply explicit secrets via DEMO_USER_PASSWORD
+	// and DEMO_ADMIN_PASSWORD so no known-password account is ever created.
+	if envOr("NODE_ENV", "development") != "development" {
+		if userPassword == defaultUserPassword || adminPassword == defaultAdminPassword {
+			return errors.New("refusing to seed default demo passwords outside development: set DEMO_USER_PASSWORD and DEMO_ADMIN_PASSWORD to non-default values (and prefer not seeding demo data in production at all)")
+		}
+	}
+
 	hasher := password.New(password.DefaultParams, pepper)
 	passwordHash, err := hasher.Hash(userPassword)
 	if err != nil {
@@ -109,7 +119,7 @@ func run() error {
 	}
 
 	var tenantID, companyID, regionID, station1ID, station2ID, userID, roleID string
-	var adminUserID, adminRoleID string
+	var adminUserID, adminRoleID, supplierID, purchaseOrderID string
 
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO tenants (name, slug)
@@ -293,6 +303,44 @@ func run() error {
 		return err
 	}
 
+	// Phase 5 procurement seed: one active supplier with product coverage and
+	// one confirmed PMS purchase order for MIK-01, ready for receiving.
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO suppliers
+		    (tenant_id, code, name, contact_name, contact_email, contact_phone, payment_terms_days)
+		VALUES ($1, 'ORYX', 'Oryx Energies', 'Depot Desk', 'supply@oryx.local', '+255700000000', 14)
+		RETURNING id
+	`, tenantID).Scan(&supplierID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO supplier_products (tenant_id, supplier_id, product_id)
+		SELECT $1, $2, p.id
+		FROM products p
+		WHERE p.tenant_id = $1 AND p.code IN ('PMS', 'AGO')
+	`, tenantID, supplierID); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO purchase_orders
+		    (tenant_id, station_id, supplier_id, expected_delivery_date,
+		     status, raised_by, submitted_by, submitted_at, confirmed_by, confirmed_at, notes)
+		VALUES ($1, $2, $3, CURRENT_DATE + INTERVAL '1 day',
+		        'confirmed', $4, $4, now(), $4, now(), 'Seeded PMS replenishment')
+		RETURNING id
+	`, tenantID, station1ID, supplierID, adminUserID).Scan(&purchaseOrderID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO purchase_order_lines
+		    (tenant_id, purchase_order_id, product_id, ordered_litres, unit_price)
+		SELECT $1, $2, p.id, 10000.000, 2500.00
+		FROM products p
+		WHERE p.tenant_id = $1 AND p.code = 'PMS'
+	`, tenantID, purchaseOrderID); err != nil {
+		return err
+	}
+
 	// An open operating day for MIK-01 on today's date, so Phase-3 shift
 	// flows have a day to hang off out of the box.
 	var operatingDayID string
@@ -319,11 +367,11 @@ func run() error {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO shift_nozzle_assignments (tenant_id, shift_id, nozzle_id, attendant_id, assigned_by)
-		SELECT $1, $2, n.id, $3, $4
+		INSERT INTO shift_nozzle_assignments (tenant_id, station_id, shift_id, nozzle_id, attendant_id, assigned_by)
+		SELECT $1, $6, $2, n.id, $3, $4
 		FROM nozzles n
 		WHERE n.tenant_id = $1 AND n.pump_id = $5
-	`, tenantID, shiftID, userID, adminUserID, pump1ID); err != nil {
+	`, tenantID, shiftID, userID, adminUserID, pump1ID, station1ID); err != nil {
 		return err
 	}
 
@@ -365,6 +413,8 @@ func run() error {
 		"station2_id", station2ID,
 		"station2_code", "MSA-01",
 		"products", "PMS, AGO, KERO",
+		"supplier_id", supplierID,
+		"purchase_order_id", purchaseOrderID,
 		"tanks", "MIK-01: T1(PMS), T2(AGO); MSA-01: T1(PMS)",
 		"pumps", "MIK-01: Pump 1 (2x PMS), Pump 2 (2x AGO)",
 		"calibration", "MIK-01 PMS tank: 51-point chart (0..3000mm)",

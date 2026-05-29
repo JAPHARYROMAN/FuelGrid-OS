@@ -179,7 +179,8 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 	// that boot a thin API to hit /healthz).
 	if deps.DB != nil && deps.Redis != nil {
 		if cfg.AuthPasswordPepper == "" && cfg.Env != "development" {
-			logger.Warn("AUTH_PASSWORD_PEPPER is unset — production deployments must set this from a secret store")
+			cleanup()
+			return deps, nil, errors.New("AUTH_PASSWORD_PEPPER must be set outside development — load it from a secret store; refusing to start with an empty pepper")
 		}
 		hasher := password.New(password.DefaultParams, cfg.AuthPasswordPepper)
 		store := session.NewRedisStore(deps.Redis, "session:")

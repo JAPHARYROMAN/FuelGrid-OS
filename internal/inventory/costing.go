@@ -20,6 +20,7 @@ func (r *Repo) MovingAverageCost(ctx context.Context, q database.Querier, tenant
 		FROM stock_movements
 		WHERE tenant_id = $1 AND tank_id = $2 AND movement_type = 'delivery'
 		  AND landed_cost_per_litre IS NOT NULL AND litres > 0
+		  AND status = 'posted' AND supersedes_id IS NULL
 	`, tenantID, tankID).Scan(&v); err != nil {
 		return "", false, err
 	}
@@ -40,6 +41,7 @@ func (r *Repo) AverageLandedCostForStationProduct(ctx context.Context, tenantID,
 		JOIN tanks t ON t.id = sm.tank_id AND t.tenant_id = sm.tenant_id
 		WHERE sm.tenant_id = $1 AND t.station_id = $2 AND t.product_id = $3
 		  AND sm.movement_type = 'delivery' AND sm.landed_cost_per_litre IS NOT NULL AND sm.litres > 0
+		  AND sm.status = 'posted' AND sm.supersedes_id IS NULL
 	`, tenantID, stationID, productID).Scan(&v); err != nil {
 		return "", false, err
 	}
