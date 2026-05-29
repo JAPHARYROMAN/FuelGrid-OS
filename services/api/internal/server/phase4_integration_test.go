@@ -486,9 +486,10 @@ func TestPhase4_Reconciliation(t *testing.T) {
 		t.Fatalf("approve shift1: %d %s", code, raw)
 	}
 
-	// Preview computes book vs physical without persisting.
+	// Preview computes book vs physical without persisting. Figures are exact
+	// decimal STRINGS (numeric(14,3) ::text), never JSON floats.
 	if code, prev := h.getJSON(t, pms+"/reconciliation-preview?operating_day_id="+day1.String(), admin); code != http.StatusOK ||
-		prev["closing_book"].(float64) != 25800 || !prev["over_tolerance"].(bool) {
+		prev["closing_book"].(string) != "25800.000" || !prev["over_tolerance"].(bool) {
 		t.Fatalf("preview = %v (status %d)", prev, code)
 	}
 
@@ -498,9 +499,9 @@ func TestPhase4_Reconciliation(t *testing.T) {
 		t.Fatalf("persist recon: %d %v", code, body)
 	}
 	if body["status"] != "exception" || !body["over_tolerance"].(bool) ||
-		body["opening_book"].(float64) != 30000 || body["sales_total"].(float64) != 4200 ||
-		body["closing_book"].(float64) != 25800 || body["closing_physical"].(float64) != 25000 ||
-		body["variance_litres"].(float64) != 800 {
+		body["opening_book"].(string) != "30000.000" || body["sales_total"].(string) != "4200.000" ||
+		body["closing_book"].(string) != "25800.000" || body["closing_physical"].(string) != "25000.000" ||
+		body["variance_litres"].(string) != "800.000" {
 		t.Fatalf("day1 figures = %v", body)
 	}
 	reconID := body["id"].(string)
@@ -517,8 +518,8 @@ func TestPhase4_Reconciliation(t *testing.T) {
 		t.Fatalf("adjust: %d %v", code, body)
 	}
 	if body["status"] != "draft" || body["over_tolerance"].(bool) ||
-		body["adjustments_total"].(float64) != -800 || body["closing_book"].(float64) != 25000 ||
-		body["variance_litres"].(float64) != 0 {
+		body["adjustments_total"].(string) != "-800.000" || body["closing_book"].(string) != "25000.000" ||
+		body["variance_litres"].(string) != "0.000" {
 		t.Fatalf("after adjustment = %v", body)
 	}
 
@@ -552,11 +553,118 @@ func TestPhase4_Reconciliation(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("persist day2 recon: %d %v", code, body)
 	}
-	if body["opening_book"].(float64) != 25000 {
-		t.Fatalf("day2 opening_book = %v, want 25000 (balance-forward from day1 physical)", body["opening_book"])
+	if body["opening_book"].(string) != "25000.000" {
+		t.Fatalf("day2 opening_book = %v, want 25000.000 (balance-forward from day1 physical)", body["opening_book"])
 	}
-	if body["closing_book"].(float64) != 24000 || body["variance_litres"].(float64) != 0 || body["status"] != "draft" {
+	if body["closing_book"].(string) != "24000.000" || body["variance_litres"].(string) != "0.000" || body["status"] != "draft" {
 		t.Fatalf("day2 figures = %v", body)
+	}
+}
+
+// TestPhase4_Reconciliation_DecimalExactness is the INV-001 proof: it drives a
+// reconciliation whose figures expose float64 drift, and asserts the EXACT
+// decimal strings the SQL-numeric path produces.
+//
+// The vector: book = 20000.000 L (open 30000, sell 10000), physical dip =
+// 19999.830 L, a 0.170 L variance. variance_percent is 0.170 / 20000 * 100 =
+// exactly 0.00085 %, which numeric(10,4) rounds half-away-from-zero to 0.0009.
+//
+// Under the OLD Go float64 path the dip scans back as 19999.830000000002, the
+// variance is 0.16999999999825377, and the percent is 0.00084999999... which
+// numeric(10,4) rounds DOWN to 0.0008. So asserting variance_percent == "0.0009"
+// FAILS if the math is done in float64 and PASSES with SQL numeric. The test
+// then seals (write-off −0.170, exact) and asserts day 2's opening book carries
+// forward as exactly 19999.830 — the cascade the float residue would corrupt.
+func TestPhase4_Reconciliation_DecimalExactness(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// 1% loss tolerance: the 0.170 L variance (band 200 L) is well within it, so
+	// the reconciliation is sealable.
+	if _, err := h.pool.Exec(ctx, `UPDATE products SET loss_tolerance_percent = 1.0 WHERE id = $1`, h.ids.pmsProduct); err != nil {
+		t.Fatalf("set tolerance: %v", err)
+	}
+	pms := "/api/v1/tanks/" + h.ids.tankPMS.String()
+	if code, _ := h.invPostJSON(t, pms+"/opening-balance", admin, map[string]any{"litres": 30000}); code != http.StatusCreated {
+		t.Fatalf("open: %d", code)
+	}
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	chartID := seedChart(t, ctx, h, h.ids.tankPMS)
+
+	// --- Day 1: sell 10,000 L -> book 20000.000; physical 19999.830 (0.170 short). ---
+	day1, shift1 := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-01", 10000)
+	seedClosingDip(t, ctx, h, shift1, h.ids.tankPMS, chartID, adminID, 19999.830)
+	if code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shift1.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json"); code != http.StatusOK {
+		t.Fatalf("approve shift1: %d %s", code, raw)
+	}
+
+	code, body := h.invPostJSON(t, pms+"/reconciliations", admin, map[string]any{"operating_day_id": day1.String()})
+	if code != http.StatusCreated {
+		t.Fatalf("persist recon: %d %v", code, body)
+	}
+	// The figures must be the EXACT SQL-numeric decimals. variance_percent is the
+	// float-distinguishing assertion: float64 yields 0.0008, SQL numeric 0.0009.
+	if got := body["closing_book"].(string); got != "20000.000" {
+		t.Fatalf("closing_book = %q, want 20000.000", got)
+	}
+	if got := body["closing_physical"].(string); got != "19999.830" {
+		t.Fatalf("closing_physical = %q, want 19999.830", got)
+	}
+	if got := body["variance_litres"].(string); got != "0.170" {
+		t.Fatalf("variance_litres = %q, want 0.170 (float64 yields 0.16999999999825377)", got)
+	}
+	if got := body["variance_percent"].(string); got != "0.0009" {
+		t.Fatalf("variance_percent = %q, want 0.0009 — float64 rounds 0.00084999... DOWN to 0.0008", got)
+	}
+	if body["over_tolerance"].(bool) || body["status"] != "draft" {
+		t.Fatalf("0.170 L variance must be within 1%% tolerance: %v", body)
+	}
+	reconID := body["id"].(string)
+
+	// Seal: the write-off (physical − book = −0.170, exact) lands the ledger on
+	// 19999.830 exactly, with no float residue to carry into day 2.
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/reconciliations/"+reconID+"/seal", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("seal: %d %s", code, raw)
+	}
+	// The ledger book balance after seal must be the exact physical figure. Read
+	// it as exact numeric text so a float residue would be visible.
+	var bookText string
+	if err := h.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(litres),0)::text FROM stock_movements WHERE tenant_id=$1 AND tank_id=$2
+	`, h.ids.tenantID, h.ids.tankPMS).Scan(&bookText); err != nil {
+		t.Fatalf("ledger sum: %v", err)
+	}
+	if bookText != "19999.830" {
+		t.Fatalf("post-seal ledger sum = %q, want 19999.830 (write-off must be exactly -0.170)", bookText)
+	}
+
+	// --- Day 2: opening book must carry forward as exactly 19999.830. ---
+	day2, shift2 := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-02", 0)
+	seedClosingDip(t, ctx, h, shift2, h.ids.tankPMS, chartID, adminID, 19999.830)
+	if code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shift2.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json"); code != http.StatusOK {
+		t.Fatalf("approve shift2: %d %s", code, raw)
+	}
+	code, body = h.invPostJSON(t, pms+"/reconciliations", admin, map[string]any{"operating_day_id": day2.String()})
+	if code != http.StatusCreated {
+		t.Fatalf("persist day2 recon: %d %v", code, body)
+	}
+	if got := body["opening_book"].(string); got != "19999.830" {
+		t.Fatalf("day2 opening_book = %q, want 19999.830 (exact balance-forward from sealed physical)", got)
+	}
+	if got := body["closing_book"].(string); got != "19999.830" {
+		t.Fatalf("day2 closing_book = %q, want 19999.830", got)
+	}
+	if got := body["variance_litres"].(string); got != "0.000" || body["variance_percent"].(string) != "0.0000" {
+		t.Fatalf("day2 variance must be exactly zero: variance=%q pct=%q", got, body["variance_percent"])
 	}
 }
 

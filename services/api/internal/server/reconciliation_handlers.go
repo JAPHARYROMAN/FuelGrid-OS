@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -21,29 +21,27 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 )
 
+// reconciliationDTO carries every litre/percent figure as a decimal STRING —
+// the exact numeric round-tripped from the DB, never a float64 — per the house
+// money/litre rule. over_tolerance is the inverse of the SQL within-tolerance
+// decision (an exact numeric comparison), not a float epsilon test.
 type reconciliationDTO struct {
 	ID               *uuid.UUID `json:"id,omitempty"`
 	TankID           uuid.UUID  `json:"tank_id"`
 	OperatingDayID   uuid.UUID  `json:"operating_day_id"`
-	OpeningBook      float64    `json:"opening_book"`
-	DeliveriesTotal  float64    `json:"deliveries_total"`
-	SalesTotal       float64    `json:"sales_total"`
-	AdjustmentsTotal float64    `json:"adjustments_total"`
-	ClosingBook      float64    `json:"closing_book"`
-	ClosingPhysical  float64    `json:"closing_physical"`
-	VarianceLitres   float64    `json:"variance_litres"`
-	VariancePercent  float64    `json:"variance_percent"`
-	TolerancePercent float64    `json:"tolerance_percent"`
+	OpeningBook      string     `json:"opening_book"`
+	DeliveriesTotal  string     `json:"deliveries_total"`
+	SalesTotal       string     `json:"sales_total"`
+	AdjustmentsTotal string     `json:"adjustments_total"`
+	ClosingBook      string     `json:"closing_book"`
+	ClosingPhysical  string     `json:"closing_physical"`
+	VarianceLitres   string     `json:"variance_litres"`
+	VariancePercent  string     `json:"variance_percent"`
+	TolerancePercent string     `json:"tolerance_percent"`
 	OverTolerance    bool       `json:"over_tolerance"`
 	Status           string     `json:"status"`
 	SealedBy         *uuid.UUID `json:"sealed_by,omitempty"`
 	SealedAt         *string    `json:"sealed_at,omitempty"`
-}
-
-// overTolerance reports whether a variance exceeds the product's loss-tolerance
-// band, in litres (|variance| > |book| * tolerance%).
-func overTolerance(variance, book, tolerancePercent float64) bool {
-	return math.Abs(variance) > math.Abs(book)*tolerancePercent/100
 }
 
 func toReconciliationDTO(rec *reconciliation.Reconciliation) reconciliationDTO {
@@ -55,23 +53,29 @@ func toReconciliationDTO(rec *reconciliation.Reconciliation) reconciliationDTO {
 		ClosingBook: rec.ClosingBook, ClosingPhysical: rec.ClosingPhysical,
 		VarianceLitres: rec.VarianceLitres, VariancePercent: rec.VariancePercent,
 		TolerancePercent: rec.TolerancePercent,
-		OverTolerance:    overTolerance(rec.VarianceLitres, rec.ClosingBook, rec.TolerancePercent),
-		Status:           rec.Status, SealedBy: rec.SealedBy, SealedAt: fmtTime(rec.SealedAt),
+		// A persisted 'exception' is exactly the over-tolerance state; this is
+		// the SQL within-tolerance decision frozen at compute time, not a
+		// recomputed float comparison.
+		OverTolerance: rec.Status == reconciliation.StatusException,
+		Status:        rec.Status, SealedBy: rec.SealedBy, SealedAt: fmtTime(rec.SealedAt),
 	}
 }
 
 // computedReconciliation is the live result of comparing ledger book stock to
-// the closing dip for a (tank, day), before persistence.
+// the closing dip for a (tank, day), before persistence. Every figure is a
+// decimal string computed in SQL numeric.
 type computedReconciliation struct {
-	OpeningBook      float64
-	DeliveriesTotal  float64
-	SalesTotal       float64
-	AdjustmentsTotal float64
-	ClosingBook      float64
-	ClosingPhysical  float64
-	VarianceLitres   float64
-	VariancePercent  float64
-	TolerancePercent float64
+	OpeningBook      string
+	DeliveriesTotal  string
+	SalesTotal       string
+	AdjustmentsTotal string
+	ClosingBook      string
+	ClosingPhysical  string
+	VarianceLitres   string
+	VariancePercent  string
+	TolerancePercent string
+	WriteOff         string // physical − book; the seal write-off litres
+	WriteOffNonZero  bool   // exact numeric test (write-off <> 0) from SQL
 	ThroughSeq       int64
 	OverTolerance    bool
 }
@@ -125,64 +129,65 @@ func (s *Server) computeReconciliation(ctx context.Context, invQ database.Querie
 		return nil, http.StatusConflict, "approve all the day's shifts before reconciling"
 	}
 
-	// Opening book + period watermark: the last sealed reconciliation is the
-	// trust anchor; failing that, the tank's genesis opening movement.
-	var openingBook float64
+	// Opening book + period watermark, sourced as EXACT decimal strings: the
+	// last sealed reconciliation's closing_physical is the trust anchor; failing
+	// that, the tank's genesis opening movement litres. Neither passes through
+	// float64.
+	var openingBook string
 	var fromSeq int64
 	prior, err := s.reconciliation.LastSealedForTank(ctx, tenantID, tank.ID)
 	switch {
 	case err == nil:
 		openingBook, fromSeq = prior.ClosingPhysical, prior.ThroughSeq
 	case errors.Is(err, reconciliation.ErrNotFound):
-		opening, oerr := s.inventory.OpeningBalance(ctx, tenantID, tank.ID)
-		switch {
-		case oerr == nil:
-			openingBook, fromSeq = opening.Litres, opening.Seq
-		case errors.Is(oerr, inventory.ErrNoOpeningBalance):
-			openingBook, fromSeq = 0, 0
-		default:
-			s.logger.Error("reconcile: opening balance", "error", oerr)
+		litres, seq, ok, gerr := s.reconciliation.GenesisOpeningLitres(ctx, tenantID, tank.ID)
+		if gerr != nil {
+			s.logger.Error("reconcile: opening balance", "error", gerr)
 			return nil, http.StatusInternalServerError, "internal error"
+		}
+		if ok {
+			openingBook, fromSeq = litres, seq
+		} else {
+			openingBook, fromSeq = "0", 0
 		}
 	default:
 		s.logger.Error("reconcile: last sealed", "error", err)
 		return nil, http.StatusInternalServerError, "internal error"
 	}
 
-	totals, err := s.inventory.PeriodTotalsSince(ctx, invQ, tenantID, tank.ID, fromSeq)
-	if err != nil {
-		s.logger.Error("reconcile: period totals", "error", err)
+	// Physical figure: the day's closing dip volume, read as exact numeric text.
+	physical, ok, derr := s.reconciliation.ClosingDipVolumeText(ctx, invQ, tenantID, tank.ID, dayID)
+	if derr != nil {
+		s.logger.Error("reconcile: closing dip", "error", derr)
 		return nil, http.StatusInternalServerError, "internal error"
 	}
-	closingBook := openingBook + totals.OpeningTotal + totals.DeliveriesTotal - totals.SalesTotal + totals.AdjustmentsTotal
-
-	dip, err := s.readings.ClosingDipForTankDay(ctx, tenantID, tank.ID, dayID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if !ok {
 		return nil, http.StatusUnprocessableEntity, "tank has no closing dip for this operating day"
 	}
-	if err != nil {
-		s.logger.Error("reconcile: closing dip", "error", err)
-		return nil, http.StatusInternalServerError, "internal error"
-	}
 
-	product, err := s.products.Get(ctx, tenantID, tank.ProductID)
+	tolerance, err := s.reconciliation.ProductTolerancePercentText(ctx, tenantID, tank.ProductID)
 	if err != nil {
 		s.logger.Error("reconcile: product", "error", err)
 		return nil, http.StatusInternalServerError, "internal error"
 	}
 
-	variance := closingBook - dip.VolumeLitres
-	var variancePercent float64
-	if closingBook != 0 {
-		variancePercent = variance / closingBook * 100
+	// All arithmetic — closing_book, variance, variance_percent, tolerance band,
+	// the within-tolerance decision, and the write-off — happens in SQL numeric.
+	c, err := s.reconciliation.Compute(ctx, invQ, tenantID, reconciliation.ComputeInput{
+		TankID: tank.ID, OpeningBook: openingBook, ClosingPhysical: physical,
+		TolerancePercent: tolerance, FromSeq: fromSeq,
+	})
+	if err != nil {
+		s.logger.Error("reconcile: compute", "error", err)
+		return nil, http.StatusInternalServerError, "internal error"
 	}
 	return &computedReconciliation{
-		OpeningBook: openingBook, DeliveriesTotal: totals.DeliveriesTotal,
-		SalesTotal: totals.SalesTotal, AdjustmentsTotal: totals.AdjustmentsTotal,
-		ClosingBook: closingBook, ClosingPhysical: dip.VolumeLitres,
-		VarianceLitres: variance, VariancePercent: variancePercent,
-		TolerancePercent: product.LossTolerancePercent, ThroughSeq: totals.ThroughSeq,
-		OverTolerance: overTolerance(variance, closingBook, product.LossTolerancePercent),
+		OpeningBook: c.OpeningBook, DeliveriesTotal: c.DeliveriesTotal,
+		SalesTotal: c.SalesTotal, AdjustmentsTotal: c.AdjustmentsTotal,
+		ClosingBook: c.ClosingBook, ClosingPhysical: c.ClosingPhysical,
+		VarianceLitres: c.VarianceLitres, VariancePercent: c.VariancePercent,
+		TolerancePercent: c.TolerancePercent, WriteOff: c.WriteOff, WriteOffNonZero: c.WriteOffNonZero,
+		ThroughSeq: c.ThroughSeq, OverTolerance: !c.WithinTolerance,
 	}, 0, ""
 }
 
@@ -532,14 +537,12 @@ func (s *Server) handleSealReconciliation(w http.ResponseWriter, r *http.Request
 
 	// Write off the residual variance so the ledger lands exactly on the
 	// sealed physical figure — the balance-forward anchor for the next period.
-	writeoff := computed.ClosingPhysical - computed.ClosingBook
-	if math.Abs(writeoff) >= 0.0005 {
+	// The write-off (physical − book) was computed in SQL numeric and the
+	// non-zero test is an exact numeric comparison, not a float epsilon: posting
+	// it as a decimal string keeps the next day's opening book exact.
+	if computed.WriteOffNonZero {
 		reason := "reconciliation seal: variance write-off"
-		wm, err := s.inventory.PostMovement(ctx, tx, actor.TenantID, inventory.PostInput{
-			TankID: rec.TankID, MovementType: inventory.TypeAdjustment,
-			SourceRefType: ptr("reconciliation"), SourceRefID: &rec.ID, Litres: writeoff,
-			RecordedBy: actor.UserID, Notes: &reason,
-		})
+		wm, err := s.reconciliation.PostWriteOff(ctx, tx, actor.TenantID, rec.TankID, rec.ID, actor.UserID, computed.WriteOff, reason)
 		if err != nil {
 			s.logger.Error("seal: write-off", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -549,8 +552,15 @@ func (s *Server) handleSealReconciliation(w http.ResponseWriter, r *http.Request
 			TenantID: actor.TenantID, ActorID: actor.UserID,
 			Action: "stock_movement.posted", EventType: "StockMovementPosted",
 			EntityType: "stock_movement", EntityID: wm.ID.String(),
-			NewValue: toStockMovementDTO(wm), Reason: reason,
-			IP: clientIP(r), UserAgent: r.UserAgent(),
+			NewValue: map[string]any{
+				"id": wm.ID, "tank_id": wm.TankID, "movement_type": inventory.TypeAdjustment,
+				"source_ref_type": "reconciliation", "source_ref_id": wm.SourceRefID,
+				"litres": wm.Litres, "balance_after": wm.BalanceAfter,
+				"recorded_by": wm.RecordedBy, "recorded_at": wm.RecordedAt.Format(time.RFC3339),
+				"notes": wm.Notes,
+			},
+			Reason: reason,
+			IP:     clientIP(r), UserAgent: r.UserAgent(),
 			RequestID: chimiddleware.GetReqID(ctx),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -621,5 +631,3 @@ func (s *Server) handleListStationReconciliations(w http.ResponseWriter, r *http
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
 }
-
-func ptr[T any](v T) *T { return &v }

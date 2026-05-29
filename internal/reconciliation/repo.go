@@ -29,20 +29,25 @@ const (
 var ErrNotFound = errors.New("reconciliation: not found")
 
 // Reconciliation is one (tank, operating_day) book-vs-physical record.
+//
+// Per the house money/litre rule, every litre and percent figure is carried as
+// a decimal STRING (the DB column is numeric); arithmetic on them happens in
+// SQL, never in Go float64, so float residue can never corrupt the seal
+// write-off that carries forward as the next day's opening balance.
 type Reconciliation struct {
 	ID               uuid.UUID
 	TenantID         uuid.UUID
 	TankID           uuid.UUID
 	OperatingDayID   uuid.UUID
-	OpeningBook      float64
-	DeliveriesTotal  float64
-	SalesTotal       float64
-	AdjustmentsTotal float64
-	ClosingBook      float64
-	ClosingPhysical  float64
-	VarianceLitres   float64
-	VariancePercent  float64
-	TolerancePercent float64
+	OpeningBook      string
+	DeliveriesTotal  string
+	SalesTotal       string
+	AdjustmentsTotal string
+	ClosingBook      string
+	ClosingPhysical  string
+	VarianceLitres   string
+	VariancePercent  string
+	TolerancePercent string
 	ThroughSeq       int64
 	Status           string
 	SealedBy         *uuid.UUID
@@ -51,19 +56,20 @@ type Reconciliation struct {
 	UpdatedAt        time.Time
 }
 
-// DraftInput carries the computed figures for an upsert.
+// DraftInput carries the computed figures for an upsert. All litre/percent
+// figures are decimal strings, bound into the numeric columns as ::numeric.
 type DraftInput struct {
 	TankID           uuid.UUID
 	OperatingDayID   uuid.UUID
-	OpeningBook      float64
-	DeliveriesTotal  float64
-	SalesTotal       float64
-	AdjustmentsTotal float64
-	ClosingBook      float64
-	ClosingPhysical  float64
-	VarianceLitres   float64
-	VariancePercent  float64
-	TolerancePercent float64
+	OpeningBook      string
+	DeliveriesTotal  string
+	SalesTotal       string
+	AdjustmentsTotal string
+	ClosingBook      string
+	ClosingPhysical  string
+	VarianceLitres   string
+	VariancePercent  string
+	TolerancePercent string
 	ThroughSeq       int64
 	Status           string // draft | exception
 }
@@ -72,10 +78,13 @@ type Repo struct{ pool *database.Pool }
 
 func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
+// columns reads every numeric litre/percent figure as ::text so it round-trips
+// exactly into the Go decimal strings — no float64 ever materializes.
 const columns = `
-    id, tenant_id, tank_id, operating_day_id, opening_book, deliveries_total,
-    sales_total, adjustments_total, closing_book, closing_physical,
-    variance_litres, variance_percent, tolerance_percent, through_seq,
+    id, tenant_id, tank_id, operating_day_id,
+    opening_book::text, deliveries_total::text,
+    sales_total::text, adjustments_total::text, closing_book::text, closing_physical::text,
+    variance_litres::text, variance_percent::text, tolerance_percent::text, through_seq,
     status, sealed_by, sealed_at, created_at, updated_at
 `
 
@@ -86,6 +95,203 @@ func scan(row pgx.Row, r *Reconciliation) error {
 		&r.VarianceLitres, &r.VariancePercent, &r.TolerancePercent, &r.ThroughSeq,
 		&r.Status, &r.SealedBy, &r.SealedAt, &r.CreatedAt, &r.UpdatedAt,
 	)
+}
+
+// Computed is the live book-vs-physical result for a (tank, day), computed
+// entirely in SQL numeric and carried as decimal strings. WriteOff is the
+// residual the seal must post so the ledger lands exactly on ClosingPhysical
+// (= physical − book); CarriedForwardOpening is the next period's opening book
+// (= ClosingPhysical). WithinTolerance is an exact numeric comparison
+// (abs(variance) <= tolerance_litres), never a float epsilon.
+type Computed struct {
+	OpeningBook      string
+	DeliveriesTotal  string
+	SalesTotal       string
+	AdjustmentsTotal string
+	ClosingBook      string
+	ClosingPhysical  string
+	VarianceLitres   string
+	VariancePercent  string
+	TolerancePercent string
+	ToleranceLitres  string
+	WithinTolerance  bool
+	WriteOff         string // physical − book; the seal write-off litres
+	WriteOffNonZero  bool   // exact numeric test: write-off <> 0
+	ClosingForward   string // == ClosingPhysical; opening book for the next day
+	ThroughSeq       int64
+}
+
+// ComputeInput names the exact decimal inputs to a live reconciliation compute.
+// openingBook and closingPhysical are decimal strings sourced directly from the
+// numeric DB columns (the prior sealed recon's closing_physical or the genesis
+// opening movement; the closing dip's volume_litres) — never float64.
+type ComputeInput struct {
+	TankID           uuid.UUID
+	OpeningBook      string // decimal string
+	ClosingPhysical  string // decimal string
+	TolerancePercent string // decimal string
+	FromSeq          int64
+}
+
+// Compute sums the period ledger and derives every reconciliation figure in one
+// SQL statement, in numeric, returning decimal strings. The within-tolerance
+// decision and the write-off non-zero test are exact numeric comparisons. invQ
+// reads the ledger — pass a tx to see movements posted earlier in the same
+// transaction.
+//
+// variance_litres is closing_book − closing_physical (preserving the existing
+// sign convention the API and tests rely on); the seal write-off is the
+// negation, physical − book.
+func (r *Repo) Compute(ctx context.Context, invQ database.Querier, tenantID uuid.UUID, in ComputeInput) (*Computed, error) {
+	var c Computed
+	err := invQ.QueryRow(ctx, `
+		WITH period AS (
+		    SELECT
+		        COALESCE(SUM(litres) FILTER (WHERE movement_type = 'opening'), 0)   AS opening_total,
+		        COALESCE(SUM(litres) FILTER (WHERE movement_type = 'delivery'), 0)  AS deliveries_total,
+		        COALESCE(-SUM(litres) FILTER (WHERE movement_type = 'sales'), 0)    AS sales_total,
+		        COALESCE(SUM(litres) FILTER (WHERE movement_type = 'adjustment'), 0) AS adjustments_total,
+		        COALESCE(MAX(seq), $5)                                              AS through_seq
+		    FROM stock_movements
+		    WHERE tenant_id = $1 AND tank_id = $2 AND seq > $5
+		),
+		fig AS (
+		    SELECT
+		        $3::numeric                                                                   AS opening_book,
+		        deliveries_total,
+		        sales_total,
+		        adjustments_total,
+		        ($3::numeric + opening_total + deliveries_total - sales_total + adjustments_total) AS closing_book,
+		        $4::numeric                                                                   AS closing_physical,
+		        $6::numeric                                                                   AS tolerance_percent,
+		        through_seq
+		    FROM period
+		)
+		SELECT
+		    opening_book::text,
+		    deliveries_total::text,
+		    sales_total::text,
+		    adjustments_total::text,
+		    closing_book::text,
+		    closing_physical::text,
+		    (closing_book - closing_physical)::text                          AS variance_litres,
+		    CASE WHEN closing_book = 0 THEN 0
+		         ELSE (closing_book - closing_physical) / closing_book * 100
+		    END::text                                                        AS variance_percent,
+		    tolerance_percent::text,
+		    (abs(closing_book) * tolerance_percent / 100)::text              AS tolerance_litres,
+		    (abs(closing_book - closing_physical) <= abs(closing_book) * tolerance_percent / 100) AS within_tolerance,
+		    (closing_physical - closing_book)::text                          AS write_off,
+		    (closing_physical - closing_book <> 0)                           AS write_off_nonzero,
+		    closing_physical::text                                           AS closing_forward,
+		    through_seq
+		FROM fig
+	`, tenantID, in.TankID, in.OpeningBook, in.ClosingPhysical, in.FromSeq, in.TolerancePercent).Scan(
+		&c.OpeningBook, &c.DeliveriesTotal, &c.SalesTotal, &c.AdjustmentsTotal,
+		&c.ClosingBook, &c.ClosingPhysical, &c.VarianceLitres, &c.VariancePercent,
+		&c.TolerancePercent, &c.ToleranceLitres, &c.WithinTolerance,
+		&c.WriteOff, &c.WriteOffNonZero, &c.ClosingForward, &c.ThroughSeq,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// WriteOffMovement is the seal write-off ledger row, with its litres and
+// balance_after as exact decimal strings (read back as ::text in the same
+// statement so no float64 ever touches them).
+type WriteOffMovement struct {
+	ID           uuid.UUID
+	TankID       uuid.UUID
+	SourceRefID  uuid.UUID
+	Litres       string
+	BalanceAfter string
+	Notes        string
+	RecordedBy   uuid.UUID
+	RecordedAt   time.Time
+}
+
+// PostWriteOff appends the seal's variance write-off adjustment to a tank's
+// ledger inside the caller's tx, binding the litres as a decimal string into
+// the numeric column so no float64 ever touches the figure. It mirrors the
+// inventory ledger's balance_after computation and returns the row (litres /
+// balance_after as ::text) so the caller can audit the exact decimals.
+func (r *Repo) PostWriteOff(ctx context.Context, tx pgx.Tx, tenantID, tankID, reconID, recordedBy uuid.UUID, litres, notes string) (*WriteOffMovement, error) {
+	var m WriteOffMovement
+	err := tx.QueryRow(ctx, `
+		INSERT INTO stock_movements
+		    (tenant_id, tank_id, movement_type, source_ref_type, source_ref_id,
+		     litres, balance_after, recorded_by, notes)
+		VALUES ($1, $2, 'adjustment', 'reconciliation', $3,
+		    $4::numeric,
+		    (SELECT COALESCE(SUM(litres), 0) FROM stock_movements
+		        WHERE tenant_id = $1 AND tank_id = $2) + $4::numeric,
+		    $5, $6)
+		RETURNING id, tank_id, source_ref_id, litres::text, balance_after::text, notes, recorded_by, recorded_at
+	`, tenantID, tankID, reconID, litres, recordedBy, notes).Scan(
+		&m.ID, &m.TankID, &m.SourceRefID, &m.Litres, &m.BalanceAfter, &m.Notes, &m.RecordedBy, &m.RecordedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
+// GenesisOpeningLitres returns the tank's genesis opening-movement litres as a
+// decimal string, plus its seq — the balance-forward anchor when the tank has
+// never been reconciled. Mirrors inventory.OpeningBalance's selection (a posted
+// 'opening' that is not a reversal contra), but returns the exact numeric as
+// text so no float64 enters the reconciliation. Returns ok=false (and "0", 0)
+// when the tank has no opening yet.
+func (r *Repo) GenesisOpeningLitres(ctx context.Context, tenantID, tankID uuid.UUID) (litres string, seq int64, ok bool, err error) {
+	scanErr := r.pool.QueryRow(ctx, `
+		SELECT litres::text, seq FROM stock_movements
+		WHERE tenant_id = $1 AND tank_id = $2 AND movement_type = 'opening' AND status = 'posted'
+		  AND (source_ref_type IS NULL OR source_ref_type <> 'correction')
+		ORDER BY seq DESC LIMIT 1
+	`, tenantID, tankID).Scan(&litres, &seq)
+	if errors.Is(scanErr, pgx.ErrNoRows) {
+		return "0", 0, false, nil
+	}
+	if scanErr != nil {
+		return "", 0, false, scanErr
+	}
+	return litres, seq, true, nil
+}
+
+// ClosingDipVolumeText returns the tank's most recent active closing-dip volume
+// for an operating day as a decimal string — the physical figure, read as exact
+// numeric text rather than float64. Returns ok=false when there is no closing
+// dip that day.
+func (r *Repo) ClosingDipVolumeText(ctx context.Context, q database.Querier, tenantID, tankID, operatingDayID uuid.UUID) (volume string, ok bool, err error) {
+	scanErr := q.QueryRow(ctx, `
+		SELECT d.volume_litres::text
+		FROM tank_dip_readings d
+		JOIN shifts sh ON sh.id = d.shift_id AND sh.tenant_id = d.tenant_id
+		WHERE d.tenant_id = $1 AND d.tank_id = $2 AND d.reading_type = 'closing'
+		  AND d.status = 'active' AND sh.operating_day_id = $3
+		ORDER BY d.recorded_at DESC, d.created_at DESC
+		LIMIT 1
+	`, tenantID, tankID, operatingDayID).Scan(&volume)
+	if errors.Is(scanErr, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if scanErr != nil {
+		return "", false, scanErr
+	}
+	return volume, true, nil
+}
+
+// ProductTolerancePercentText returns a product's loss-tolerance percent as a
+// decimal string (exact numeric text), for the tank's product.
+func (r *Repo) ProductTolerancePercentText(ctx context.Context, tenantID, productID uuid.UUID) (string, error) {
+	var tol string
+	err := r.pool.QueryRow(ctx, `
+		SELECT loss_tolerance_percent::text FROM products
+		WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'
+	`, productID, tenantID).Scan(&tol)
+	return tol, err
 }
 
 // Get returns a reconciliation by id within the tenant, or ErrNotFound.
@@ -173,10 +379,10 @@ func (r *Repo) ListForStationDay(ctx context.Context, tenantID, stationID, dayID
 type RecentReconciliation struct {
 	OperatingDayID   uuid.UUID
 	BusinessDate     time.Time
-	VarianceLitres   float64
-	VariancePercent  float64
-	TolerancePercent float64
-	ClosingBook      float64
+	VarianceLitres   string
+	VariancePercent  string
+	TolerancePercent string
+	ClosingBook      string
 	Status           string
 	SealedAt         *time.Time
 }
@@ -186,8 +392,9 @@ type RecentReconciliation struct {
 // the last reconciliation, the slice is the recent variance trend.
 func (r *Repo) RecentForTank(ctx context.Context, tenantID, tankID uuid.UUID, limit int) ([]RecentReconciliation, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT rec.operating_day_id, od.business_date, rec.variance_litres, rec.variance_percent,
-		       rec.tolerance_percent, rec.closing_book, rec.status, rec.sealed_at
+		SELECT rec.operating_day_id, od.business_date,
+		       rec.variance_litres::text, rec.variance_percent::text,
+		       rec.tolerance_percent::text, rec.closing_book::text, rec.status, rec.sealed_at
 		FROM tank_reconciliations rec
 		JOIN operating_days od ON od.id = rec.operating_day_id AND od.tenant_id = rec.tenant_id
 		WHERE rec.tenant_id = $1 AND rec.tank_id = $2
@@ -211,9 +418,10 @@ func (r *Repo) RecentForTank(ctx context.Context, tenantID, tankID uuid.UUID, li
 }
 
 const prefixedColumns = `
-    rec.id, rec.tenant_id, rec.tank_id, rec.operating_day_id, rec.opening_book, rec.deliveries_total,
-    rec.sales_total, rec.adjustments_total, rec.closing_book, rec.closing_physical,
-    rec.variance_litres, rec.variance_percent, rec.tolerance_percent, rec.through_seq,
+    rec.id, rec.tenant_id, rec.tank_id, rec.operating_day_id,
+    rec.opening_book::text, rec.deliveries_total::text,
+    rec.sales_total::text, rec.adjustments_total::text, rec.closing_book::text, rec.closing_physical::text,
+    rec.variance_litres::text, rec.variance_percent::text, rec.tolerance_percent::text, rec.through_seq,
     rec.status, rec.sealed_by, rec.sealed_at, rec.created_at, rec.updated_at
 `
 
@@ -227,7 +435,8 @@ func (r *Repo) UpsertDraft(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, i
 		    (tenant_id, tank_id, operating_day_id, opening_book, deliveries_total,
 		     sales_total, adjustments_total, closing_book, closing_physical,
 		     variance_litres, variance_percent, tolerance_percent, through_seq, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric,
+		    $9::numeric, $10::numeric, $11::numeric, $12::numeric, $13, $14)
 		ON CONFLICT (tank_id, operating_day_id) DO UPDATE SET
 		    opening_book      = EXCLUDED.opening_book,
 		    deliveries_total  = EXCLUDED.deliveries_total,
@@ -268,15 +477,15 @@ func (r *Repo) Seal(ctx context.Context, tx pgx.Tx, tenantID, id, sealedBy uuid.
 	var rec Reconciliation
 	err := scan(tx.QueryRow(ctx, `
 		UPDATE tank_reconciliations SET
-		    opening_book      = $3,
-		    deliveries_total  = $4,
-		    sales_total       = $5,
-		    adjustments_total = $6,
-		    closing_book      = $7,
-		    closing_physical  = $8,
-		    variance_litres   = $9,
-		    variance_percent  = $10,
-		    tolerance_percent = $11,
+		    opening_book      = $3::numeric,
+		    deliveries_total  = $4::numeric,
+		    sales_total       = $5::numeric,
+		    adjustments_total = $6::numeric,
+		    closing_book      = $7::numeric,
+		    closing_physical  = $8::numeric,
+		    variance_litres   = $9::numeric,
+		    variance_percent  = $10::numeric,
+		    tolerance_percent = $11::numeric,
 		    through_seq       = $12,
 		    status            = 'sealed',
 		    sealed_by         = $13,

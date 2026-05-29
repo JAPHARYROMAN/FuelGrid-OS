@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"time"
 
@@ -12,6 +13,21 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 )
+
+// dispDecimal parses an exact numeric text figure to float64 for DISPLAY-ONLY
+// dashboard fields. It is never used in the reconciliation money/litre path —
+// those figures stay decimal strings and are arithmetic'd in SQL.
+func dispDecimal(s string) float64 {
+	v, _ := parseDecimal(s)
+	return v
+}
+
+// overTolerance reports, for the display-only variance history, whether a
+// variance exceeds the loss-tolerance band (|variance| > |book| * tolerance%).
+// Inputs are the persisted exact-decimal strings, parsed for the dashboard.
+func overTolerance(variance, book, tolerancePercent string) bool {
+	return math.Abs(dispDecimal(variance)) > math.Abs(dispDecimal(book))*dispDecimal(tolerancePercent)/100
+}
 
 // recentVarianceDTO is one reconciliation in a tank's variance history.
 type recentVarianceDTO struct {
@@ -28,8 +44,8 @@ type recentVarianceDTO struct {
 func toRecentVarianceDTO(rr *reconciliation.RecentReconciliation) recentVarianceDTO {
 	return recentVarianceDTO{
 		OperatingDayID: rr.OperatingDayID, BusinessDate: rr.BusinessDate.Format(dateLayout),
-		VarianceLitres: rr.VarianceLitres, VariancePercent: rr.VariancePercent,
-		TolerancePercent: rr.TolerancePercent,
+		VarianceLitres: dispDecimal(rr.VarianceLitres), VariancePercent: dispDecimal(rr.VariancePercent),
+		TolerancePercent: dispDecimal(rr.TolerancePercent),
 		OverTolerance:    overTolerance(rr.VarianceLitres, rr.ClosingBook, rr.TolerancePercent),
 		Status:           rr.Status, SealedAt: fmtTime(rr.SealedAt),
 	}
