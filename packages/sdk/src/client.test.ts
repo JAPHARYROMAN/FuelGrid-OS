@@ -126,3 +126,21 @@ describe('Client.request', () => {
     }
   });
 });
+
+describe('Client.request transport errors (SDK-03)', () => {
+  it('wraps a network failure as an SdkError with status 0, not a raw TypeError', async () => {
+    const f = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.request('/api/v1/thing')).rejects.toMatchObject({
+      name: 'SdkError',
+      status: 0,
+    });
+  });
+
+  it('rethrows an AbortError unchanged so a deliberate cancellation is detectable', async () => {
+    const abort = new DOMException('aborted', 'AbortError');
+    const f = vi.fn(() => Promise.reject(abort));
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.request('/api/v1/thing')).rejects.toBe(abort);
+  });
+});
