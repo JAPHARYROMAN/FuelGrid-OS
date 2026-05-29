@@ -301,9 +301,9 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/tanks", s.handleListTanks)
 							r.Get("/tanks/{id}", s.handleGetTank)
 						})
-						r.Post("/tanks", s.handleCreateTank)
-						r.Patch("/tanks/{id}", s.handleUpdateTank)
-						r.Delete("/tanks/{id}", s.handleDeleteTank)
+						r.With(s.requirePermissionHeld("tanks.manage")).Post("/tanks", s.handleCreateTank)
+						r.With(s.requirePermissionHeld("tanks.manage")).Patch("/tanks/{id}", s.handleUpdateTank)
+						r.With(s.requirePermissionHeld("tanks.manage")).Delete("/tanks/{id}", s.handleDeleteTank)
 
 						// Pumps & nozzles: reads ride tenant-wide station.read;
 						// writes are station-scoped (pumps.manage) and authorized
@@ -313,12 +313,12 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/pumps/{id}", s.handleGetPump)
 							r.Get("/nozzles", s.handleListNozzles)
 						})
-						r.Post("/pumps", s.handleCreatePump)
-						r.Patch("/pumps/{id}", s.handleUpdatePump)
-						r.Delete("/pumps/{id}", s.handleDeletePump)
-						r.Post("/nozzles", s.handleCreateNozzle)
-						r.Patch("/nozzles/{id}", s.handleUpdateNozzle)
-						r.Delete("/nozzles/{id}", s.handleDeleteNozzle)
+						r.With(s.requirePermissionHeld("pumps.manage")).Post("/pumps", s.handleCreatePump)
+						r.With(s.requirePermissionHeld("pumps.manage")).Patch("/pumps/{id}", s.handleUpdatePump)
+						r.With(s.requirePermissionHeld("pumps.manage")).Delete("/pumps/{id}", s.handleDeletePump)
+						r.With(s.requirePermissionHeld("pumps.manage")).Post("/nozzles", s.handleCreateNozzle)
+						r.With(s.requirePermissionHeld("pumps.manage")).Patch("/nozzles/{id}", s.handleUpdateNozzle)
+						r.With(s.requirePermissionHeld("pumps.manage")).Delete("/nozzles/{id}", s.handleDeleteNozzle)
 
 						// Tank calibration: reads ride station.read; CSV upload
 						// is station-scoped (tanks.calibrate), authorized
@@ -328,7 +328,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Get("/tanks/{id}/calibration-charts/active", s.handleGetActiveCalibrationChart)
 							r.Get("/tanks/{id}/calibrated-volume", s.handleCalibratedVolume)
 						})
-						r.Post("/tanks/{id}/calibration-charts", s.handleUploadCalibrationChart)
+						r.With(s.requirePermissionHeld("tanks.calibrate")).Post("/tanks/{id}/calibration-charts", s.handleUploadCalibrationChart)
 
 						// Stock ledger (Phase 4, Stage 1). Per-tank append-only
 						// movement history and derived book balance; both gated by
@@ -339,13 +339,13 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						// Opening balance (Phase 4, Stage 2): seed a tank's ledger
 						// from its first dip or a manual figure. Manual stock writes
 						// reuse the station-scoped stock.adjust, authorized in-handler.
-						r.Post("/tanks/{id}/opening-balance", s.handleSetTankOpeningBalance)
+						r.With(s.requirePermissionHeld("stock.adjust")).Post("/tanks/{id}/opening-balance", s.handleSetTankOpeningBalance)
 
 						// Deliveries (Phase 4, Stage 3): receive posts a +volume
 						// 'delivery' movement; reads ride inventory.read. Receive is
 						// station-scoped (delivery.receive), authorized in-handler.
 						r.Get("/tanks/{id}/deliveries", s.handleListTankDeliveries)
-						r.Post("/tanks/{id}/deliveries", s.handleReceiveDelivery)
+						r.With(s.requirePermissionHeld("delivery.receive")).Post("/tanks/{id}/deliveries", s.handleReceiveDelivery)
 						r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/deliveries", s.handleListStationDeliveries)
 						r.Get("/deliveries/{id}", s.handleGetDeliveryReceipt)
@@ -363,15 +363,15 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 							r.Patch("/suppliers/{id}", s.handleUpdateSupplier)
 							r.Delete("/suppliers/{id}", s.handleDeactivateSupplier)
 						})
-						r.Post("/purchase-orders", s.handleCreatePurchaseOrder)
+						r.With(s.requirePermissionHeld("purchase_order.manage")).Post("/purchase-orders", s.handleCreatePurchaseOrder)
 						r.Get("/purchase-orders/{id}", s.handleGetPurchaseOrder)
-						r.Patch("/purchase-orders/{id}", s.handleUpdatePurchaseOrder)
-						r.Post("/purchase-orders/{id}/status", s.handleTransitionPurchaseOrder)
-						r.Post("/purchase-orders/{id}/receipts", s.handleReceivePurchaseOrderReceipt)
-						r.Post("/supplier-invoices", s.handleRecordSupplierInvoice)
+						r.With(s.requirePermissionHeld("purchase_order.manage")).Patch("/purchase-orders/{id}", s.handleUpdatePurchaseOrder)
+						r.With(s.requirePermissionHeld("purchase_order.approve")).Post("/purchase-orders/{id}/status", s.handleTransitionPurchaseOrder)
+						r.With(s.requirePermissionHeld("delivery.receive")).Post("/purchase-orders/{id}/receipts", s.handleReceivePurchaseOrderReceipt)
+						r.With(s.requirePermissionHeld("invoice.manage")).Post("/supplier-invoices", s.handleRecordSupplierInvoice)
 						r.Get("/supplier-invoices/{id}", s.handleGetSupplierInvoice)
-						r.Post("/supplier-invoices/{id}/approve", s.handleApproveSupplierInvoice)
-						r.Patch("/procurement-discrepancies/{id}/status", s.handleResolveProcurementDiscrepancy)
+						r.With(s.requirePermissionHeld("invoice.approve")).Post("/supplier-invoices/{id}/approve", s.handleApproveSupplierInvoice)
+						r.With(s.requirePermissionHeld("invoice.approve")).Patch("/procurement-discrepancies/{id}/status", s.handleResolveProcurementDiscrepancy)
 						r.With(s.requirePermission("purchase_order.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/procurement-overview", s.handleProcurementOverview)
 
@@ -380,9 +380,9 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						// all authorized in-handler against the tank's station.
 						r.Get("/tanks/{id}/reconciliation-preview", s.handleReconciliationPreview)
 						r.Get("/tanks/{id}/reconciliation", s.handleGetReconciliation)
-						r.Post("/tanks/{id}/reconciliations", s.handlePersistReconciliation)
-						r.Post("/reconciliations/{id}/adjustments", s.handleAdjustReconciliation)
-						r.Post("/reconciliations/{id}/seal", s.handleSealReconciliation)
+						r.With(s.requirePermissionHeld("reconciliation.manage")).Post("/tanks/{id}/reconciliations", s.handlePersistReconciliation)
+						r.With(s.requirePermissionHeld("reconciliation.manage")).Post("/reconciliations/{id}/adjustments", s.handleAdjustReconciliation)
+						r.With(s.requirePermissionHeld("reconciliation.manage")).Post("/reconciliations/{id}/seal", s.handleSealReconciliation)
 						r.With(s.requirePermission("reconciliation.read", stationFromURLParam("stationID"))).
 							Get("/stations/{stationID}/reconciliations", s.handleListStationReconciliations)
 
@@ -413,7 +413,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 
 						// Tender (Phase 6, Stage 5): shift payments + reconciliation
 						// against recognized revenue (in-handler station authz).
-						r.Post("/shifts/{id}/payments", s.handleRecordPayment)
+						r.With(s.requirePermissionHeld("payment.record")).Post("/shifts/{id}/payments", s.handleRecordPayment)
 						r.Get("/shifts/{id}/payments", s.handleListShiftPayments)
 						r.Get("/shifts/{id}/payment-reconciliation", s.handleShiftPaymentReconciliation)
 
@@ -782,16 +782,16 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						// / tanks.manage — all authorized in-handler.
 						r.With(s.requirePermissionHeld("station.read")).
 							Get("/pumps/{id}/calibrations", s.handleListPumpCalibrations)
-						r.Post("/pumps/{id}/calibrations", s.handleCreatePumpCalibration)
-						r.Patch("/pumps/{id}/status", s.handleUpdatePumpStatus)
-						r.Patch("/tanks/{id}/status", s.handleUpdateTankStatus)
+						r.With(s.requirePermissionHeld("pumps.calibrate")).Post("/pumps/{id}/calibrations", s.handleCreatePumpCalibration)
+						r.With(s.requirePermissionHeld("pumps.manage")).Patch("/pumps/{id}/status", s.handleUpdatePumpStatus)
+						r.With(s.requirePermissionHeld("tanks.manage")).Patch("/tanks/{id}/status", s.handleUpdateTankStatus)
 
 						// Incidents queue. Reads ride station.read; writes are
 						// station-scoped (incidents.manage), authorized in-handler.
 						r.With(s.requirePermissionHeld("station.read")).
 							Get("/incidents", s.handleListIncidents)
-						r.Post("/incidents", s.handleCreateIncident)
-						r.Patch("/incidents/{id}/status", s.handleUpdateIncidentStatus)
+						r.With(s.requirePermissionHeld("incidents.manage")).Post("/incidents", s.handleCreateIncident)
+						r.With(s.requirePermissionHeld("incidents.manage")).Patch("/incidents/{id}/status", s.handleUpdateIncidentStatus)
 
 						// Operating days (Phase 3, Stage 1). Open/list are
 						// station-nested and gated by the URL station; close/lock
@@ -802,8 +802,8 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("operations.manage_day", stationFromURLParam("stationID"))).
 							Post("/stations/{stationID}/operating-days", s.handleOpenOperatingDay)
 						r.Get("/operating-days/{id}", s.handleGetOperatingDay)
-						r.Patch("/operating-days/{id}/status", s.handleUpdateOperatingDayStatus)
-						r.Patch("/operating-days/{id}/lock", s.handleLockOperatingDay)
+						r.With(s.requirePermissionHeld("operations.manage_day")).Patch("/operating-days/{id}/status", s.handleUpdateOperatingDayStatus)
+						r.With(s.requirePermissionHeld("operations.manage_day")).Patch("/operating-days/{id}/lock", s.handleLockOperatingDay)
 
 						// Shifts (Phase 3, Stage 2). Open/list are station-nested
 						// (shift.open / station.read via the URL); get/close and the
@@ -813,10 +813,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.With(s.requirePermission("shift.open", stationFromURLParam("stationID"))).
 							Post("/stations/{stationID}/shifts", s.handleOpenShift)
 						r.Get("/shifts/{id}", s.handleGetShift)
-						r.Post("/shifts/{id}/attendants", s.handleAssignAttendant)
-						r.Delete("/shifts/{id}/attendants/{userID}", s.handleUnassignAttendant)
-						r.Post("/shifts/{id}/nozzle-assignments", s.handleAssignNozzle)
-						r.Delete("/shifts/{id}/nozzle-assignments/{assignmentID}", s.handleUnassignNozzle)
+						r.With(s.requirePermissionHeld("shift.assign")).Post("/shifts/{id}/attendants", s.handleAssignAttendant)
+						r.With(s.requirePermissionHeld("shift.assign")).Delete("/shifts/{id}/attendants/{userID}", s.handleUnassignAttendant)
+						r.With(s.requirePermissionHeld("shift.assign")).Post("/shifts/{id}/nozzle-assignments", s.handleAssignNozzle)
+						r.With(s.requirePermissionHeld("shift.assign")).Delete("/shifts/{id}/nozzle-assignments/{assignmentID}", s.handleUnassignNozzle)
 
 						// Pump meter readings (Phase 3, Stage 3). All id-based on
 						// the shift; reads authorize station.read in-handler, writes
@@ -832,16 +832,16 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 						r.Post("/shifts/{id}/dip-readings/{readingID}/correct", s.handleCorrectDipReading)
 
 						// Shift close & cash reconciliation (Phase 3, Stage 5).
-						r.Post("/shifts/{id}/close", s.handleCloseShift)
+						r.With(s.requirePermissionHeld("shift.close")).Post("/shifts/{id}/close", s.handleCloseShift)
 						r.Get("/shifts/{id}/close-summary", s.handleCloseSummary)
 						r.Post("/shifts/{id}/cash-submission", s.handleSubmitCash)
 
 						// Approval & exceptions (Phase 3, Stage 6). Day lock
 						// (all-shifts-approved guard) already lives on the
 						// operating-day routes above.
-						r.Patch("/shifts/{id}/status", s.handleApproveShift)
+						r.With(s.requirePermissionHeld("shift.approve")).Patch("/shifts/{id}/status", s.handleApproveShift)
 						r.Get("/shifts/{id}/exceptions", s.handleListShiftExceptions)
-						r.Patch("/shift-exceptions/{id}/status", s.handleResolveShiftException)
+						r.With(s.requirePermissionHeld("shift.approve")).Patch("/shift-exceptions/{id}/status", s.handleResolveShiftException)
 
 						r.With(s.requirePermission("users.manage", nil)).
 							Get("/users", s.handleListUsers)
