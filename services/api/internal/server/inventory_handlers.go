@@ -17,26 +17,33 @@ import (
 )
 
 type stockMovementDTO struct {
-	ID            uuid.UUID  `json:"id"`
-	TenantID      uuid.UUID  `json:"tenant_id"`
-	TankID        uuid.UUID  `json:"tank_id"`
-	MovementType  string     `json:"movement_type"`
-	SourceRefType *string    `json:"source_ref_type,omitempty"`
-	SourceRefID   *uuid.UUID `json:"source_ref_id,omitempty"`
-	Litres        float64    `json:"litres"`
-	BalanceAfter  float64    `json:"balance_after"`
-	Status        string     `json:"status"`
-	SupersedesID  *uuid.UUID `json:"supersedes_id,omitempty"`
-	RecordedBy    uuid.UUID  `json:"recorded_by"`
-	RecordedAt    string     `json:"recorded_at"`
-	Notes         *string    `json:"notes,omitempty"`
+	ID                 uuid.UUID  `json:"id"`
+	TenantID           uuid.UUID  `json:"tenant_id"`
+	TankID             uuid.UUID  `json:"tank_id"`
+	MovementType       string     `json:"movement_type"`
+	SourceRefType      *string    `json:"source_ref_type,omitempty"`
+	SourceRefID        *uuid.UUID `json:"source_ref_id,omitempty"`
+	Litres             float64    `json:"litres"`
+	BalanceAfter       float64    `json:"balance_after"`
+	SupplierID         *uuid.UUID `json:"supplier_id,omitempty"`
+	PurchaseOrderID    *uuid.UUID `json:"purchase_order_id,omitempty"`
+	LandedCostTotal    *string    `json:"landed_cost_total,omitempty"`
+	LandedCostPerLitre *string    `json:"landed_cost_per_litre,omitempty"`
+	Status             string     `json:"status"`
+	SupersedesID       *uuid.UUID `json:"supersedes_id,omitempty"`
+	RecordedBy         uuid.UUID  `json:"recorded_by"`
+	RecordedAt         string     `json:"recorded_at"`
+	Notes              *string    `json:"notes,omitempty"`
 }
 
 func toStockMovementDTO(m *inventory.Movement) stockMovementDTO {
 	return stockMovementDTO{
 		ID: m.ID, TenantID: m.TenantID, TankID: m.TankID,
 		MovementType: m.MovementType, SourceRefType: m.SourceRefType, SourceRefID: m.SourceRefID,
-		Litres: m.Litres, BalanceAfter: m.BalanceAfter, Status: m.Status,
+		Litres: m.Litres, BalanceAfter: m.BalanceAfter,
+		SupplierID: m.SupplierID, PurchaseOrderID: m.PurchaseOrderID,
+		LandedCostTotal: m.LandedCostTotal, LandedCostPerLitre: m.LandedCostPerLitre,
+		Status:       m.Status,
 		SupersedesID: m.SupersedesID, RecordedBy: m.RecordedBy,
 		RecordedAt: m.RecordedAt.Format(time.RFC3339), Notes: m.Notes,
 	}

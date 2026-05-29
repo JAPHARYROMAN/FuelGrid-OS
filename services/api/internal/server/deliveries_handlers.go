@@ -18,25 +18,43 @@ import (
 )
 
 type deliveryDTO struct {
-	ID                uuid.UUID `json:"id"`
-	TenantID          uuid.UUID `json:"tenant_id"`
-	TankID            uuid.UUID `json:"tank_id"`
-	SupplierRef       *string   `json:"supplier_ref,omitempty"`
-	VolumeLitres      float64   `json:"volume_litres"`
-	DipBeforeLitres   *float64  `json:"dip_before_litres,omitempty"`
-	DipAfterLitres    *float64  `json:"dip_after_litres,omitempty"`
-	DipVarianceLitres *float64  `json:"dip_variance_litres,omitempty"`
-	ReceivedBy        uuid.UUID `json:"received_by"`
-	ReceivedAt        string    `json:"received_at"`
-	Notes             *string   `json:"notes,omitempty"`
+	ID                     uuid.UUID  `json:"id"`
+	TenantID               uuid.UUID  `json:"tenant_id"`
+	TankID                 uuid.UUID  `json:"tank_id"`
+	SupplierRef            *string    `json:"supplier_ref,omitempty"`
+	SupplierID             *uuid.UUID `json:"supplier_id,omitempty"`
+	PurchaseOrderID        *uuid.UUID `json:"purchase_order_id,omitempty"`
+	POLineID               *uuid.UUID `json:"po_line_id,omitempty"`
+	VolumeLitres           float64    `json:"volume_litres"`
+	DipBeforeLitres        *float64   `json:"dip_before_litres,omitempty"`
+	DipAfterLitres         *float64   `json:"dip_after_litres,omitempty"`
+	DipVarianceLitres      *float64   `json:"dip_variance_litres,omitempty"`
+	LineUnitPrice          *string    `json:"line_unit_price,omitempty"`
+	FreightAmount          string     `json:"freight_amount"`
+	DutyAmount             string     `json:"duty_amount"`
+	LeviesAmount           string     `json:"levies_amount"`
+	LandedCostTotal        *string    `json:"landed_cost_total,omitempty"`
+	LandedCostPerLitre     *string    `json:"landed_cost_per_litre,omitempty"`
+	MatchStatus            string     `json:"match_status"`
+	QuantityVarianceLitres *float64   `json:"quantity_variance_litres,omitempty"`
+	ReceivedBy             uuid.UUID  `json:"received_by"`
+	ReceivedAt             string     `json:"received_at"`
+	Notes                  *string    `json:"notes,omitempty"`
 }
 
 func toDeliveryDTO(d *inventory.Delivery) deliveryDTO {
 	return deliveryDTO{
 		ID: d.ID, TenantID: d.TenantID, TankID: d.TankID,
-		SupplierRef: d.SupplierRef, VolumeLitres: d.VolumeLitres,
+		SupplierRef: d.SupplierRef, SupplierID: d.SupplierID,
+		PurchaseOrderID: d.PurchaseOrderID, POLineID: d.POLineID,
+		VolumeLitres:    d.VolumeLitres,
 		DipBeforeLitres: d.DipBeforeLitres, DipAfterLitres: d.DipAfterLitres,
-		DipVarianceLitres: d.DipVarianceLitres, ReceivedBy: d.ReceivedBy,
+		DipVarianceLitres: d.DipVarianceLitres,
+		LineUnitPrice:     d.LineUnitPrice, FreightAmount: d.FreightAmount,
+		DutyAmount: d.DutyAmount, LeviesAmount: d.LeviesAmount,
+		LandedCostTotal: d.LandedCostTotal, LandedCostPerLitre: d.LandedCostPerLitre,
+		MatchStatus: d.MatchStatus, QuantityVarianceLitres: d.QuantityVarianceLitres,
+		ReceivedBy: d.ReceivedBy,
 		ReceivedAt: d.ReceivedAt.Format(time.RFC3339), Notes: d.Notes,
 	}
 }
@@ -187,6 +205,38 @@ func (s *Server) handleListStationDeliveries(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, deliveryListResponse(rows))
+}
+
+func (s *Server) handleGetDeliveryReceipt(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid delivery id")
+		return
+	}
+	d, err := s.inventory.GetDelivery(r.Context(), actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "delivery not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("get delivery", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	tank, err := s.tanks.Get(r.Context(), actor.TenantID, d.TankID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "inventory.read", tank.StationID) {
+		return
+	}
+	writeJSON(w, http.StatusOK, toDeliveryDTO(d))
 }
 
 func deliveryListResponse(rows []inventory.Delivery) map[string]any {

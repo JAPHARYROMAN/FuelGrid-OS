@@ -69,34 +69,42 @@ func requiresOpening(movementType string) bool {
 
 // Movement is one row of a tank's stock ledger.
 type Movement struct {
-	ID            uuid.UUID
-	Seq           int64 // monotonic insertion order; the ledger's append sequence
-	TenantID      uuid.UUID
-	TankID        uuid.UUID
-	MovementType  string
-	SourceRefType *string
-	SourceRefID   *uuid.UUID
-	Litres        float64 // signed: +in / -out
-	BalanceAfter  float64
-	RecordedBy    uuid.UUID
-	RecordedAt    time.Time
-	SupersedesID  *uuid.UUID
-	Status        string
-	Notes         *string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                 uuid.UUID
+	Seq                int64 // monotonic insertion order; the ledger's append sequence
+	TenantID           uuid.UUID
+	TankID             uuid.UUID
+	MovementType       string
+	SourceRefType      *string
+	SourceRefID        *uuid.UUID
+	Litres             float64 // signed: +in / -out
+	BalanceAfter       float64
+	SupplierID         *uuid.UUID
+	PurchaseOrderID    *uuid.UUID
+	LandedCostTotal    *string
+	LandedCostPerLitre *string
+	RecordedBy         uuid.UUID
+	RecordedAt         time.Time
+	SupersedesID       *uuid.UUID
+	Status             string
+	Notes              *string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // PostInput is the data needed to append one movement to a tank's ledger.
 type PostInput struct {
-	TankID        uuid.UUID
-	MovementType  string
-	SourceRefType *string
-	SourceRefID   *uuid.UUID
-	Litres        float64 // signed: +in / -out
-	SupersedesID  *uuid.UUID
-	RecordedBy    uuid.UUID
-	Notes         *string
+	TankID             uuid.UUID
+	MovementType       string
+	SourceRefType      *string
+	SourceRefID        *uuid.UUID
+	Litres             float64 // signed: +in / -out
+	SupplierID         *uuid.UUID
+	PurchaseOrderID    *uuid.UUID
+	LandedCostTotal    *string
+	LandedCostPerLitre *string
+	SupersedesID       *uuid.UUID
+	RecordedBy         uuid.UUID
+	Notes              *string
 }
 
 type Repo struct{ pool *database.Pool }
@@ -105,15 +113,17 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
     id, seq, tenant_id, tank_id, movement_type, source_ref_type, source_ref_id,
-    litres, balance_after, recorded_by, recorded_at, supersedes_id, status,
-    notes, created_at, updated_at
+    litres, balance_after, supplier_id, purchase_order_id,
+    landed_cost_total::text, landed_cost_per_litre::text,
+    recorded_by, recorded_at, supersedes_id, status, notes, created_at, updated_at
 `
 
 func scan(row pgx.Row, m *Movement) error {
 	return row.Scan(
 		&m.ID, &m.Seq, &m.TenantID, &m.TankID, &m.MovementType, &m.SourceRefType, &m.SourceRefID,
-		&m.Litres, &m.BalanceAfter, &m.RecordedBy, &m.RecordedAt, &m.SupersedesID, &m.Status,
-		&m.Notes, &m.CreatedAt, &m.UpdatedAt,
+		&m.Litres, &m.BalanceAfter, &m.SupplierID, &m.PurchaseOrderID,
+		&m.LandedCostTotal, &m.LandedCostPerLitre,
+		&m.RecordedBy, &m.RecordedAt, &m.SupersedesID, &m.Status, &m.Notes, &m.CreatedAt, &m.UpdatedAt,
 	)
 }
 
@@ -135,14 +145,17 @@ func (r *Repo) PostMovement(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 	if err := scan(tx.QueryRow(ctx, `
 		INSERT INTO stock_movements
 		    (tenant_id, tank_id, movement_type, source_ref_type, source_ref_id,
-		     litres, balance_after, recorded_by, supersedes_id, notes)
+		     litres, balance_after, supplier_id, purchase_order_id,
+		     landed_cost_total, landed_cost_per_litre,
+		     recorded_by, supersedes_id, notes)
 		VALUES ($1, $2, $3, $4, $5, $6,
 		    (SELECT COALESCE(SUM(litres), 0) FROM stock_movements
 		        WHERE tenant_id = $1 AND tank_id = $2) + $6,
-		    $7, $8, $9)
+		    $7, $8, $9::numeric, $10::numeric, $11, $12, $13)
 		RETURNING `+columns,
 		tenantID, in.TankID, in.MovementType, in.SourceRefType, in.SourceRefID,
-		in.Litres, in.RecordedBy, in.SupersedesID, in.Notes,
+		in.Litres, in.SupplierID, in.PurchaseOrderID, in.LandedCostTotal, in.LandedCostPerLitre,
+		in.RecordedBy, in.SupersedesID, in.Notes,
 	), &m); err != nil {
 		return nil, err
 	}
