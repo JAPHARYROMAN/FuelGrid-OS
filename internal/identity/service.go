@@ -63,11 +63,11 @@ func (c ServiceConfig) SafeDefaults() ServiceConfig {
 // Service is the high-level identity API consumed by HTTP handlers and
 // (later) gRPC, CLIs, and background jobs.
 type Service struct {
-	cfg      ServiceConfig
-	pool     *database.Pool
-	hasher   *password.Hasher
-	users    *repo.UserRepo
-	sessions *repo.SessionRepo
+	cfg       ServiceConfig
+	pool      *database.Pool
+	hasher    *password.Hasher
+	users     *repo.UserRepo
+	sessions  *repo.SessionRepo
 	store     session.Store
 	limiter   *ratelimit.Limiter
 	redis     *redis.Client

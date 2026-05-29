@@ -94,6 +94,10 @@ func (s *Server) handleGetStation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Station exists in this tenant; now enforce per-station read scope.
+	if !s.authorizeStation(w, r, actor, "station.read", id) {
+		return
+	}
 	writeJSON(w, http.StatusOK, toStationDTO(st))
 }
 

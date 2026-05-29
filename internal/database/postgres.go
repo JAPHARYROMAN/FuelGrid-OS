@@ -107,7 +107,7 @@ func (p *Pool) BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error) 
 // mid-request is discarded by the pool on Release, so the tenant setting can
 // never leak to another tenant's request.
 func (p *Pool) AcquireTenant(ctx context.Context, tenantID uuid.UUID) (context.Context, func(), error) {
-	conn, err := p.Pool.Acquire(ctx)
+	conn, err := p.Acquire(ctx)
 	if err != nil {
 		return ctx, func() {}, err
 	}

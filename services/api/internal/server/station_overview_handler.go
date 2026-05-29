@@ -64,6 +64,10 @@ func (s *Server) handleStationOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Station exists in this tenant; now enforce per-station read scope.
+	if !s.authorizeStation(w, r, actor, "station.read", id) {
+		return
+	}
 
 	stationFilter := []uuid.UUID{id}
 	tankRows, err := s.tanks.List(ctx, actor.TenantID, stationFilter)

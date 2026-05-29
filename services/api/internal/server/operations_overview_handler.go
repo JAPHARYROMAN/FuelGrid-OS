@@ -68,6 +68,10 @@ func (s *Server) handleOperationsOverview(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Station exists in this tenant; now enforce per-station read scope.
+	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
+		return
+	}
 
 	out := operationsOverviewDTO{
 		Station: toStationDTO(station),

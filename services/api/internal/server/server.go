@@ -228,13 +228,19 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 				// the proper stations repo).
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireAuth)
-					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+					// Held (not station-scoped) at the route so a cross-tenant
+					// station id reaches the handler, where the tenant-scoped
+					// load returns 404 — never 403 — keeping another tenant's
+					// stations indistinguishable from non-existent. Per-station
+					// scope is then enforced in-handler via authorizeStation,
+					// so an in-tenant out-of-scope station still returns 403.
+					r.With(s.requirePermissionHeld("station.read")).
 						Get("/stations/{stationID}", s.handleGetStation)
 
-					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+					r.With(s.requirePermissionHeld("station.read")).
 						Get("/stations/{stationID}/overview", s.handleStationOverview)
 
-					r.With(s.requirePermission("station.read", stationFromURLParam("stationID"))).
+					r.With(s.requirePermissionHeld("station.read")).
 						Get("/stations/{stationID}/operations-overview", s.handleOperationsOverview)
 
 					r.With(s.requirePermission("audit.read", nil)).
