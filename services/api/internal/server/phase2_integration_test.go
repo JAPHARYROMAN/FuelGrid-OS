@@ -482,6 +482,53 @@ func TestPhase2_ReadAuthorization(t *testing.T) {
 	}
 }
 
+// TestPhase2_MutatingRoutesGated covers AUTH-21: mutating routes carry an
+// explicit permission gate, so a principal lacking the permission is refused
+// at the route (not merely by in-handler logic). An attendant holds neither
+// tanks.manage, pumps.manage, incidents.manage, nor purchase_order.manage,
+// even with a station grant, so every such write is 403.
+func TestPhase2_MutatingRoutesGated(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+
+	// Attendant (minimal role) WITH a station grant on station1 — proves the
+	// 403 is the missing manage-permission, not missing station scope.
+	hash, err := password.New(password.DefaultParams, "").Hash(testPassword)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	email := fmt.Sprintf("att-gate-%d@it.local", time.Now().UnixNano())
+	var uid uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'Gate Attendant', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, email, hash).Scan(&uid); err != nil {
+		t.Fatalf("seed attendant: %v", err)
+	}
+	grantRole(t, ctx, h.pool, h.ids.tenantID, uid, "attendant")
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`,
+		uid, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("station access: %v", err)
+	}
+	tok := h.login(t, tenantSlug, email)
+
+	st := h.ids.station1.String()
+	cases := []struct{ path, body string }{
+		{"/api/v1/tanks", `{"station_id":"` + st + `","product_id":"` + h.ids.pmsProduct.String() + `","name":"X","code":"X9","capacity_litres":1000}`},
+		{"/api/v1/pumps", `{"station_id":"` + st + `","number":9,"name":"P9"}`},
+		{"/api/v1/incidents", `{"station_id":"` + st + `","category":"other","summary":"x"}`},
+		{"/api/v1/purchase-orders", `{"station_id":"` + st + `"}`},
+	}
+	for _, c := range cases {
+		if code, _ := h.postJSON(t, c.path, tok, c.body); code != http.StatusForbidden {
+			t.Fatalf("attendant POST %s: code=%d (want 403)", c.path, code)
+		}
+	}
+}
+
 // TestPhase2_TenantWideIsExplicit covers AUTH-20: tenant-wide reach is a role
 // property, not the absence of station grants. A user holding a station-scoped
 // role with no user_station_access rows must get no station-scoped access
