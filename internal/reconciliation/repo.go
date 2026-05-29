@@ -218,6 +218,12 @@ type WriteOffMovement struct {
 // inventory ledger's balance_after computation and returns the row (litres /
 // balance_after as ::text) so the caller can audit the exact decimals.
 func (r *Repo) PostWriteOff(ctx context.Context, tx pgx.Tx, tenantID, tankID, reconID, recordedBy uuid.UUID, litres, notes string) (*WriteOffMovement, error) {
+	// Serialize against concurrent posts to this tank (INV-003) — same
+	// transaction-scoped advisory lock key (the tank id) inventory.PostMovement
+	// uses, so balance_after stays consistent regardless of which path writes.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, tankID); err != nil {
+		return nil, err
+	}
 	var m WriteOffMovement
 	err := tx.QueryRow(ctx, `
 		INSERT INTO stock_movements
