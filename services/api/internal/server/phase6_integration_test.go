@@ -132,3 +132,78 @@ func TestPhase6_RevenueFlow(t *testing.T) {
 		t.Fatalf("revenue overview = %v", ov)
 	}
 }
+
+// TestPhase6_CreditTenderPostsToGL proves PAY-003: a credit tender posts to the
+// general ledger (DR accounts_receivable / CR sales_clearing) in the same tx as
+// the operational AR entry, so the operational and GL receivables reconcile —
+// previously the credit tender wrote ar_entries only and touched no journal.
+func TestPhase6_CreditTenderPostsToGL(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// Configure accounting so the GL coupling fires: the chart of accounts plus
+	// a period covering "now" (when the tender is recorded).
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-01-01", "end_date": "2026-12-31"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	_, shift := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-15", 1000)
+
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin,
+		map[string]any{"code": "GLCO", "name": "GL Co", "credit_limit": "10000"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d %v", code, cust)
+	}
+	custID := cust["id"].(string)
+
+	// A 4,000 credit tender.
+	if code, _ := h.invPostJSON(t, "/api/v1/shifts/"+shift.String()+"/payments", admin,
+		map[string]any{"tender_type": "credit", "amount": "4000", "customer_id": custID}); code != http.StatusCreated {
+		t.Fatalf("credit tender: %d", code)
+	}
+
+	// Operational AR (the customer statement) shows 4,000.
+	if code, stmt := h.getJSON(t, "/api/v1/customers/"+custID+"/statement", admin); code != http.StatusOK || stmt["balance"] != "4000.00" {
+		t.Fatalf("operational AR balance = %v", stmt["balance"])
+	}
+
+	// GL accounts_receivable (a debit-balance asset) now also shows 4,000 — the
+	// ledgers are coupled.
+	var arBal string
+	if err := h.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(jl.debit - jl.credit), 0)::text
+		FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id
+		WHERE jl.tenant_id = $1 AND a.system_key = 'accounts_receivable'
+	`, h.ids.tenantID).Scan(&arBal); err != nil {
+		t.Fatalf("AR GL balance: %v", err)
+	}
+	if arBal != "4000.00" {
+		t.Fatalf("GL accounts_receivable = %s, want 4000.00 (coupled to operational AR)", arBal)
+	}
+
+	// sales_clearing (a credit-balance account) was credited 4,000 — the credit
+	// portion of the sale settled into AR rather than leaving sales_clearing
+	// unbalanced.
+	var scBal string
+	if err := h.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(jl.credit - jl.debit), 0)::text
+		FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id
+		WHERE jl.tenant_id = $1 AND a.system_key = 'sales_clearing'
+	`, h.ids.tenantID).Scan(&scBal); err != nil {
+		t.Fatalf("sales_clearing GL balance: %v", err)
+	}
+	if scBal != "4000.00" {
+		t.Fatalf("GL sales_clearing = %s, want 4000.00", scBal)
+	}
+}
