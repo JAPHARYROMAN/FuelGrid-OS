@@ -268,5 +268,3 @@ func TestRLS_EndToEndRequestScoping(t *testing.T) {
 		t.Fatalf("RLS-on returned %v stations for the actor's own tenant — the request connection was not tenant-scoped", body["count"])
 	}
 }
-
-

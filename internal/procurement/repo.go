@@ -4,11 +4,7 @@
 package procurement
 
 import (
-	"context"
 	"errors"
-	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
@@ -28,22 +24,3 @@ var (
 	ErrAlreadyResolved       = errors.New("procurement: discrepancy already resolved")
 	ErrSelfApproval          = errors.New("procurement: approver cannot be the invoice recorder")
 )
-
-func scanTimePtr(t *time.Time) *time.Time { return t }
-
-func uuidSliceFromRows(ctx context.Context, q database.Querier, sql string, args ...any) ([]uuid.UUID, error) {
-	rows, err := q.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []uuid.UUID{}
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
-}

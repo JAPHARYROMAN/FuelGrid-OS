@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -150,7 +151,7 @@ func TestPhase4_StockLedger(t *testing.T) {
 	}
 	_, err = repo.ReverseMovement(ctx, tx, h.ids.tenantID, deliveryID, adminID, nil)
 	_ = tx.Rollback(ctx)
-	if err != inventory.ErrAlreadyReversed {
+	if !errors.Is(err, inventory.ErrAlreadyReversed) {
 		t.Fatalf("second reverse err = %v, want ErrAlreadyReversed", err)
 	}
 
@@ -199,7 +200,7 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
 	})
 	_ = tx.Rollback(ctx)
-	if err != inventory.ErrNoOpeningBalance {
+	if !errors.Is(err, inventory.ErrNoOpeningBalance) {
 		t.Fatalf("delivery before opening err = %v, want ErrNoOpeningBalance", err)
 	}
 

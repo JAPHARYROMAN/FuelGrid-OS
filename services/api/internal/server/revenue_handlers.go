@@ -64,8 +64,8 @@ func (s *Server) recognizeShiftRevenue(w http.ResponseWriter, r *http.Request, a
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "revenue.recognized", EventType: "RevenueRecognized",
 		EntityType: "shift", EntityID: shiftID.String(),
-		NewValue:  map[string]any{"shift_id": shiftID, "sales_recognized": n},
-		IP:        clientIP(r), UserAgent: r.UserAgent(),
+		NewValue: map[string]any{"shift_id": shiftID, "sales_recognized": n},
+		IP:       clientIP(r), UserAgent: r.UserAgent(),
 		RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {
 		s.logger.Error("approve shift: revenue audit", "error", err)

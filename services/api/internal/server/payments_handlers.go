@@ -46,12 +46,12 @@ func toPaymentDTO(p *payments.Payment) paymentDTO {
 var validTenders = map[string]bool{"cash": true, "mobile_money": true, "card": true, "credit": true, "voucher": true}
 
 type recordPaymentRequest struct {
-	TenderType   string     `json:"tender_type"`
-	Amount       string     `json:"amount"`
-	Reference    *string    `json:"reference,omitempty"`
-	CustomerID   *uuid.UUID `json:"customer_id,omitempty"`
-	AllowOverLimit bool     `json:"allow_over_limit"`
-	Notes        *string    `json:"notes,omitempty"`
+	TenderType     string     `json:"tender_type"`
+	Amount         string     `json:"amount"`
+	Reference      *string    `json:"reference,omitempty"`
+	CustomerID     *uuid.UUID `json:"customer_id,omitempty"`
+	AllowOverLimit bool       `json:"allow_over_limit"`
+	Notes          *string    `json:"notes,omitempty"`
 }
 
 func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {

@@ -36,6 +36,12 @@ linters:
           - errcheck
           - gosec
           - unparam
+      # gosec G101 false-positives: `*Columns` consts are SQL column lists, not
+      # hardcoded credentials — their identifiers merely contain "cred".
+      - linters:
+          - gosec
+        text: 'G101'
+        source: 'Columns = `'
 
 formatters:
   enable:

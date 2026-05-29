@@ -81,7 +81,7 @@ func (r *Repo) loadRuleConfigs(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 }
 
 // Detection packs. Each raises idempotent alerts linked to immutable source
-// facts. Bind args: $1 tenant, $2 severity, $3 score, $4 threshold ('' => no
+// facts. Bind args: $1 tenant, $2 severity, $3 score, $4 threshold (” => no
 // magnitude floor), and (where the source table has a timestamp) $5
 // lookback_days (<= 0 => no time bound).
 const fuelLossPack = `
