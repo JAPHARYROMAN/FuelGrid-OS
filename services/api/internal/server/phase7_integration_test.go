@@ -7,6 +7,7 @@ package server_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -839,5 +840,106 @@ func TestPhase7_ExportsAndClose(t *testing.T) {
 	// only period is locked, so the close checklist reports no blockers.
 	if code, cl := h.getJSON(t, "/api/v1/finance/close-checklist", admin); code != http.StatusOK || !cl["can_close"].(bool) {
 		t.Fatalf("close checklist = %d %v", code, cl)
+	}
+}
+
+// TestPhase7_JournalImmutability proves the posted general ledger is append-only
+// (audit ACCT — "nothing prevents a later UPDATE journal_lines SET debit = ..."):
+// once an entry and its lines are written, no UPDATE or DELETE can rewrite
+// financial history. Corrections must be posted as reversing entries — the one
+// permitted transition. The 0065 triggers enforce this at the database, beneath
+// every code path, so a bug or a direct write cannot silently corrupt reports.
+func TestPhase7_JournalImmutability(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	code, period := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-10-01", "end_date": "2026-10-31"})
+	if code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+	periodID := period["id"].(string)
+
+	var acctID string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT id FROM accounts WHERE tenant_id = $1 ORDER BY code LIMIT 1`, h.ids.tenantID).Scan(&acctID); err != nil {
+		t.Fatalf("account: %v", err)
+	}
+
+	// Post a balanced entry directly: DR 100 / CR 100. The 0064 balance trigger
+	// accepts it at COMMIT; the 0065 immutability triggers now guard it.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	var entryID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO journal_entries (tenant_id, period_id, entry_date, source_type, memo, posted_by)
+		VALUES ($1, $2, '2026-10-15', 'adjustment', 'original', $3) RETURNING id
+	`, h.ids.tenantID, periodID, adminID).Scan(&entryID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert entry: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO journal_lines (tenant_id, journal_entry_id, account_id, debit, credit)
+		VALUES ($1, $2, $3, 100.00, 0), ($1, $2, $3, 0, 100.00)
+	`, h.ids.tenantID, entryID, acctID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert lines: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit balanced entry: %v", err)
+	}
+
+	// Every mutation of posted ledger data must be refused at the database. The
+	// error must come from our triggers (not some incidental failure), so assert
+	// the message.
+	mustBlock := func(label, want, sql string, args ...any) {
+		t.Helper()
+		if _, err := h.pool.Exec(ctx, sql, args...); err == nil {
+			t.Fatalf("%s: expected the immutability trigger to refuse the write, got nil error", label)
+		} else if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: error = %q, want it to contain %q", label, err.Error(), want)
+		}
+	}
+	mustBlock("UPDATE journal_lines", "immutable",
+		`UPDATE journal_lines SET debit = 200 WHERE tenant_id = $1 AND journal_entry_id = $2`, h.ids.tenantID, entryID)
+	mustBlock("DELETE journal_lines", "append-only",
+		`DELETE FROM journal_lines WHERE tenant_id = $1 AND journal_entry_id = $2`, h.ids.tenantID, entryID)
+	mustBlock("UPDATE journal_entries", "immutable",
+		`UPDATE journal_entries SET memo = 'tampered' WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, entryID)
+	mustBlock("DELETE journal_entries", "append-only",
+		`DELETE FROM journal_entries WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, entryID)
+
+	// The ledger is untouched after the rejected writes.
+	var debitTotal, memo string
+	if err := h.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(jl.debit), 0)::text, max(je.memo)
+		FROM journal_entries je JOIN journal_lines jl ON jl.journal_entry_id = je.id
+		WHERE je.tenant_id = $1 AND je.id = $2
+	`, h.ids.tenantID, entryID).Scan(&debitTotal, &memo); err != nil {
+		t.Fatalf("reread entry: %v", err)
+	}
+	if debitTotal != "100.00" || memo != "original" {
+		t.Fatalf("after blocked writes: debit=%s memo=%q, want 100.00 / \"original\"", debitTotal, memo)
+	}
+
+	// The sanctioned correction path — a reversing entry — still works, and it
+	// flips the original to 'reversed' (the one permitted UPDATE).
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/journal-entries/"+entryID+"/reverse", admin, nil, ""); code != http.StatusCreated {
+		t.Fatalf("reverse: %d %s", code, raw)
+	}
+	var status string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT status FROM journal_entries WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, entryID).Scan(&status); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if status != "reversed" {
+		t.Fatalf("original entry status = %s, want reversed", status)
 	}
 }

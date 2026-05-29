@@ -348,8 +348,21 @@ func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID)
 		`DELETE FROM companies WHERE tenant_id = $1`,
 		`DELETE FROM tenants WHERE id = $1`,
 	}
+	// journal_entries / journal_lines are append-only at the database (0065
+	// immutability trigger). A test owns its tenant and may purge it, so acquire
+	// one connection, flip the escape-hatch GUC on it for the session, and run
+	// every delete on that connection. Non-journal tables ignore the GUC.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		for _, s := range stmts {
+			_, _ = pool.Exec(ctx, s, tenantID)
+		}
+		return
+	}
+	defer conn.Release()
+	_, _ = conn.Exec(ctx, `SET app.allow_ledger_delete = 'on'`)
 	for _, s := range stmts {
-		_, _ = pool.Exec(ctx, s, tenantID)
+		_, _ = conn.Exec(ctx, s, tenantID)
 	}
 }
 
