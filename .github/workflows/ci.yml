@@ -148,21 +148,6 @@ jobs:
       - name: Re-apply migrations
         run: go run ./services/api/cmd/migrate up
 
-      # Run the DB-backed integration suite against the freshly migrated
-      # (but unseeded) database. Every gated test lives in this one package
-      # and seeds + tears down its own tenant, so a pristine schema is the
-      # right starting point; the demo seed below is only for the bash
-      # smoke steps that follow. The RLS-mode tests reset the fuelgrid_app
-      # role password themselves (the role exists from migration 0005), so
-      # no extra wiring is needed beyond the TEST_ URLs. Race detector on,
-      # matching the `go` job, because the request-scoped connection / RLS
-      # pool wrapper exercised here is exactly where a data race would hide.
-      - name: Integration test suite (Postgres + Redis)
-        env:
-          TEST_DATABASE_URL: postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable
-          TEST_REDIS_URL: redis://localhost:6379/0
-        run: go test -race -count=1 -timeout 15m ./services/api/internal/server/...
-
       - name: Seed demo data
         env:
           AUTH_PASSWORD_PEPPER: ci-test-pepper
@@ -616,6 +601,20 @@ jobs:
                      (SELECT count(*) FROM outbox_events)                 AS outbox_events,
                      (SELECT count(*) FROM outbox_events WHERE published_at IS NOT NULL) AS outbox_published;
             "
+
+      # Run the DB-backed integration suite LAST in this job. Each gated test
+      # seeds and tears down its own tenant, but cleanup can leave residual rows
+      # whose station codes (MIK-01/MSA-01) collide with the demo seed the bash
+      # smoke steps above assert on — so the suite runs after them to keep them
+      # isolated. It still has a migrated DB (applied above). The RLS-mode tests
+      # reset the fuelgrid_app role password themselves. Race detector on,
+      # matching the `go` job — the request-scoped connection / RLS pool wrapper
+      # exercised here is exactly where a data race would hide.
+      - name: Integration test suite (Postgres + Redis)
+        env:
+          TEST_DATABASE_URL: postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable
+          TEST_REDIS_URL: redis://localhost:6379/0
+        run: go test -race -count=1 -timeout 15m ./services/api/internal/server/...
 
   docker:
     name: Docker — build api image
