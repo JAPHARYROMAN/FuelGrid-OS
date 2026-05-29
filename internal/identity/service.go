@@ -203,13 +203,24 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 			return &LoginResult{MfaRequired: true}, nil
 		}
 		if user.MfaSecret == nil || !s.verifyTOTP(*user.MfaSecret, req.MfaCode) {
-			// No state change on a bad MFA code; slog is the record.
-			s.logger.Info("audit",
-				"event", "UserMfaFailed",
-				"user_id", user.ID,
-				"tenant_id", user.TenantID,
-				"ip", req.IP,
-			)
+			// A bad MFA code is a failed authentication: count it toward the
+			// account lockout (AUTH-10) so the second factor can't be
+			// brute-forced once the password is known — the per-IP login rate
+			// limit alone is evadable by rotating source IPs. Rides a tx with
+			// its audit + outbox rows, mirroring a bad password. A successful
+			// login clears the counter (MarkLoginSuccess), so an occasional
+			// fumble before a correct code does not accumulate.
+			if err := s.inTx(ctx, func(tx pgx.Tx) error {
+				count, ferr := s.users.MarkLoginFailure(ctx, tx, user.ID, s.cfg.LoginLockAfter, s.cfg.LoginLockFor)
+				if ferr != nil {
+					return ferr
+				}
+				return s.auditAuth(ctx, tx, user.TenantID, user.ID,
+					"user.mfa_failed", "UserMfaFailed",
+					map[string]any{"failure_count": count, "ip": req.IP})
+			}); err != nil {
+				s.logger.Error("record mfa failure", "error", err, "user_id", user.ID)
+			}
 			return nil, ErrMfaInvalid
 		}
 	}
