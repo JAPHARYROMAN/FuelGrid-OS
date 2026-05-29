@@ -766,8 +766,8 @@ func seedClosedDayShift(t *testing.T, ctx context.Context, h *harness, openedBy,
 	}
 	if err := h.pool.QueryRow(ctx, `
 		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by, status, closed_by, closed_at)
-		VALUES ($1, $2, $3, 'Sale', $4, 'closed', $4, now()) RETURNING id
-	`, h.ids.tenantID, h.ids.station1, dayID, openedBy).Scan(&shiftID); err != nil {
+		VALUES ($1, $2, $3, 'Sale', $4, 'closed', $5, now()) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, dayID, openedBy, h.ids.opID).Scan(&shiftID); err != nil {
 		t.Fatalf("seed shift: %v", err)
 	}
 	if _, err := h.pool.Exec(ctx, `

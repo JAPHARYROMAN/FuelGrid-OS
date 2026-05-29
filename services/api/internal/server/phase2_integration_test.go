@@ -58,6 +58,7 @@ type seedIDs struct {
 	pump1      uuid.UUID // station1
 	adminEmail string
 	opEmail    string
+	opID       uuid.UUID // the seeded operator (station_manager) — used as a non-admin shift closer
 }
 
 type harness struct {
@@ -228,6 +229,7 @@ func seedTenant(t *testing.T, ctx context.Context, pool *database.Pool) seedIDs 
 	var adminID, opID uuid.UUID
 	q(&adminID, `INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at) VALUES ($1, $2, 'IT Admin', 'active', $3, now()) RETURNING id`, ids.tenantID, ids.adminEmail, hash)
 	q(&opID, `INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at) VALUES ($1, $2, 'IT Operator', 'active', $3, now()) RETURNING id`, ids.tenantID, ids.opEmail, hash)
+	ids.opID = opID
 	grantRole(t, ctx, pool, ids.tenantID, adminID, "system_admin")
 	grantRole(t, ctx, pool, ids.tenantID, opID, "station_manager")
 	if _, err := pool.Exec(ctx, `INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`, opID, ids.station1, ids.tenantID); err != nil {

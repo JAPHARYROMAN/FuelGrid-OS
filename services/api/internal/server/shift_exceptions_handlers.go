@@ -69,6 +69,12 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "only a closed shift can be approved")
 		return
 	}
+	// Separation of duties (OPS-002): the approver must not be whoever closed
+	// the shift, so cash collection and its sign-off are not the same person.
+	if before.ClosedBy != nil && *before.ClosedBy == actor.UserID {
+		writeError(w, http.StatusForbidden, "separation of duties: you cannot approve a shift you closed")
+		return
+	}
 
 	ctx := r.Context()
 	open, err := s.operations.OpenExceptionCountForShift(ctx, actor.TenantID, before.ID)

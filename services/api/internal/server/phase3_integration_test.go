@@ -174,8 +174,13 @@ func TestPhase3_DayWorkflow(t *testing.T) {
 		`{"cash_amount":1475000}`); code != http.StatusCreated {
 		t.Fatalf("cash: %d %v", code, b)
 	}
-	// Approve, then close + lock the day.
-	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {
+	// Separation of duties (OPS-002): the closer (admin, who closed above) may
+	// not approve their own shift; a distinct approver can. Then close + lock.
+	if code, _ := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusForbidden {
+		t.Fatalf("self-approve should be 403, got %d", code)
+	}
+	approver := h.secondApprover(t, ctx, tenantSlug)
+	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", approver, `{"status":"approved"}`); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, b)
 	}
 	if code, b := h.patchJSON(t, "/api/v1/operating-days/"+dayID+"/status", admin, `{"status":"closed"}`); code != http.StatusOK {
