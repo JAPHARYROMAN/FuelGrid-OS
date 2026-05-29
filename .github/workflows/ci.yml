@@ -305,11 +305,12 @@ jobs:
           # Auth events must now land in audit_logs + outbox_events, not
           # just slog (audit #4). The flow above logged in twice, revoked
           # a session, and logged out.
-          PSQL="PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
-          logged_in=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.logged_in'")
-          logged_out=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.logged_out'")
-          revoked=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.session_revoked'")
-          outbox_login=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserLoggedIn'")
+          export PGPASSWORD=fuelgrid
+          PSQL="psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
+          logged_in=$($PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.logged_in'")
+          logged_out=$($PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.logged_out'")
+          revoked=$($PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.session_revoked'")
+          outbox_login=$($PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserLoggedIn'")
           echo "audit: logged_in=$logged_in logged_out=$logged_out revoked=$revoked outbox_login=$outbox_login"
           if [ "$logged_in" -lt 2 ] || [ "$logged_out" -lt 1 ] || [ "$revoked" -lt 1 ] || [ "$outbox_login" -lt 2 ]; then
             echo "auth events did not produce the expected audit_logs / outbox_events rows"; exit 1
@@ -331,12 +332,13 @@ jobs:
             sleep 0.5
           done
 
-          PSQL="PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
+          export PGPASSWORD=fuelgrid
+          PSQL="psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
 
           # Create a second tenant + company + station + user as the
           # superuser. RLS is enabled but not forced, so the superuser
           # bypasses it.
-          eval $PSQL <<'SQL'
+          $PSQL <<'SQL'
             INSERT INTO tenants (id, name, slug)
             VALUES ('22222222-2222-2222-2222-222222222222', 'Other Co.', 'other');
 
@@ -352,7 +354,7 @@ jobs:
                     'Other Station 1', 'OTH-01', 'Tanzania');
           SQL
 
-          demo_tenant_id=$(eval $PSQL -c "SELECT id FROM tenants WHERE slug='demo'")
+          demo_tenant_id=$($PSQL -c "SELECT id FROM tenants WHERE slug='demo'")
           other_tenant_id="22222222-2222-2222-2222-222222222222"
           other_station_id="44444444-4444-4444-4444-444444444444"
 
@@ -391,15 +393,15 @@ jobs:
           echo "app layer: cross-tenant station lookup correctly returns 404"
 
           # ----- DB-layer isolation (RLS via fuelgrid_app role) -----
-          APP_PSQL="PGPASSWORD=fuelgrid_app psql -At -h 127.0.0.1 -U fuelgrid_app -d fuelgrid"
+          APP_PSQL="psql -At -h 127.0.0.1 -U fuelgrid_app -d fuelgrid"
 
           # Demo tenant context: should see 2 stations (MIK-01, MSA-01).
-          count=$(eval $APP_PSQL -c "
+          count=$(PGPASSWORD=fuelgrid_app $APP_PSQL -c "
             BEGIN;
             SET LOCAL app.current_tenant = '$demo_tenant_id';
             SELECT count(*) FROM stations;
             COMMIT;
-          " | tail -n 1)
+          " | grep -E '^[0-9]+$')
           if [ "$count" != "2" ]; then
             echo "fuelgrid_app + demo tenant context: expected 2 stations, got $count"
             exit 1
@@ -407,12 +409,12 @@ jobs:
           echo "RLS: demo tenant context sees 2 stations"
 
           # Other tenant context: should see 1 station (OTH-01).
-          count=$(eval $APP_PSQL -c "
+          count=$(PGPASSWORD=fuelgrid_app $APP_PSQL -c "
             BEGIN;
             SET LOCAL app.current_tenant = '$other_tenant_id';
             SELECT count(*) FROM stations;
             COMMIT;
-          " | tail -n 1)
+          " | grep -E '^[0-9]+$')
           if [ "$count" != "1" ]; then
             echo "fuelgrid_app + other tenant context: expected 1 station, got $count"
             exit 1
@@ -420,7 +422,7 @@ jobs:
           echo "RLS: other tenant context sees 1 station"
 
           # No tenant context set: RLS must fail closed -> 0 rows.
-          count=$(eval $APP_PSQL -c "SELECT count(*) FROM stations" | tail -n 1)
+          count=$(PGPASSWORD=fuelgrid_app $APP_PSQL -c "SELECT count(*) FROM stations" | grep -E '^[0-9]+$')
           if [ "$count" != "0" ]; then
             echo "fuelgrid_app with no tenant context: expected 0 stations, got $count"
             exit 1
@@ -428,12 +430,12 @@ jobs:
           echo "RLS: no tenant context -> 0 stations (fail-closed)"
 
           # Random non-existent tenant: also 0.
-          count=$(eval $APP_PSQL -c "
+          count=$(PGPASSWORD=fuelgrid_app $APP_PSQL -c "
             BEGIN;
             SET LOCAL app.current_tenant = '99999999-9999-9999-9999-999999999999';
             SELECT count(*) FROM stations;
             COMMIT;
-          " | tail -n 1)
+          " | grep -E '^[0-9]+$')
           if [ "$count" != "0" ]; then
             echo "fuelgrid_app + nonexistent tenant: expected 0 stations, got $count"
             exit 1
@@ -454,7 +456,8 @@ jobs:
             sleep 0.5
           done
 
-          PSQL="PGPASSWORD=fuelgrid psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
+          export PGPASSWORD=fuelgrid
+          PSQL="psql -At -h 127.0.0.1 -U fuelgrid -d fuelgrid"
 
           # Login as the seeded admin user (system_admin role).
           admin_login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
@@ -466,11 +469,11 @@ jobs:
           fi
 
           # Look up the demo (non-admin) user id.
-          demo_user_id=$(eval $PSQL -c "SELECT id FROM users WHERE email='demo@fuelgrid.local'")
+          demo_user_id=$($PSQL -c "SELECT id FROM users WHERE email='demo@fuelgrid.local'")
 
           # Snapshot row counts before the grant.
-          audit_before=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.role.granted'")
-          outbox_before=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted'")
+          audit_before=$($PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.role.granted'")
+          outbox_before=$($PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted'")
 
           # Grant the 'attendant' role to the demo user.
           status=$(curl -sS -o /tmp/grant.json -w '%{http_code}' \
@@ -485,8 +488,8 @@ jobs:
 
           # Same tx wrote audit_logs and outbox_events. published_at may
           # already be NOT NULL if the publisher's tick beat us here.
-          audit_after=$(eval $PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.role.granted'")
-          outbox_after=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted'")
+          audit_after=$($PSQL -c "SELECT count(*) FROM audit_logs WHERE action='user.role.granted'")
+          outbox_after=$($PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted'")
           if [ "$audit_after" != "$((audit_before + 1))" ]; then
             echo "audit_logs delta expected 1, got $((audit_after - audit_before))"
             exit 1
@@ -499,7 +502,7 @@ jobs:
 
           # Wait for the publisher to dispatch (poll interval is 500ms).
           for i in $(seq 1 10); do
-            published=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted' AND published_at IS NOT NULL")
+            published=$($PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted' AND published_at IS NOT NULL")
             if [ "$published" -ge "$outbox_after" ]; then
               echo "publisher dispatched the event after ~$((i * 500))ms"
               break
@@ -507,7 +510,7 @@ jobs:
             sleep 0.5
           done
 
-          published=$(eval $PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted' AND published_at IS NOT NULL")
+          published=$($PSQL -c "SELECT count(*) FROM outbox_events WHERE event_type='UserRoleGranted' AND published_at IS NOT NULL")
           if [ "$published" != "$outbox_after" ]; then
             echo "publisher did not mark events published: $published of $outbox_after"
             exit 1
