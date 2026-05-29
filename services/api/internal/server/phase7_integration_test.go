@@ -442,6 +442,57 @@ func (h *harness) secondApprover(t *testing.T, ctx context.Context, slug string)
 	return h.login(t, slug, email)
 }
 
+// TestPhase7_JournalBalanceTrigger proves the DB-level double-entry guard
+// (migration 0064 / audit ACCT-001): a directly-written unbalanced journal
+// entry must be rejected at COMMIT by the deferred constraint trigger, even
+// though it bypasses the Go-layer balance check.
+func TestPhase7_JournalBalanceTrigger(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	code, period := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-09-01", "end_date": "2026-09-30"})
+	if code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+	periodID := period["id"].(string)
+
+	var accountID string
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM accounts WHERE tenant_id = $1 LIMIT 1`, h.ids.tenantID).Scan(&accountID); err != nil {
+		t.Fatalf("account: %v", err)
+	}
+
+	// Write an unbalanced entry directly (debit 100, no offsetting credit),
+	// bypassing the Go balance check. The deferred trigger must abort COMMIT.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	var entryID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO journal_entries (tenant_id, period_id, entry_date, source_type, posted_by)
+		VALUES ($1, $2, '2026-09-15', 'adjustment', $3) RETURNING id
+	`, h.ids.tenantID, periodID, adminID).Scan(&entryID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert entry: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO journal_lines (tenant_id, journal_entry_id, account_id, debit, credit)
+		VALUES ($1, $2, $3, 100.00, 0)
+	`, h.ids.tenantID, entryID, accountID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("insert line: %v", err)
+	}
+	if err := tx.Commit(ctx); err == nil {
+		t.Fatal("expected COMMIT to fail: an unbalanced journal entry was accepted by the database")
+	}
+}
+
 // TestPhase7_ExpensesAndPettyCash covers Category E: an expense flows
 // draft -> submitted -> approved -> posted (debit expense, credit cash), and a
 // petty-cash float is topped up, spent against, guarded from overdraw, and
