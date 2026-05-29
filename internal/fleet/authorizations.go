@@ -73,6 +73,23 @@ func (r *Repo) logDenial(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 // creates an approved authorization holding the requested amount. When denied
 // (and not overridden) it logs the denial and returns ErrDenied with the rule.
 func (r *Repo) RequestAuthorization(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in AuthRequest, createdBy uuid.UUID, override bool) (*Authorization, *AuthDecision, error) {
+	// Serialize concurrent authorizations and charges for this customer
+	// (FLEET-003): lock the customer row before reading exposure and limits so
+	// two requests cannot both reserve the same headroom. This is the same row
+	// PostCharge locks, so credit sales and authorizations serialize together.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM customers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, in.CustomerID); err != nil {
+		return nil, nil, err
+	}
+	// Release this customer's expired holds so stale reservations stop counting
+	// toward exposure and period limits (FLEET-005).
+	if _, err := tx.Exec(ctx, `
+		UPDATE fuel_authorizations SET status = 'expired'
+		WHERE tenant_id = $1 AND customer_id = $2 AND status = 'approved'
+		  AND expiry_at IS NOT NULL AND expiry_at < now()
+	`, tenantID, in.CustomerID); err != nil {
+		return nil, nil, err
+	}
+
 	pos, err := r.CreditPosition(ctx, tx, tenantID, in.CustomerID)
 	if errors.Is(err, ErrNotFound) {
 		return nil, &AuthDecision{RuleCode: "unknown_customer"}, ErrDenied
@@ -108,21 +125,52 @@ func (r *Repo) RequestAuthorization(ctx context.Context, tx pgx.Tx, tenantID uui
 		if !ok {
 			return deny("insufficient_credit", "requested amount exceeds available credit")
 		}
-		// Strictest per-transaction limit, if any.
-		var overLimit bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-			    SELECT 1 FROM fuel_limits
-			    WHERE tenant_id = $1 AND period = 'transaction' AND max_amount IS NOT NULL
-			      AND (customer_id = $2 OR customer_id IS NULL)
-			      AND (vehicle_id = $3 OR vehicle_id IS NULL)
-			      AND $4::numeric > max_amount
-			)
-		`, tenantID, in.CustomerID, in.VehicleID, money0(in.RequestedAmount)).Scan(&overLimit); err != nil {
-			return nil, nil, err
+		// Enforce every applicable limit — per-transaction and per day/week/month
+		// to-date — across the customer / vehicle / product dimensions
+		// (FLEET-003/004). A transaction limit caps this single request; a
+		// windowed limit caps the sum of the customer's live + consumed holds in
+		// the calendar period (matching the limit's vehicle/product scope) plus
+		// this request. The strictest violated period is reported. (max_litres
+		// limits need a litre quantity on the request, which the money-based
+		// model does not carry yet — tracked follow-up.)
+		var violatedPeriod string
+		limErr := tx.QueryRow(ctx, `
+			SELECT l.period
+			FROM fuel_limits l
+			WHERE l.tenant_id = $1 AND l.max_amount IS NOT NULL
+			  AND (l.customer_id = $2 OR l.customer_id IS NULL)
+			  AND (l.vehicle_id = $3 OR l.vehicle_id IS NULL)
+			  AND (l.product_id = $4 OR l.product_id IS NULL)
+			  AND CASE l.period
+			        WHEN 'transaction' THEN $5::numeric > l.max_amount
+			        ELSE $5::numeric + COALESCE((
+			            SELECT SUM(a.approved_amount) FROM fuel_authorizations a
+			            WHERE a.tenant_id = l.tenant_id AND a.customer_id = $2
+			              AND a.status IN ('approved', 'fulfilled')
+			              AND (l.vehicle_id IS NULL OR a.vehicle_id = l.vehicle_id)
+			              AND (l.product_id IS NULL OR a.product_id = l.product_id)
+			              AND a.created_at >= date_trunc(l.period, now())
+			        ), 0) > l.max_amount
+			      END
+			ORDER BY CASE l.period
+			           WHEN 'transaction' THEN 0 WHEN 'day' THEN 1 WHEN 'week' THEN 2 ELSE 3
+			         END
+			LIMIT 1
+		`, tenantID, in.CustomerID, in.VehicleID, in.ProductID, money0(in.RequestedAmount)).Scan(&violatedPeriod)
+		if limErr == nil {
+			code := "transaction_limit"
+			switch violatedPeriod {
+			case "day":
+				code = "daily_limit"
+			case "week":
+				code = "weekly_limit"
+			case "month":
+				code = "monthly_limit"
+			}
+			return deny(code, "requested amount exceeds the "+violatedPeriod+" limit")
 		}
-		if overLimit {
-			return deny("transaction_limit", "requested amount exceeds a per-transaction limit")
+		if !errors.Is(limErr, pgx.ErrNoRows) {
+			return nil, nil, limErr
 		}
 	}
 
