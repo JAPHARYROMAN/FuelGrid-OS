@@ -205,7 +205,7 @@ func TestPhase7_CashAndBanking(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	ctx := context.Background()
-	adminID, _, admin := h.adminContext(t, ctx)
+	adminID, slug, admin := h.adminContext(t, ctx)
 
 	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
 		t.Fatalf("seed chart: %d", code)
@@ -247,8 +247,13 @@ func TestPhase7_CashAndBanking(t *testing.T) {
 		t.Fatalf("submit = %d %v", code, sub)
 	}
 
-	// Approve posts a balanced entry and finalizes the reconciliation.
-	if code, raw := h.do(t, http.MethodPost, "/api/v1/cash-reconciliations/"+crID+"/approve", admin, nil, ""); code != http.StatusOK {
+	// Separation of duties: the submitter (admin) cannot approve their own recon.
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/cash-reconciliations/"+crID+"/approve", admin, nil, ""); code != http.StatusForbidden {
+		t.Fatalf("self-approve recon should be 403, got %d", code)
+	}
+	// Approve by a different user posts a balanced entry and finalizes it.
+	approver := h.secondApprover(t, ctx, slug)
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/cash-reconciliations/"+crID+"/approve", approver, nil, ""); code != http.StatusOK {
 		t.Fatalf("approve = %d %s", code, raw)
 	}
 	if code, got := h.getJSON(t, "/api/v1/cash-reconciliations/"+crID, admin); code != http.StatusOK ||

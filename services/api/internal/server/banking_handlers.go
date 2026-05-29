@@ -307,6 +307,22 @@ func (s *Server) handleApproveCashReconciliation(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Separation of duties: the approver must not be the person who created /
+	// submitted the reconciliation. The row is locked for the rest of the tx.
+	var createdBy uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT created_by FROM cash_reconciliations
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, actor.TenantID, id).Scan(&createdBy); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if createdBy == actor.UserID {
+		writeError(w, http.StatusForbidden, "separation of duties: you cannot approve a cash reconciliation you submitted")
+		return
+	}
+
 	station := p.StationID
 	lines := make([]accounting.PostLine, 0, 4)
 	if !isZeroMoney(p.Counted) {
