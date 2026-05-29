@@ -167,6 +167,50 @@ func TestPhase7_Payables(t *testing.T) {
 	}
 }
 
+// TestPhase7_PeriodCloseBlockedByChecklist covers ACCT-004: a period cannot be
+// closed while the close checklist has unresolved blockers (here, a draft
+// expense awaiting posting). Clearing the blocker lets the close proceed.
+func TestPhase7_PeriodCloseBlockedByChecklist(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	var adminID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, h.ids.adminEmail).Scan(&adminID); err != nil {
+		t.Fatalf("lookup admin id: %v", err)
+	}
+
+	code, period := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"})
+	if code != http.StatusCreated {
+		t.Fatalf("create period: %d %v", code, period)
+	}
+	periodID := period["id"].(string)
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/accounting-periods/"+periodID+"/start-close", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("start-close: %d", code)
+	}
+
+	// A draft expense is a close blocker.
+	var expenseID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO expenses (tenant_id, amount, created_by) VALUES ($1, 100, $2) RETURNING id`,
+		h.ids.tenantID, adminID).Scan(&expenseID); err != nil {
+		t.Fatalf("seed draft expense: %v", err)
+	}
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/accounting-periods/"+periodID+"/close", admin, nil, ""); code != http.StatusUnprocessableEntity {
+		t.Fatalf("close with blocker = %d, want 422", code)
+	}
+
+	// Clear the blocker; the close now succeeds.
+	if _, err := h.pool.Exec(ctx, `DELETE FROM expenses WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, expenseID); err != nil {
+		t.Fatalf("clear expense: %v", err)
+	}
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/accounting-periods/"+periodID+"/close", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("close after clearing blocker = %d, want 200", code)
+	}
+}
+
 func TestPhase7_Reports(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
