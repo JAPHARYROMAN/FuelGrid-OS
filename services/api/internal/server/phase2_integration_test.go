@@ -25,10 +25,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pquerna/otp/totp"
 
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
@@ -111,7 +113,7 @@ func setupHarnessRLS(t *testing.T, enableRLS bool) (*harness, func()) {
 			PasswordResetTTL: time.Hour,
 		},
 		pool, hasher, repo.NewUserRepo(pool), repo.NewSessionRepo(pool),
-		store, limiter, redis, logger,
+		store, limiter, redis, logger, "",
 	)
 
 	port := freePort(t)
@@ -618,4 +620,56 @@ func (h *harness) uploadCSV(t *testing.T, path, token, name, csv string) (int, [
 	_, _ = fw.Write([]byte(csv))
 	_ = mw.Close()
 	return h.do(t, http.MethodPost, path, token, &buf, mw.FormDataContentType())
+}
+
+// TestPhase2_MfaSecretEncryptedAtRest proves AUTH-13: the TOTP/MFA seed is
+// encrypted at rest. Enrolling stores versioned ciphertext (never the plaintext
+// base32 seed), so a database-only compromise cannot recover the seed and mint
+// valid codes — and the encrypted seed still verifies end-to-end, proving the
+// decrypt path is wired into both enrollment activation and login.
+func TestPhase2_MfaSecretEncryptedAtRest(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// Enroll: the response carries the plaintext base32 seed for the QR code.
+	code, raw := h.do(t, http.MethodPost, "/api/v1/auth/mfa/enroll", admin, nil, "")
+	if code != http.StatusOK {
+		t.Fatalf("enroll: %d %s", code, raw)
+	}
+	var enr struct {
+		Secret     string `json:"secret"`
+		OTPAuthURL string `json:"otpauth_url"`
+	}
+	if err := json.Unmarshal(raw, &enr); err != nil || enr.Secret == "" {
+		t.Fatalf("enroll body: %v %s", err, raw)
+	}
+
+	// The stored column must be versioned ciphertext, not the plaintext seed.
+	var stored string
+	if err := h.pool.QueryRow(ctx, `SELECT mfa_secret FROM users WHERE id = $1`, adminID).Scan(&stored); err != nil {
+		t.Fatalf("read mfa_secret: %v", err)
+	}
+	if stored == enr.Secret {
+		t.Fatal("mfa_secret is stored in plaintext (AUTH-13 regression)")
+	}
+	if !strings.HasPrefix(stored, "v1:") {
+		t.Fatalf("mfa_secret is not versioned ciphertext: %q", stored)
+	}
+
+	// The encrypted seed still verifies: a code generated from the plaintext
+	// seed activates MFA, which exercises the decrypt-then-verify path.
+	otp, err := totp.GenerateCode(enr.Secret, time.Now())
+	if err != nil {
+		t.Fatalf("generate code: %v", err)
+	}
+	body := bytes.NewReader([]byte(fmt.Sprintf(`{"code":%q}`, otp)))
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/auth/mfa/verify", admin, body, "application/json"); code != http.StatusNoContent {
+		t.Fatalf("verify: %d %s", code, raw)
+	}
+	var enabled bool
+	if err := h.pool.QueryRow(ctx, `SELECT mfa_enabled FROM users WHERE id = $1`, adminID).Scan(&enabled); err != nil || !enabled {
+		t.Fatalf("mfa_enabled = %v (err %v)", enabled, err)
+	}
 }
