@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
 type Shift struct {
@@ -169,11 +171,13 @@ func (r *Repo) ApproveShift(ctx context.Context, tx pgx.Tx, tenantID, id, actorI
 	return &s, nil
 }
 
-// OpenShiftCountForDay counts shifts in a day that are still open — the
-// guard for closing an operating day.
-func (r *Repo) OpenShiftCountForDay(ctx context.Context, tenantID, dayID uuid.UUID) (int, error) {
+// OpenShiftCountForDay counts shifts in a day that are still open — the guard
+// for closing an operating day. It runs through any Querier so the day-close
+// handler can count inside the same tx that holds FOR UPDATE on the day row,
+// closing the TOCTOU where a shift is opened between the count and the close.
+func (r *Repo) OpenShiftCountForDay(ctx context.Context, q database.Querier, tenantID, dayID uuid.UUID) (int, error) {
 	var n int
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT count(*) FROM shifts
 		WHERE tenant_id = $1 AND operating_day_id = $2 AND status = 'open'
 	`, tenantID, dayID).Scan(&n)
