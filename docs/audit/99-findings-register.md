@@ -1,12 +1,12 @@
 # FuelGrid OS — Consolidated Findings Register
 
-Prioritized, deduplicated list of **Critical** and **High** findings across sections 01–14. Each row cites `file:line` and a fix. Medium/Low/Info findings (and full context) live in the per-section reports. Section 15–18 findings (frontend/SDK/testing) will be appended after completion.
+Prioritized, deduplicated list of **Critical** and **High** findings across all 18 sections. Each row cites `file:line` and a fix. Medium/Low/Info findings (and full context) live in the per-section reports.
 
-**Tally (sections 01–14):** Critical 6 · High 65 · Medium 98 · Low 122 · Info 39 = **330**.
+**Tally (all 18 sections):** Critical 9 · High 87 · Medium 122 · Low 145 · Info 52 = **415**.
 
 ---
 
-## CRITICAL (6)
+## CRITICAL (9)
 
 | ID | File:Line | Issue | Fix |
 |---|---|---|---|
@@ -16,6 +16,9 @@ Prioritized, deduplicated list of **Critical** and **High** findings across sect
 | RISK (pause) | `internal/risk/governance.go:77-83`; `internal/risk/alerts_detect.go:38-77` | Engine "pause" is a no-op — `RunDetection` ignores rule status and runs three **hardcoded** SQL packs regardless of configured thresholds/lookback/tuning. Rules are disconnected from detection entirely. | Make detection read active rules and their params; honor pause. |
 | INFRA-03 | `internal/events/bus.go:70`; `events/publisher.go:170`; `cmd/api/main.go:251` | `InProcessBus.Publish` always returns `nil`; failed handlers are marked published and lost. The only consumer is a log line — the "event-driven" layer is effectively a no-op. | Propagate handler errors; only mark published on success; add real consumers or remove the claim. |
 | INFRA-01 / AUTH-25 | `migrations/0005_rls.up.sql:12`; `internal/database/tenant.go:29`; `cmd/api/main.go:146` | RLS is defined on ~51 tables but **inert at runtime**: the API connects as the table owner and `WithTenant` (the only `SET LOCAL app.current_tenant` issuer) is never called. Tenant isolation has zero DB-level backstop. | Connect as a non-owner role and call `WithTenant` per request inside the tx; add a test that proves cross-tenant reads are blocked at the DB. |
+| TEST-01 | `.github/workflows/ci.yml:62-93` | The 41 phase integration tests never run in CI (no `TEST_DATABASE_URL`/`TEST_REDIS_URL`); only ~28/69 funcs run under `-race`. The whole financial test suite is dead weight at merge time. | Provision DB+Redis services in CI and run the gated tests. |
+| TEST-02/03 | `package.json:18`; `apps/web/package.json:6-12` | `pnpm test` is a no-op (no workspace defines `test`); SDK and web have **zero** tests — the `fetch` "Illegal invocation" bug had no guard. | Add a real test runner + tests; make `pnpm test` fail on no tests. |
+| TEST-04 | `phase2_integration_test.go:78`; `ci.yml:386-434` | RLS is never tested from Go (harness uses a superuser pool that bypasses RLS); isolation asserted only by bash that doesn't use the app's connection path. Compounds INFRA-01. | Test isolation through the real (non-owner) connection path. |
 
 ---
 
@@ -106,6 +109,25 @@ Prioritized, deduplicated list of **Critical** and **High** findings across sect
 | DB-002 | `0039_journals.up.sql:17,58` | `journal_entries`/`journal_lines.station_id` not FK'd to stations (cross-tenant station possible; also unindexed). | Add FK + index. |
 | DB-003 | `0039_journals.up.sql:20-21` | Reversal links `reverses_entry_id`/`reversed_by_entry_id` have no self-FK; can dangle/cross tenant, undermining the correction chain. | Add self-referential composite FK. |
 
+### Frontend / SDK / UI / testing
+| ID | File:Line | Issue | Fix |
+|---|---|---|---|
+| WEB (CSP+token) | `apps/web/next.config.ts:3-12`; `stores/auth-store.ts:33` | No Content-Security-Policy while the session token lives in `localStorage` → any XSS = full session theft. | Add a strict CSP; consider httpOnly-cookie sessions. |
+| WEB (route guard) | `apps/web/src/app/(dashboard)/layout.tsx:15` (no `middleware.ts`) | Route protection is purely client-side; dashboard HTML is served to unauthenticated users. | Add server middleware / RSC auth checks. |
+| WEB (401) | `packages/sdk/src/client.ts:196-208` | SDK transport has no 401 handling → expired/revoked token traps the user in a broken logged-in state. | On 401, clear session + redirect to login. |
+| WEB (no error boundary) | `apps/web/src/app/providers.tsx` (no `error.tsx`) | No React error boundary and no global query-error handler; Sentry inited but never called → silent blank-screen failures. | Add error boundaries + a global query `onError`. |
+| WEB (PWA claim) | `apps/web/` (no manifest/SW/`public/`) | "Offline-first PWA" is advertised but entirely absent. | Build it or drop the claim. |
+| PAGE-013 | `apps/web/src/hooks/use-permissions.ts` | `usePermission` exists but **no page uses it**; every action button shows to all users (relies on API 403 after click). | Gate action UI on permissions. |
+| PAGE-011 | `apps/web/src/app/(dashboard)/settings/products/page.tsx:77,193`; SDK `types.ts:84` | Fuel `default_price`/`tax_rate` carried as JS floats end-to-end on the most price-sensitive entity. | Decimal strings; format-only at render. |
+| PAGE-002 | `apps/web/src/app/(dashboard)/procurement/page.tsx:156-164` | Sums decimal-string balances via `Number()` then re-stringifies → float cent drift. | Sum server-side or with a decimal lib. |
+| PAGE-008 | `risk:42-48`; `enterprise/approvals:39`; `settings/users:62-90`; `profile:38` | Silent mutation failures (no `onError`) — actions appear to do nothing on error. | Surface mutation errors. |
+| SDK-08/09/19 | `client.ts:525,569,673,843,1110-1113,1188`; `types.ts:84,111,145,169,263,301`; `pump-card.tsx:104` | **15** money/litre SDK request params typed `number` (vs `string` elsewhere — `transferStock` litres:string vs `adjustReconciliation` litres:number proves it's a bug); UI `.toFixed(2)` bakes in float money. | Type all money/litre params as `string`. |
+| SDK-01/02 | `client.ts:207`; `packages/` (no tests) | `request<T>` returns `parsed as T` with no runtime validation (type-safety illusion); zero SDK tests. | Runtime-validate (zod) critical responses; add tests. |
+| SDK-26 | `packages/ui/package.json:10` | `./styles` export points to `src/styles.css`, which does not exist — broken styling entry. | Fix or remove the export. |
+| SDK-03/04 | `client.ts:184,196-207` | Network/abort errors escape as raw `TypeError` (not `SdkError`); non-JSON/empty success bodies silently cast to `null`/string as `T`. | Wrap transport errors as `SdkError`; handle empty bodies. |
+| TEST-05/08 | `phase7_integration_test.go:192`; `inventory/repo.go:79-80` | A=L+E never asserted (only `assets=="5000.00"`); money/litres on `float64` with no property test. | Assert the accounting equation; add money-math property tests. |
+| TEST-07 | (suite-wide) | No concurrency tests anywhere → credit-limit race, reconciliation TOCTOU, double-spend all uncatchable. | Add `-race` concurrency tests for financial limits. |
+
 ---
 
-*Medium, Low, and Info findings (≈259 more) are catalogued in full in the per-section reports `01`–`14`. Sections `15`–`18` (frontend, SDK, testing) and their findings are pending completion.*
+*Medium, Low, and Info findings (≈319 more) are catalogued in full in the per-section reports `01`–`18`.*

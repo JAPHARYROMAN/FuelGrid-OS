@@ -4,7 +4,7 @@
 **Scope:** Full codebase, atomic-level. ~59,000 LOC: 182 Go files (~39k LOC) across 33 `internal/` domain packages + 75 server handler files; 63 migrations (~5.5k SQL LOC, 105 tables); 69 TS/TSX files (~14k LOC); the `@fuelgrid/sdk` (~4.4k LOC) and `@fuelgrid/ui` packages.
 **Method:** 18 independent read-only audit agents, one per domain, each opening every file in scope and citing `file:line`. This document synthesizes their findings.
 
-> **Status:** 14 of 18 section reports are complete (sections 01–14). Sections **15 (frontend foundation), 16 (frontend pages), 17 (SDK/UI), 18 (testing & coverage)** were interrupted by a session limit and will be completed separately. Frontend/test findings below are drawn from preliminary signals and the architecture pass; treat them as provisional until those sections land.
+> **Status:** All 18 section reports are complete (sections 01–18), covering backend, data model, frontend, SDK/UI, and testing.
 
 ---
 
@@ -25,18 +25,18 @@ This is **not** a system to put real money through yet. It is, however, a recove
 
 ---
 
-## 2. Findings at a glance (sections 01–14)
+## 2. Findings at a glance (all 18 sections)
 
 | Severity | Count |
 |---|---|
-| **Critical** | 6 |
-| **High** | 65 |
-| **Medium** | 98 |
-| **Low** | 122 |
-| **Info** | 39 |
-| **Total (14 of 18 sections)** | **330** |
+| **Critical** | 9 |
+| **High** | 87 |
+| **Medium** | 122 |
+| **Low** | 145 |
+| **Info** | 52 |
+| **Total** | **415** |
 
-The 6 Criticals:
+The 9 Criticals — the first 6 are backend/data; the last 3 are testing-infrastructure (rated Critical by the testing pass because they mean *none* of the safety net actually runs):
 
 1. **Reconciliation & inventory run on `float64` end-to-end** — variance, tolerance, and seal math in floating point (`internal/inventory/repo.go:80`, `reconciliation_handlers.go:45`). The `0.0005` seal threshold is a fingerprint of float residue in a money/litre path. *(INV-001)*
 2. **Procurement divide-by-zero on the cost path** — `landed_cost_per_litre / volume_litres` with no guard in the repo (`internal/inventory/deliveries.go:228`). *(PROC-12)*
@@ -44,6 +44,9 @@ The 6 Criticals:
 4. **Risk engine "pause" is a no-op and rules are disconnected from detection** — `RunDetection` ignores rule status and runs three hardcoded SQL packs regardless of configured thresholds/lookback/tuning (`internal/risk/governance.go:77`, `alerts_detect.go:38`). *(RISK criticals)*
 5. **The event/outbox bus silently drops failed events** — `InProcessBus.Publish` always returns `nil`, so failed handlers are marked published and lost; the only consumer is a log line (`internal/events/bus.go:70`). *(INFRA-03)*
 6. **RLS is inert at runtime** — defined on ~51 tables but never activated because `database.WithTenant` is never called in the request path and the API connects as the owning role (`internal/database/tenant.go:29`, `migrations/0005_rls.up.sql:12`). Counted as Critical by the infra pass. *(INFRA-01 / AUTH-25)*
+7. **CI never runs the integration tests** — the 41 phase integration tests have no `TEST_DATABASE_URL`/`TEST_REDIS_URL` in CI, so they never execute on merge; only ~28/69 test functions run under `-race` (`.github/workflows/ci.yml:62-93`). *(TEST-01)*
+8. **`pnpm test` is a no-op and there are zero frontend/SDK tests** — no workspace defines a `test` script; the `fetch` "Illegal invocation" bug that broke every browser call had no guard (`package.json:18`, `apps/web/package.json`). *(TEST-02/03)*
+9. **RLS is never tested from Go** — the test harness connects via a superuser pool that bypasses RLS; isolation is "verified" only by a bash job that doesn't exercise the app's real connection path (`phase2_integration_test.go:78`, `ci.yml:386`). *(TEST-04, compounding #6)*
 
 ---
 
@@ -99,8 +102,11 @@ A large fraction of the "Phase 8/9/10" surface is scaffolding:
 ### T8 — Availability / DoS surface (Medium→High)
 No global request-body cap (ARCH-11/INFRA-06), no pagination on list endpoints (INFRA-07), no statement/lock/idle timeouts on a 25-connection pool (INFRA-12). Several memory- and connection-exhaustion vectors.
 
-### T9 — The safety net is missing (High)
-Tests are happy-path smoke tests that **seed via raw SQL (bypassing the domain layer)** and assert almost no financial invariant — not debits==credits, not A=L+E, not credit-limit enforcement, not tenant isolation. There are **zero frontend and zero SDK tests** (which is exactly why the `fetch` "Illegal invocation" bug shipped and broke every browser call). The OpenAPI spec stops at Phase 3, leaving ~140 routes undocumented (ARCH-01). *(Section 18, pending, will quantify.)*
+### T9 — The safety net exists on paper but does not run (Critical, confirmed)
+A subtle and important nuance: the Go integration suite's *content* is actually decent — it does assert trial-balance balance, ledger conservation, credit refusal, post-close locks, and idempotency. **But CI never executes it**: there's no `TEST_DATABASE_URL`/`TEST_REDIS_URL` in the workflow, so the 41 phase tests are skipped on every merge; only ~28/69 functions run at all (TEST-01). `pnpm test` is a no-op and there are **zero frontend and zero SDK tests** — exactly why the `fetch` "Illegal invocation" bug shipped and broke every browser call (TEST-02/03). RLS isolation is "tested" only via a bash job using a superuser pool that bypasses the app's connection path (TEST-04). Net effect: **none of the 9 Criticals or major Highs in this report would be caught at merge time.** Tests also seed via raw SQL, bypassing domain validation, so they don't exercise the real write paths. The OpenAPI spec stops at Phase 3, leaving ~140 routes undocumented (ARCH-01). Coverage grade: **D+** (good intentions, not wired up).
+
+### T11 — Frontend security & resilience gaps (High)
+The web app is substantially real (≈31 of 33 dashboard pages are live SDK-wired surfaces with proper loading/error/empty states — the named flagship `command-center` is the one pure stub), but its security and resilience posture is weak: the session **token lives in `localStorage` with no Content-Security-Policy** (any XSS = full session theft) (WEB / `auth-store.ts:33`, `next.config.ts`); route protection is **purely client-side** (no `middleware.ts`), so dashboard HTML is served to anyone (WEB); the SDK transport has **no 401 handling**, trapping users in a broken "logged-in" state on token expiry; there's **no React error boundary or global query-error handling** (silent failures); and the advertised **offline-first PWA does not exist** (no manifest, service worker, or `public/`). Permission-gated UI is also absent — `usePermission` exists but **no page uses it**, so every action button shows to every user and relies on the API to 403 after click (PAGE-013). And the money-as-`number` typing problem from T1 is **baked into the SDK and UI** too: 15 SDK request params type money/litres as `number`, and `PumpCard`/`TankVisual` call `.toFixed(2)` on them (SDK-08/19) — the `transferStock` (`litres: string`) vs `adjustReconciliation` (`litres: number`) split proves these are bugs, not design.
 
 ### T10 — The bright spots (keep these)
 Credit where due, because the recovery plan leans on them:
@@ -140,5 +146,5 @@ Sequenced by risk-reduction per unit effort. Detail and `file:line` for every it
 
 - **`99-findings-register.md`** — the consolidated, prioritized list of all Critical and High findings with `file:line` and fixes, deduplicated across sections.
 - **Sections `01`–`14`** — the full per-domain deep dives (each 3,600–5,500 words) with complete findings tables (Critical→Info). ID prefixes: `ARCH-`, `AUTH-`, `ORG-`, `OPS-`, `INV-`, `PROC-`, `REV-`, `PAY-`, `ACCT-`, `FLEET-`, `ENT-`, `RISK-`, `INFRA-`, `DB-`.
-- **Sections `15`–`18`** — frontend foundation, frontend pages, SDK/UI, and testing (`WEB-`, `PAGE-`, `SDK-`, `TEST-`) — pending completion after the session reset.
+- **Sections `15`–`18`** — frontend foundation, frontend pages, SDK/UI, and testing (`WEB-`, `PAGE-`, `SDK-`, `TEST-`).
 - **`README.md`** — the index and the running severity tally.

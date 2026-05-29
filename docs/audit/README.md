@@ -24,23 +24,21 @@ A strip-down, atomic-level audit of the entire FuelGrid OS codebase (~59k LOC: G
 | 12 | [Risk, fraud & intelligence](./12-risk-intelligence.md) | `RISK-` | ✅ |
 | 13 | [Cross-cutting infrastructure](./13-cross-cutting-infra.md) | `INFRA-` | ✅ |
 | 14 | [Data model & migrations](./14-data-model-migrations.md) | `DB-` | ✅ |
-| 15 | Frontend foundation (auth, routing, state) | `WEB-` | ⏳ pending |
-| 16 | Frontend dashboard pages & components | `PAGE-` | ⏳ pending |
-| 17 | SDK & UI packages | `SDK-` | ⏳ pending |
-| 18 | Testing & coverage | `TEST-` | ⏳ pending |
+| 15 | [Frontend foundation (auth, routing, state)](./15-frontend-foundation.md) | `WEB-` | ✅ |
+| 16 | [Frontend dashboard pages & components](./16-frontend-pages.md) | `PAGE-` | ✅ |
+| 17 | [SDK & UI packages](./17-sdk-ui-packages.md) | `SDK-` | ✅ |
+| 18 | [Testing & coverage](./18-testing-coverage.md) | `TEST-` | ✅ |
 
-## Severity tally (sections 01–14)
+## Severity tally (all 18 sections)
 
 | Severity | Count |
 |---|---|
-| Critical | 6 |
-| High | 65 |
-| Medium | 98 |
-| Low | 122 |
-| Info | 39 |
-| **Total** | **330** |
-
-Sections 15–18 were interrupted by a session limit and will be appended; the tally and register will be updated when they land.
+| Critical | 9 |
+| High | 87 |
+| Medium | 122 |
+| Low | 145 |
+| Info | 52 |
+| **Total** | **415** |
 
 ## Method & caveats
 - Read-only: no source code was modified during the audit.
