@@ -256,6 +256,14 @@ func (s *Server) handleTransitionRiskAlert(to string) http.HandlerFunc {
 				writeError(w, http.StatusNotFound, "alert not found")
 				return "", err
 			}
+			if errors.Is(err, risk.ErrBadState) {
+				writeError(w, http.StatusConflict, "alert cannot transition to "+to+" from its current status")
+				return "", err
+			}
+			if errors.Is(err, risk.ErrDispositionRequired) {
+				writeError(w, http.StatusUnprocessableEntity, "a disposition is required to resolve or dismiss an alert")
+				return "", err
+			}
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "internal error")
 				return "", err

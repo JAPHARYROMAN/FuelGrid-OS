@@ -3,11 +3,25 @@ package risk
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+// alertAllowedFrom is the alert-status transition table: for each target
+// status, the set of statuses it may be reached from (RISK-003). 'open' is the
+// creation state, not a transition target; 'resolved' and 'dismissed' are
+// terminal — they appear only as targets, never as a from-state, so an alert
+// cannot be reopened or have its disposition overwritten.
+var alertAllowedFrom = map[string][]string{
+	"acknowledged":  {"open"},
+	"investigating": {"open", "acknowledged", "escalated"},
+	"escalated":     {"open", "acknowledged", "investigating"},
+	"resolved":      {"open", "acknowledged", "investigating", "escalated"},
+	"dismissed":     {"open", "acknowledged", "investigating", "escalated"},
+}
 
 type Alert struct {
 	ID          uuid.UUID
@@ -212,15 +226,33 @@ func (r *Repo) GetAlert(ctx context.Context, tenantID, id uuid.UUID) (*Alert, er
 // TransitionAlert moves an alert through its lifecycle and records a disposition
 // on close. Returns the updated alert.
 func (r *Repo) TransitionAlert(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, to string, disposition *string, assignedTo *uuid.UUID) (*Alert, error) {
+	allowedFrom, ok := alertAllowedFrom[to]
+	if !ok {
+		// Unknown target, or one that is never a transition target (e.g. "open").
+		return nil, ErrBadState
+	}
+	if (to == "resolved" || to == "dismissed") && (disposition == nil || strings.TrimSpace(*disposition) == "") {
+		return nil, ErrDispositionRequired
+	}
 	var a Alert
 	err := scanAlert(tx.QueryRow(ctx, `
 		UPDATE risk_alerts SET status = $3, disposition = COALESCE($4, disposition), assigned_to = COALESCE($5, assigned_to)
-		WHERE tenant_id = $1 AND id = $2
+		WHERE tenant_id = $1 AND id = $2 AND status = ANY($6::text[])
 		RETURNING `+alertColumns,
-		tenantID, id, to, disposition, assignedTo,
+		tenantID, id, to, disposition, assignedTo, allowedFrom,
 	), &a)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		// No row updated: either the alert doesn't exist (ErrNotFound) or it's
+		// in a status from which `to` is not reachable (ErrBadState).
+		var cur string
+		switch qErr := tx.QueryRow(ctx, `SELECT status FROM risk_alerts WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&cur); {
+		case errors.Is(qErr, pgx.ErrNoRows):
+			return nil, ErrNotFound
+		case qErr != nil:
+			return nil, qErr
+		default:
+			return nil, ErrBadState
+		}
 	}
 	if err != nil {
 		return nil, err

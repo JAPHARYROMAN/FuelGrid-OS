@@ -14,6 +14,9 @@ import (
 var (
 	ErrNotFound = errors.New("risk: not found")
 	ErrBadState = errors.New("risk: invalid state transition")
+	// ErrDispositionRequired is returned when an alert is resolved or dismissed
+	// without a disposition — a terminal outcome must record why (RISK-003).
+	ErrDispositionRequired = errors.New("risk: disposition required to resolve or dismiss")
 )
 
 type Repo struct{ pool *database.Pool }

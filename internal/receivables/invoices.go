@@ -15,6 +15,10 @@ var (
 	// ErrInvoiceState is returned when an invoice transition is not allowed
 	// from its current status (e.g. issuing one that is not a draft).
 	ErrInvoiceState = errors.New("receivables: invalid invoice state")
+	// ErrInvoiceNotForCustomer is returned when a payment allocation targets an
+	// invoice that belongs to a different customer than the one paying — a
+	// payment from customer A must never settle customer B's invoices (PAY-008).
+	ErrInvoiceNotForCustomer = errors.New("receivables: invoice does not belong to the paying customer")
 	// ErrOverAllocated is returned when a payment allocation exceeds an
 	// invoice's outstanding balance.
 	ErrOverAllocated = errors.New("receivables: allocation exceeds outstanding balance")
@@ -204,8 +208,11 @@ func (r *Repo) ListInvoices(ctx context.Context, tenantID uuid.UUID, customerID 
 }
 
 // ApplyInvoicePayment reduces an issued invoice's outstanding balance, updating
-// status. An amount over the outstanding balance yields ErrOverAllocated.
-func (r *Repo) ApplyInvoicePayment(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, amount string) (*CustomerInvoice, error) {
+// status. The invoice must belong to customerID — the customer making the
+// payment — so a payment can never settle another customer's invoices
+// (PAY-008). An amount over the outstanding balance yields ErrOverAllocated; an
+// invoice owned by a different customer yields ErrInvoiceNotForCustomer.
+func (r *Repo) ApplyInvoicePayment(ctx context.Context, tx pgx.Tx, tenantID, customerID, id uuid.UUID, amount string) (*CustomerInvoice, error) {
 	var i CustomerInvoice
 	err := scanInvoice(tx.QueryRow(ctx, `
 		UPDATE customer_invoices SET
@@ -214,11 +221,21 @@ func (r *Repo) ApplyInvoicePayment(ctx context.Context, tx pgx.Tx, tenantID, id 
 		        WHEN outstanding_amount - $3::numeric <= 0 THEN 'paid'
 		        ELSE 'partially_paid'
 		    END
-		WHERE tenant_id = $1 AND id = $2 AND status IN ('issued', 'partially_paid') AND outstanding_amount >= $3::numeric
+		WHERE tenant_id = $1 AND id = $2 AND customer_id = $4
+		  AND status IN ('issued', 'partially_paid') AND outstanding_amount >= $3::numeric
 		RETURNING `+invoiceColumns,
-		tenantID, id, amount,
+		tenantID, id, amount, customerID,
 	), &i)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Disambiguate a wrong-customer allocation from a genuine
+		// over-allocation/bad-state so the caller can report the right error.
+		var owner uuid.UUID
+		if qErr := tx.QueryRow(ctx,
+			`SELECT customer_id FROM customer_invoices WHERE tenant_id = $1 AND id = $2`,
+			tenantID, id,
+		).Scan(&owner); qErr == nil && owner != customerID {
+			return nil, ErrInvoiceNotForCustomer
+		}
 		return nil, ErrOverAllocated
 	}
 	if err != nil {

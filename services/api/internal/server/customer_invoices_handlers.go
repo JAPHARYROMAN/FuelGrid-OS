@@ -329,8 +329,11 @@ func (s *Server) handlePostCustomerPayment(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, "allocation amounts must be positive decimals")
 			return
 		}
-		if _, err := s.receivables.ApplyInvoicePayment(ctx, tx, actor.TenantID, al.CustomerInvoiceID, al.Amount); errors.Is(err, receivables.ErrOverAllocated) {
+		if _, err := s.receivables.ApplyInvoicePayment(ctx, tx, actor.TenantID, pmt.CustomerID, al.CustomerInvoiceID, al.Amount); errors.Is(err, receivables.ErrOverAllocated) {
 			writeError(w, http.StatusUnprocessableEntity, "allocation exceeds the invoice's outstanding balance")
+			return
+		} else if errors.Is(err, receivables.ErrInvoiceNotForCustomer) {
+			writeError(w, http.StatusUnprocessableEntity, "allocation targets an invoice that does not belong to the paying customer")
 			return
 		} else if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")

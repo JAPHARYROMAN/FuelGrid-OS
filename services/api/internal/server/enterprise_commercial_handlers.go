@@ -353,6 +353,10 @@ func (s *Server) transferTransition(w http.ResponseWriter, r *http.Request, acti
 			writeError(w, http.StatusUnprocessableEntity, "source tank has insufficient stock")
 			return "", err
 		}
+		if errors.Is(err, enterprise.ErrProductMismatch) {
+			writeError(w, http.StatusUnprocessableEntity, "transfer product does not match both tanks")
+			return "", err
+		}
 		if errors.Is(err, enterprise.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "transfer not found")
 			return "", err
