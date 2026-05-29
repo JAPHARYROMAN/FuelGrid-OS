@@ -229,6 +229,26 @@ func (r *Repo) ApproveSupplierInvoice(ctx context.Context, tx pgx.Tx, tenantID, 
 	if open > 0 {
 		return nil, ErrInvoiceHasDiscrepancy
 	}
+	// Separation of duties: the approver must not be the invoice's recorder.
+	// Lock the row so the check and the transition are atomic.
+	var recordedBy uuid.UUID
+	var curStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT recorded_by, status FROM supplier_invoices
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, id).Scan(&recordedBy, &curStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	if curStatus != "matched" {
+		return nil, ErrInvoiceNotMatched
+	}
+	if recordedBy == actorID {
+		return nil, ErrSelfApproval
+	}
 	var inv SupplierInvoice
 	err = scanSupplierInvoice(tx.QueryRow(ctx, `
 		UPDATE supplier_invoices

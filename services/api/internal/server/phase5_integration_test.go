@@ -17,7 +17,7 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	_, _, admin := h.adminContext(t, ctx)
+	_, slug, admin := h.adminContext(t, ctx)
 	suffix := time.Now().UnixNano()
 
 	// Supplier master.
@@ -113,7 +113,12 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 	if code, _ := h.patchJSON(t, "/api/v1/procurement-discrepancies/"+discrepancyID+"/status", admin, `{"status":"resolved"}`); code != http.StatusOK {
 		t.Fatalf("resolve discrepancy: %d", code)
 	}
-	if code, approved := h.invPostJSON(t, "/api/v1/supplier-invoices/"+invoiceID+"/approve", admin, map[string]any{}); code != http.StatusOK || approved["status"] != "approved" {
+	// Separation of duties: the recorder (admin) cannot approve their own invoice.
+	if code, _ := h.invPostJSON(t, "/api/v1/supplier-invoices/"+invoiceID+"/approve", admin, map[string]any{}); code != http.StatusForbidden {
+		t.Fatalf("self-approve invoice should be 403, got %d", code)
+	}
+	approver := h.secondApprover(t, ctx, slug)
+	if code, approved := h.invPostJSON(t, "/api/v1/supplier-invoices/"+invoiceID+"/approve", approver, map[string]any{}); code != http.StatusOK || approved["status"] != "approved" {
 		t.Fatalf("approve resolved invoice: %d %v", code, approved)
 	}
 	var payableEvents int

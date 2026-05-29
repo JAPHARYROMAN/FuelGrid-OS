@@ -26,6 +26,7 @@ var (
 	ErrInvoiceNotMatched     = errors.New("procurement: supplier invoice is not matched")
 	ErrInvoiceHasDiscrepancy = errors.New("procurement: supplier invoice has open discrepancies")
 	ErrAlreadyResolved       = errors.New("procurement: discrepancy already resolved")
+	ErrSelfApproval          = errors.New("procurement: approver cannot be the invoice recorder")
 )
 
 func scanTimePtr(t *time.Time) *time.Time { return t }

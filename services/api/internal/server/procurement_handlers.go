@@ -1019,6 +1019,10 @@ func (s *Server) handleApproveSupplierInvoice(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusConflict, "invoice is not matched")
 		return
 	}
+	if errors.Is(err, procurement.ErrSelfApproval) {
+		writeError(w, http.StatusForbidden, "separation of duties: you cannot approve an invoice you recorded")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
