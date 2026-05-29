@@ -311,18 +311,21 @@ func (s *Server) handlePersistReconciliation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	computed, code, msg := s.computeReconciliation(ctx, s.deps.DB, actor.TenantID, tank, day.ID)
-	if code != 0 {
-		writeError(w, code, msg)
-		return
-	}
-
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Compute inside the tx (not on the pool beforehand) so the persisted
+	// figures reflect the ledger within the same transaction that writes them,
+	// not a snapshot read earlier on a separate connection (INV-014).
+	computed, code, msg := s.computeReconciliation(ctx, tx, actor.TenantID, tank, day.ID)
+	if code != 0 {
+		writeError(w, code, msg)
+		return
+	}
 
 	rec, err := s.reconciliation.UpsertDraft(ctx, tx, actor.TenantID, computed.draftInput(tank.ID, day.ID, computed.status()))
 	if errors.Is(err, reconciliation.ErrSealed) {
@@ -518,7 +521,18 @@ func (s *Server) handleSealReconciliation(w http.ResponseWriter, r *http.Request
 	}
 
 	ctx := r.Context()
-	computed, code, msg := s.computeReconciliation(ctx, s.deps.DB, actor.TenantID, tank, rec.OperatingDayID)
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Compute inside the tx so the sealed figures — and the residual write-off
+	// posted below — reflect the ledger at seal time, not a pre-tx snapshot read
+	// on a separate connection (INV-014).
+	computed, code, msg := s.computeReconciliation(ctx, tx, actor.TenantID, tank, rec.OperatingDayID)
 	if code != 0 {
 		writeError(w, code, msg)
 		return
@@ -527,13 +541,6 @@ func (s *Server) handleSealReconciliation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusConflict, "variance is over tolerance; record adjustments before sealing")
 		return
 	}
-
-	tx, err := s.deps.DB.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Write off the residual variance so the ledger lands exactly on the
 	// sealed physical figure — the balance-forward anchor for the next period.
