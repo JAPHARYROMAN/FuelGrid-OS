@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("expenses: not found")
-	ErrBadState  = errors.New("expenses: invalid state transition")
-	ErrOverdraw  = errors.New("expenses: transaction would overdraw the float")
-	ErrFloatBusy = errors.New("expenses: float is not active")
+	ErrNotFound     = errors.New("expenses: not found")
+	ErrBadState     = errors.New("expenses: invalid state transition")
+	ErrOverdraw     = errors.New("expenses: transaction would overdraw the float")
+	ErrFloatBusy    = errors.New("expenses: float is not active")
+	ErrSelfApproval = errors.New("expenses: approver cannot be the creator")
 )
 
 type Repo struct{ pool *database.Pool }

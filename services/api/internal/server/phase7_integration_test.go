@@ -412,6 +412,31 @@ func TestPhase7_Receivables(t *testing.T) {
 	}
 }
 
+// secondApprover creates a second active user (copying the admin's password
+// hash so the shared test password logs it in) with the system_admin role and
+// returns a session token. Used to satisfy separation-of-duties guards where
+// the approver must differ from the creator.
+func (h *harness) secondApprover(t *testing.T, ctx context.Context, slug string) string {
+	t.Helper()
+	const email = "approver@fuelgrid.local"
+	var id string
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		SELECT tenant_id, $2, 'Second Approver', 'active', password_hash, now()
+		FROM users WHERE tenant_id = $1 AND email = $3
+		RETURNING id
+	`, h.ids.tenantID, email, h.ids.adminEmail).Scan(&id); err != nil {
+		t.Fatalf("create second approver: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id, tenant_id)
+		SELECT $1, id, $2 FROM roles WHERE code = 'system_admin' AND is_system
+	`, id, h.ids.tenantID); err != nil {
+		t.Fatalf("grant second approver role: %v", err)
+	}
+	return h.login(t, slug, email)
+}
+
 // TestPhase7_ExpensesAndPettyCash covers Category E: an expense flows
 // draft -> submitted -> approved -> posted (debit expense, credit cash), and a
 // petty-cash float is topped up, spent against, guarded from overdraw, and
@@ -420,7 +445,7 @@ func TestPhase7_ExpensesAndPettyCash(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	ctx := context.Background()
-	_, _, admin := h.adminContext(t, ctx)
+	_, slug, admin := h.adminContext(t, ctx)
 
 	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
 		t.Fatalf("seed chart: %d", code)
@@ -445,10 +470,22 @@ func TestPhase7_ExpensesAndPettyCash(t *testing.T) {
 	if code, _ := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/post", admin, nil, ""); code != http.StatusConflict {
 		t.Fatalf("post before approve: %d, want 409", code)
 	}
-	for _, action := range []string{"submit", "approve", "post"} {
-		if code, raw := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/"+action, admin, nil, ""); code != http.StatusOK {
-			t.Fatalf("expense %s: %d %s", action, code, raw)
-		}
+	// Submit by the creator.
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/submit", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("expense submit: %d %s", code, raw)
+	}
+	// Separation of duties: the creator cannot approve their own expense.
+	if code, _ := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", admin, nil, ""); code != http.StatusForbidden {
+		t.Fatalf("self-approve should be 403, got %d", code)
+	}
+	// A different user with approval rights can approve it.
+	approver := h.secondApprover(t, ctx, slug)
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", approver, nil, ""); code != http.StatusOK {
+		t.Fatalf("expense approve by second user: %d %s", code, raw)
+	}
+	// Post by the creator (posting is not an approval step).
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/expenses/"+expID+"/post", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("expense post: %d %s", code, raw)
 	}
 	if code, got := h.getJSON(t, "/api/v1/expenses/"+expID, admin); code != http.StatusOK ||
 		got["status"] != "posted" || got["journal_entry_id"] == nil {

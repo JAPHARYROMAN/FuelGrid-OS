@@ -180,9 +180,32 @@ func (r *Repo) SubmitExpense(ctx context.Context, tx pgx.Tx, tenantID, id uuid.U
 }
 
 // ApproveExpense moves submitted -> approved, recording the approver.
+// Separation of duties: the approver must not be the expense's creator. The
+// row is locked so the state + creator check and the transition are atomic
+// (no TOCTOU between validating and approving).
 func (r *Repo) ApproveExpense(ctx context.Context, tx pgx.Tx, tenantID, id, approverID uuid.UUID) (*Expense, error) {
+	var status string
+	var createdBy uuid.UUID
+	err := tx.QueryRow(ctx, `
+		SELECT status, created_by FROM expenses
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE
+	`, tenantID, id).Scan(&status, &createdBy)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if status != "submitted" {
+		return nil, ErrBadState
+	}
+	if createdBy == approverID {
+		return nil, ErrSelfApproval
+	}
+
 	var e Expense
-	err := scanExpense(tx.QueryRow(ctx, `
+	err = scanExpense(tx.QueryRow(ctx, `
 		UPDATE expenses SET status = 'approved', approved_by = $3
 		WHERE tenant_id = $1 AND id = $2 AND status = 'submitted'
 		RETURNING `+expenseColumns,

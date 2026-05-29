@@ -252,6 +252,10 @@ func (s *Server) expenseTransition(w http.ResponseWriter, r *http.Request, actio
 		Action: "expense." + action, EventType: "Expense" + action, EntityType: "expense", EntityID: id.String(),
 	}, func(tx pgx.Tx) (string, error) {
 		e, err := fn(tx, actor, id)
+		if errors.Is(err, expenses.ErrSelfApproval) {
+			writeError(w, http.StatusForbidden, "separation of duties: you cannot approve an expense you created")
+			return "", err
+		}
 		if errors.Is(err, expenses.ErrBadState) {
 			writeError(w, http.StatusConflict, "expense is not in the required state for this action")
 			return "", err
