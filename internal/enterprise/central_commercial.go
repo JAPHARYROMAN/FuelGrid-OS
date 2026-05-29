@@ -11,6 +11,11 @@ import (
 
 var ErrInsufficientStock = errors.New("enterprise: insufficient source stock for transfer")
 
+// ErrProductMismatch is returned when a stock transfer's source or destination
+// tank does not hold the transfer's product — moving fuel between tanks of
+// different products would corrupt both ledgers (ENT-25).
+var ErrProductMismatch = errors.New("enterprise: transfer product does not match both tanks")
+
 // ---- Central pricing (Stage 7) ----
 
 type PriceRollout struct {
@@ -249,6 +254,19 @@ func (r *Repo) ReceiveTransfer(ctx context.Context, tx pgx.Tx, tenantID, id, rec
 	}
 	if t.Status != "approved" && t.Status != "dispatched" {
 		return nil, ErrBadState
+	}
+	// ENT-25: both tanks must hold the transfer's product. Without this, a
+	// transfer could move litres of one product out of a tank holding another,
+	// corrupting both tanks' ledgers and their reconciliations.
+	var fromProduct, toProduct uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT product_id FROM tanks WHERE tenant_id = $1 AND id = $2`, tenantID, t.FromTankID).Scan(&fromProduct); err != nil {
+		return nil, err
+	}
+	if err := tx.QueryRow(ctx, `SELECT product_id FROM tanks WHERE tenant_id = $1 AND id = $2`, tenantID, t.ToTankID).Scan(&toProduct); err != nil {
+		return nil, err
+	}
+	if fromProduct != t.ProductID || toProduct != t.ProductID {
+		return nil, ErrProductMismatch
 	}
 	var fromBal, toBal float64
 	if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT balance_after FROM stock_movements WHERE tenant_id=$1 AND tank_id=$2 AND status='posted' ORDER BY seq DESC LIMIT 1),0)`, tenantID, t.FromTankID).Scan(&fromBal); err != nil {

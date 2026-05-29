@@ -9,6 +9,25 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// caseAllowedFrom / actionAllowedFrom are the investigation transition tables
+// (RISK-004): for each target status, the statuses it may be reached from.
+// Creation states ('open' for cases, 'suggested' for actions) are not targets;
+// terminal states ('closed', 'completed', 'dismissed') never appear as a
+// from-state, so a closed case or finished action cannot be silently reopened.
+var caseAllowedFrom = map[string][]string{
+	"assigned":        {"open", "in_review", "action_required"},
+	"in_review":       {"open", "assigned", "action_required"},
+	"action_required": {"assigned", "in_review"},
+	"resolved":        {"open", "assigned", "in_review", "action_required"},
+	"closed":          {"resolved"},
+}
+
+var actionAllowedFrom = map[string][]string{
+	"accepted":  {"suggested"},
+	"completed": {"suggested", "accepted"},
+	"dismissed": {"suggested", "accepted"},
+}
+
 type Case struct {
 	ID         uuid.UUID
 	Title      string
@@ -97,26 +116,54 @@ func (r *Repo) AddAction(ctx context.Context, tx pgx.Tx, tenantID, caseID uuid.U
 }
 
 func (r *Repo) SetActionStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) error {
-	tag, err := tx.Exec(ctx, `UPDATE investigation_case_actions SET status = $3 WHERE tenant_id = $1 AND id = $2`, tenantID, id, status)
+	allowedFrom, ok := actionAllowedFrom[status]
+	if !ok {
+		return ErrBadState
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE investigation_case_actions SET status = $3 WHERE tenant_id = $1 AND id = $2 AND status = ANY($4::text[])`,
+		tenantID, id, status, allowedFrom)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		// Disambiguate missing action from an illegal transition.
+		var cur string
+		switch qErr := tx.QueryRow(ctx, `SELECT status FROM investigation_case_actions WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&cur); {
+		case errors.Is(qErr, pgx.ErrNoRows):
+			return ErrNotFound
+		case qErr != nil:
+			return qErr
+		default:
+			return ErrBadState
+		}
 	}
 	return nil
 }
 
 // SetCaseStatus transitions a case and records a resolution on close.
 func (r *Repo) SetCaseStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string, resolution *string, assignedTo *uuid.UUID) (*Case, error) {
+	allowedFrom, ok := caseAllowedFrom[status]
+	if !ok {
+		return nil, ErrBadState
+	}
 	var c Case
 	err := scanCase(tx.QueryRow(ctx, `
 		UPDATE investigation_cases SET status = $3, resolution = COALESCE($4, resolution), assigned_to = COALESCE($5, assigned_to)
-		WHERE tenant_id = $1 AND id = $2 RETURNING `+caseColumns,
-		tenantID, id, status, resolution, assignedTo,
+		WHERE tenant_id = $1 AND id = $2 AND status = ANY($6::text[]) RETURNING `+caseColumns,
+		tenantID, id, status, resolution, assignedTo, allowedFrom,
 	), &c)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		// Disambiguate missing case from an illegal transition.
+		var cur string
+		switch qErr := tx.QueryRow(ctx, `SELECT status FROM investigation_cases WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&cur); {
+		case errors.Is(qErr, pgx.ErrNoRows):
+			return nil, ErrNotFound
+		case qErr != nil:
+			return nil, qErr
+		default:
+			return nil, ErrBadState
+		}
 	}
 	if err != nil {
 		return nil, err

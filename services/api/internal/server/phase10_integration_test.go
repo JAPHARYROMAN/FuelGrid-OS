@@ -73,6 +73,11 @@ func TestPhase10_SignalsRulesDetection(t *testing.T) {
 	if code, res := h.invPostJSON(t, "/api/v1/risk/alerts/"+alertID+"/resolve", admin, map[string]any{"disposition": "data_entry_error"}); code != http.StatusOK || res["status"] != "resolved" {
 		t.Fatalf("resolve = %d %v", code, res)
 	}
+	// A resolved alert is terminal: re-transitioning it is rejected by the
+	// state machine, so it can never be silently reopened (RISK-003).
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/alerts/"+alertID+"/acknowledge", admin, map[string]any{}); code != http.StatusConflict {
+		t.Fatalf("re-acknowledge resolved alert = %d, want 409", code)
+	}
 }
 
 // TestPhase10_ScoringDashboard covers Category C: station risk scoring from

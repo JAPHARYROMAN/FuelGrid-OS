@@ -261,6 +261,9 @@ func (s *Server) handleSetCaseActionStatus(w http.ResponseWriter, r *http.Reques
 		if err := s.risk.SetActionStatus(r.Context(), tx, actor.TenantID, actionID, req.Status); errors.Is(err, risk.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "action not found")
 			return "", err
+		} else if errors.Is(err, risk.ErrBadState) {
+			writeError(w, http.StatusConflict, "action cannot transition to "+req.Status+" from its current status")
+			return "", err
 		} else if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return "", err
@@ -302,6 +305,10 @@ func (s *Server) handleSetCaseStatus(w http.ResponseWriter, r *http.Request) {
 		out, err := s.risk.SetCaseStatus(r.Context(), tx, actor.TenantID, id, req.Status, req.Resolution, assignee)
 		if errors.Is(err, risk.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "case not found")
+			return "", err
+		}
+		if errors.Is(err, risk.ErrBadState) {
+			writeError(w, http.StatusConflict, "case cannot transition to "+req.Status+" from its current status")
 			return "", err
 		}
 		if err != nil {
