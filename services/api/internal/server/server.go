@@ -171,11 +171,14 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(limitRequestBody)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   cfg.CORSOrigins,
-		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
-		AllowedHeaders:   []string{"Authorization", "Content-Type", "X-Request-Id"},
-		ExposedHeaders:   []string{"X-Request-Id"},
-		AllowCredentials: true,
+		AllowedOrigins: cfg.CORSOrigins,
+		AllowedMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "X-Request-Id"},
+		ExposedHeaders: []string{"X-Request-Id"},
+		// Sessions are carried as Authorization: Bearer tokens, not cookies,
+		// so credentialed CORS is unnecessary — and enabling it alongside a
+		// permissive origin list is the classic CORS footgun (AUTH-27).
+		AllowCredentials: false,
 		MaxAge:           300,
 	}))
 

@@ -87,6 +87,13 @@ func (s *Server) stationReadFilter(w http.ResponseWriter, r *http.Request, actor
 	if tenantWide {
 		return nil, true
 	}
+	if len(scope) == 0 {
+		// Not tenant-wide and no station grants ⇒ no station-scoped access.
+		// Without this, an empty filter would collapse to "no restriction"
+		// and leak every station (the AUTH-20 fail-open, list-side).
+		writeError(w, http.StatusForbidden, "no station access")
+		return nil, false
+	}
 	return scope, true
 }
 
