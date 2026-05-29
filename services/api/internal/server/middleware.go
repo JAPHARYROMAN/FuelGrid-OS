@@ -110,3 +110,20 @@ func routePattern(r *http.Request) string {
 	}
 	return path
 }
+
+// maxRequestBody is the global cap on request body size: generous enough for
+// JSON payloads and CSV strapping-chart uploads, bounded so a client can't
+// exhaust server memory with an unbounded (or malicious) body.
+const maxRequestBody = 4 << 20 // 4 MiB
+
+// limitRequestBody wraps every request body in http.MaxBytesReader so a read
+// past the cap fails instead of buffering unbounded input. Handlers surface
+// the failed read as a 400 ("invalid JSON body") or the server emits 413.
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}

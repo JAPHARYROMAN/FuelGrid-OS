@@ -5,6 +5,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -12,13 +13,19 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Config holds Postgres pool tuning. Zero values fall back to pgx defaults.
+// Config holds Postgres pool tuning. Zero values fall back to pgx defaults
+// (or, for the two server-side timeouts, to the conservative defaults below).
 type Config struct {
 	URL             string
 	MaxOpenConns    int32
 	MinIdleConns    int32
 	ConnMaxLifetime time.Duration
 	ConnMaxIdleTime time.Duration
+	// StatementTimeout bounds any single query; IdleInTxTimeout bounds how
+	// long a transaction may sit idle. Both protect the pool from a single
+	// runaway query/transaction pinning a connection. Zero -> default.
+	StatementTimeout time.Duration
+	IdleInTxTimeout  time.Duration
 }
 
 // Pool is the shared connection pool type used across the service.
@@ -59,6 +66,24 @@ func Connect(ctx context.Context, cfg Config) (*Pool, error) {
 	if cfg.ConnMaxIdleTime > 0 {
 		poolCfg.MaxConnIdleTime = cfg.ConnMaxIdleTime
 	}
+
+	// Server-side timeouts, sent as startup parameters on every pooled
+	// connection. A single runaway query (statement_timeout) or an
+	// abandoned open transaction (idle_in_transaction_session_timeout) can
+	// otherwise pin a connection indefinitely and exhaust the pool.
+	stmtTimeout := cfg.StatementTimeout
+	if stmtTimeout <= 0 {
+		stmtTimeout = 30 * time.Second
+	}
+	idleTxTimeout := cfg.IdleInTxTimeout
+	if idleTxTimeout <= 0 {
+		idleTxTimeout = 60 * time.Second
+	}
+	if poolCfg.ConnConfig.RuntimeParams == nil {
+		poolCfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	poolCfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(stmtTimeout.Milliseconds(), 10)
+	poolCfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = strconv.FormatInt(idleTxTimeout.Milliseconds(), 10)
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

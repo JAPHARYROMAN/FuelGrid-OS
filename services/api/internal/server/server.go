@@ -152,6 +152,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Use(s.recordMetrics)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
+	r.Use(limitRequestBody)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions},
