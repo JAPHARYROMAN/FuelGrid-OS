@@ -467,6 +467,55 @@ func TestPhase2_ReadAuthorization(t *testing.T) {
 	if code, m := h.getJSON(t, "/api/v1/products", op); code != 200 || countOf(m) != 2 {
 		t.Fatalf("operator /products: code=%d count=%d (want 200/2)", code, countOf(m))
 	}
+
+	// ORG-01: the stations list is station-scoped too. Admin (tenant-wide)
+	// sees both stations; the operator (scoped to station1) sees only one and
+	// cannot filter to an out-of-scope station.
+	if code, m := h.getJSON(t, "/api/v1/stations", admin); code != 200 || countOf(m) != 2 {
+		t.Fatalf("admin /stations: code=%d count=%d (want 200/2)", code, countOf(m))
+	}
+	if code, m := h.getJSON(t, "/api/v1/stations", op); code != 200 || countOf(m) != 1 {
+		t.Fatalf("operator /stations: code=%d count=%d (want 200/1)", code, countOf(m))
+	}
+	if code, _ := h.do(t, http.MethodGet, "/api/v1/stations?station_id="+h.ids.station2.String(), op, nil, ""); code != http.StatusForbidden {
+		t.Fatalf("operator /stations?station=station2: code=%d (want 403)", code)
+	}
+}
+
+// TestPhase2_TenantWideIsExplicit covers AUTH-20: tenant-wide reach is a role
+// property, not the absence of station grants. A user holding a station-scoped
+// role with no user_station_access rows must get no station-scoped access
+// (default-deny), not silent tenant-wide reach.
+func TestPhase2_TenantWideIsExplicit(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+
+	// A station_manager (not a tenant-wide role) with zero station grants.
+	hash, err := password.New(password.DefaultParams, "").Hash(testPassword)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	email := fmt.Sprintf("noscope-%d@it.local", time.Now().UnixNano())
+	var uid uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'No Scope', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, email, hash).Scan(&uid); err != nil {
+		t.Fatalf("seed no-scope user: %v", err)
+	}
+	grantRole(t, ctx, h.pool, h.ids.tenantID, uid, "station_manager")
+	tok := h.login(t, tenantSlug, email)
+
+	// No station grants + non-tenant-wide role ⇒ scoped list is forbidden,
+	// not a silent tenant-wide listing.
+	if code, _ := h.do(t, http.MethodGet, "/api/v1/stations", tok, nil, ""); code != http.StatusForbidden {
+		t.Fatalf("no-scope /stations: code=%d (want 403)", code)
+	}
+	if code, _ := h.do(t, http.MethodGet, "/api/v1/tanks", tok, nil, ""); code != http.StatusForbidden {
+		t.Fatalf("no-scope /tanks: code=%d (want 403)", code)
+	}
 }
 
 func TestPhase2_NozzleProductInvariantDBEnforced(t *testing.T) {

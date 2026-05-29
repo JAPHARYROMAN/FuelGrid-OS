@@ -81,26 +81,21 @@ func scan(row pgx.Row, s *Station) error {
 	)
 }
 
-func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, regionID *uuid.UUID) ([]Station, error) {
-	var (
-		rows pgx.Rows
-		err  error
-	)
-	if regionID != nil {
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+columns+`
-			FROM stations
-			WHERE tenant_id = $1 AND region_id = $2 AND status <> 'deleted'
-			ORDER BY name
-		`, tenantID, *regionID)
-	} else {
-		rows, err = r.pool.Query(ctx, `
-			SELECT `+columns+`
-			FROM stations
-			WHERE tenant_id = $1 AND status <> 'deleted'
-			ORDER BY name
-		`, tenantID)
-	}
+// List returns the tenant's stations, optionally filtered by region and
+// restricted to a set of station ids. A nil stationIDs slice means "no
+// station-scope restriction" (caller is tenant-wide); a non-nil slice limits
+// the result to those ids — this is the station-read scope enforced for
+// station-restricted actors (ORG-01). An empty (non-nil) slice yields no rows.
+func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, regionID *uuid.UUID, stationIDs []uuid.UUID) ([]Station, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM stations
+		WHERE tenant_id = $1
+		  AND ($2::uuid IS NULL OR region_id = $2::uuid)
+		  AND ($3::uuid[] IS NULL OR id = ANY($3::uuid[]))
+		  AND status <> 'deleted'
+		ORDER BY name
+	`, tenantID, regionID, database.UUIDStrings(stationIDs))
 	if err != nil {
 		return nil, err
 	}

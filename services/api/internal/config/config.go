@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
@@ -74,7 +75,30 @@ func Load() (Config, error) {
 	if err := envconfig.Process("", &cfg); err != nil {
 		return Config{}, fmt.Errorf("load config: %w", err)
 	}
+	if err := cfg.validate(); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
+}
+
+// validate rejects unsafe configurations that must never reach production.
+// Outside development the CORS allow-list must be explicit https origins:
+// a wildcard would let any site drive the API, and plain http exposes
+// tokens in transit (AUTH-27). Development keeps the permissive localhost
+// default so the dev stack just works.
+func (c Config) validate() error {
+	if c.Env == "development" {
+		return nil
+	}
+	for _, o := range c.CORSOrigins {
+		switch {
+		case o == "*":
+			return fmt.Errorf("config: API_CORS_ALLOWED_ORIGINS must not be '*' outside development")
+		case !strings.HasPrefix(o, "https://"):
+			return fmt.Errorf("config: API_CORS_ALLOWED_ORIGINS entry %q must be an explicit https:// origin outside development", o)
+		}
+	}
+	return nil
 }
 
 // Addr returns the host:port string for the HTTP listener.

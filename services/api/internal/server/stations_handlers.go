@@ -59,7 +59,14 @@ func (s *Server) handleListStations(w http.ResponseWriter, r *http.Request) {
 		}
 		regionID = &id
 	}
-	rows, err := s.stations.List(r.Context(), actor.TenantID, regionID)
+	// Restrict to the actor's station scope (ORG-01). A tenant-wide actor
+	// gets a nil filter (all stations); a station-restricted actor only sees
+	// their assigned stations, and a ?station_id outside scope is rejected.
+	filter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
+	}
+	rows, err := s.stations.List(r.Context(), actor.TenantID, regionID, filter)
 	if err != nil {
 		s.logger.Error("list stations", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

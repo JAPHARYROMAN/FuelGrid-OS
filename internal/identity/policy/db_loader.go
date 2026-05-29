@@ -9,9 +9,9 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
 
-// DBLoader pulls a user's permissions and station scope from Postgres.
-// Three round-trips today; once observability is in place we'll know
-// whether the per-request cost is worth caching in Redis.
+// DBLoader pulls a user's permissions, station scope, and tenant-wide flag
+// from Postgres. A few round-trips today; once observability is in place
+// we'll know whether the per-request cost is worth caching in Redis.
 type DBLoader struct {
 	pool *database.Pool
 }
@@ -57,8 +57,9 @@ func (l *DBLoader) Load(ctx context.Context, actor identity.Actor) (PermissionSe
 		return PermissionSet{}, err
 	}
 
-	// Explicit station scope. Absence of rows means TENANT-WIDE access for
-	// every station_scoped permission the actor's roles grant.
+	// Explicit station scope. For a station-restricted actor these are the
+	// only stations they may touch for station_scoped permissions; an actor
+	// with no rows and no tenant-wide role has no station-scoped access.
 	srows, err := l.pool.Query(ctx, `
 		SELECT station_id FROM user_station_access WHERE user_id = $1
 	`, actor.UserID)
@@ -77,7 +78,19 @@ func (l *DBLoader) Load(ctx context.Context, actor identity.Actor) (PermissionSe
 		return PermissionSet{}, err
 	}
 
-	ps.TenantWide = len(ps.StationIDs) == 0
+	// Tenant-wide reach is an explicit role property (AUTH-20), not the mere
+	// absence of station grants. Only holders of a role flagged tenant_wide
+	// see across the whole tenant; everyone else is confined to StationIDs.
+	if err := l.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM user_roles ur
+			JOIN roles r ON r.id = ur.role_id
+			WHERE ur.user_id = $1 AND r.tenant_wide
+		)
+	`, actor.UserID).Scan(&ps.TenantWide); err != nil {
+		return PermissionSet{}, err
+	}
 
 	return ps, nil
 }
