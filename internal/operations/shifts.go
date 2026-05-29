@@ -122,6 +122,43 @@ func (r *Repo) GetShift(ctx context.Context, tenantID, id uuid.UUID) (*Shift, er
 	return &s, nil
 }
 
+// GetShiftForUpdate loads a shift and locks its row FOR UPDATE inside the
+// caller's tx. A shift state transition (approve) re-reads and re-validates
+// under this lock so it serializes against a concurrent cash submission, which
+// takes FOR SHARE on the same row before raising an exception (see
+// LockShiftStatusForShare). Returns ErrShiftNotFound when the shift is absent.
+func (r *Repo) GetShiftForUpdate(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (*Shift, error) {
+	var s Shift
+	err := scanShift(tx.QueryRow(ctx, `
+		SELECT `+shiftColumns+` FROM shifts WHERE id = $1 AND tenant_id = $2
+		FOR UPDATE
+	`, id, tenantID), &s)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrShiftNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// LockShiftStatusForShare takes a FOR SHARE lock on the shift row inside the
+// caller's tx and returns its current status. FOR SHARE conflicts with the
+// FOR UPDATE a shift approval takes, so an exception raised during cash
+// submission cannot be missed by a concurrent approval (and vice versa).
+// Returns ErrShiftNotFound when the shift is absent for the tenant.
+func (r *Repo) LockShiftStatusForShare(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, error) {
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT status FROM shifts WHERE id = $1 AND tenant_id = $2
+		FOR SHARE
+	`, id, tenantID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrShiftNotFound
+	}
+	return status, err
+}
+
 func (r *Repo) OpenShift(ctx context.Context, tx pgx.Tx, tenantID, stationID, dayID, openedBy uuid.UUID, name string, notes *string) (*Shift, error) {
 	var s Shift
 	if err := scanShift(tx.QueryRow(ctx, `

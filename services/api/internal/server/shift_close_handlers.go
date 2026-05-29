@@ -334,6 +334,20 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the shift row FOR SHARE and re-check its status inside the tx. This
+	// conflicts with the FOR UPDATE a shift approval takes, so the cash_variance
+	// exception this may raise cannot be missed by a concurrent approval, and
+	// cash cannot be submitted onto a shift that was just approved (OPS-009).
+	lockedStatus, err := s.operations.LockShiftStatusForShare(ctx, tx, actor.TenantID, shift.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if lockedStatus != "closed" {
+		writeError(w, http.StatusConflict, "shift must be closed before cash is submitted")
+		return
+	}
+
 	sub, err := s.operations.InsertCashSubmission(ctx, tx, actor.TenantID, operations.CashSubmissionInput{
 		ShiftID: shift.ID, ExpectedCash: expected,
 		CashAmount: req.CashAmount, MobileMoneyAmount: req.MobileMoneyAmount,

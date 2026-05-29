@@ -77,7 +77,7 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	open, err := s.operations.OpenExceptionCountForShift(ctx, actor.TenantID, before.ID)
+	open, err := s.operations.OpenExceptionCountForShift(ctx, s.deps.DB, actor.TenantID, before.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -93,6 +93,33 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the shift row, then re-validate its status and open-exception count
+	// inside the tx. Cash submission takes FOR SHARE on this same row before it
+	// raises an exception, so a late exception cannot slip past approval and a
+	// second approval cannot race this one (OPS-009).
+	locked, err := s.operations.GetShiftForUpdate(ctx, tx, actor.TenantID, before.ID)
+	if errors.Is(err, operations.ErrShiftNotFound) {
+		writeError(w, http.StatusNotFound, "shift not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if locked.Status != "closed" {
+		writeError(w, http.StatusConflict, "only a closed shift can be approved")
+		return
+	}
+	openInTx, err := s.operations.OpenExceptionCountForShift(ctx, tx, actor.TenantID, before.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if openInTx > 0 {
+		writeError(w, http.StatusConflict, "resolve the shift's open exceptions before approving")
+		return
+	}
 
 	after, err := s.operations.ApproveShift(ctx, tx, actor.TenantID, before.ID, actor.UserID)
 	if err != nil {

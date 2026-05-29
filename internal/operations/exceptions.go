@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
 // ShiftException is an auto-raised mechanical anomaly on a shift. An open
@@ -103,10 +105,12 @@ func (r *Repo) ResolveException(ctx context.Context, tx pgx.Tx, tenantID, id, ac
 }
 
 // OpenExceptionCountForShift counts unresolved exceptions on a shift — the
-// guard that blocks approval.
-func (r *Repo) OpenExceptionCountForShift(ctx context.Context, tenantID, shiftID uuid.UUID) (int, error) {
+// guard that blocks approval. It runs through any Querier so approval can
+// re-count inside the same tx that holds FOR UPDATE on the shift row, closing
+// the TOCTOU where an exception is raised between the count and the approve.
+func (r *Repo) OpenExceptionCountForShift(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (int, error) {
 	var n int
-	err := r.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT count(*) FROM shift_exceptions
 		WHERE tenant_id = $1 AND shift_id = $2 AND status = 'open'
 	`, tenantID, shiftID).Scan(&n)
