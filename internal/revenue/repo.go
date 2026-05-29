@@ -8,11 +8,13 @@ package revenue
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
@@ -213,4 +215,93 @@ func (r *Repo) InventoryValuation(ctx context.Context, tenantID, stationID uuid.
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// ShiftRevenue is the GL-posting summary of a shift's recognized sales: the
+// gross/net/tax money totals (decimal strings) plus the station and the
+// business date the revenue journal should be dated to.
+type ShiftRevenue struct {
+	Gross        string
+	Net          string
+	Tax          string
+	StationID    uuid.UUID
+	BusinessDate time.Time
+	Found        bool
+}
+
+// ShiftRevenueTotals sums a shift's recognized sales for GL posting.
+func (r *Repo) ShiftRevenueTotals(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (ShiftRevenue, error) {
+	var sr ShiftRevenue
+	var n int
+	// station_id and business_date come from the shift (always present); the
+	// money totals are summed from the shift's recognized sales. Avoids any
+	// aggregate over uuid (Postgres has no max(uuid)).
+	err := q.QueryRow(ctx, `
+		SELECT
+		    (SELECT count(*)                          FROM sales WHERE tenant_id = $1 AND shift_id = $2),
+		    COALESCE((SELECT SUM(gross_amount)        FROM sales WHERE tenant_id = $1 AND shift_id = $2), 0)::text,
+		    COALESCE((SELECT SUM(net_amount)          FROM sales WHERE tenant_id = $1 AND shift_id = $2), 0)::text,
+		    COALESCE((SELECT SUM(tax_amount)          FROM sales WHERE tenant_id = $1 AND shift_id = $2), 0)::text,
+		    sh.station_id,
+		    od.business_date
+		FROM shifts sh
+		JOIN operating_days od ON od.id = sh.operating_day_id AND od.tenant_id = sh.tenant_id
+		WHERE sh.tenant_id = $1 AND sh.id = $2
+	`, tenantID, shiftID).Scan(&n, &sr.Gross, &sr.Net, &sr.Tax, &sr.StationID, &sr.BusinessDate)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sr, nil // shift not found -> Found stays false
+	}
+	if err != nil {
+		return sr, err
+	}
+	sr.Found = n > 0
+	return sr, nil
+}
+
+// PostShiftRevenueJournal posts the general-ledger revenue entry for an
+// approved shift's recognized sales, inside the caller's tx:
+//
+//	DR sales_clearing (gross)  CR sales_revenue (net)  CR output_vat (tax)
+//
+// gross = net + tax, so the entry balances. It is idempotent — it skips if an
+// entry already exists for the shift — and a no-op (posted=false, nil error)
+// when the shift has no recognized sales. Account/period errors propagate so
+// the caller can decide whether to retry or log-and-skip (the tenant's chart or
+// period may not be configured yet). posted=true only when a new entry was
+// written.
+func (r *Repo) PostShiftRevenueJournal(ctx context.Context, tx pgx.Tx, acct *accounting.Repo, tenantID, shiftID, postedBy uuid.UUID) (*accounting.JournalEntry, bool, error) {
+	exists, err := acct.EntryExistsForSource(ctx, tx, tenantID, "shift_revenue", shiftID)
+	if err != nil {
+		return nil, false, err
+	}
+	if exists {
+		return nil, false, nil
+	}
+
+	sr, err := r.ShiftRevenueTotals(ctx, tx, tenantID, shiftID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !sr.Found || sr.Gross == "0" || sr.Gross == "0.00" {
+		return nil, false, nil
+	}
+
+	station := sr.StationID
+	memo := "shift sales revenue"
+	lines := []accounting.PostLine{
+		{SystemKey: "sales_clearing", Debit: sr.Gross, Credit: "0", StationID: &station},
+		{SystemKey: "sales_revenue", Debit: "0", Credit: sr.Net, StationID: &station},
+	}
+	if sr.Tax != "0" && sr.Tax != "0.00" {
+		lines = append(lines, accounting.PostLine{SystemKey: "output_vat", Debit: "0", Credit: sr.Tax, StationID: &station})
+	}
+
+	entry, err := acct.PostEntry(ctx, tx, tenantID, accounting.PostEntryInput{
+		EntryDate: sr.BusinessDate, SourceType: "shift_revenue", SourceID: &shiftID,
+		StationID: &station, Memo: &memo, PostedBy: postedBy, Lines: lines,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return entry, true, nil
 }

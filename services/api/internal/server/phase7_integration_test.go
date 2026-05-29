@@ -10,6 +10,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/japharyroman/fuelgrid-os/internal/accounting"
+	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 )
 
 func TestPhase7_AccountingFoundation(t *testing.T) {
@@ -20,10 +23,10 @@ func TestPhase7_AccountingFoundation(t *testing.T) {
 
 	// Seed the default chart of accounts (17 accounts).
 	code, seeded := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{})
-	if code != http.StatusOK || seeded["created"].(float64) != 17 {
+	if code != http.StatusOK || seeded["created"].(float64) != 18 {
 		t.Fatalf("seed chart: %d %v", code, seeded)
 	}
-	if code, acc := h.getJSON(t, "/api/v1/accounts", admin); code != http.StatusOK || acc["count"].(float64) != 17 {
+	if code, acc := h.getJSON(t, "/api/v1/accounts", admin); code != http.StatusOK || acc["count"].(float64) != 18 {
 		t.Fatalf("list accounts: %d count %v", code, acc["count"])
 	}
 
@@ -571,6 +574,103 @@ func TestPhase7_JournalBalanceTrigger(t *testing.T) {
 	}
 	if err := tx.Commit(ctx); err == nil {
 		t.Fatal("expected COMMIT to fail: an unbalanced journal entry was accepted by the database")
+	}
+}
+
+// TestPhase7_ShiftRevenueJournal proves PAY-013: an approved shift's recognized
+// sales post a balanced GL revenue entry (DR sales_clearing / CR sales_revenue /
+// CR output_vat), revenue reaches the P&L, and re-posting is idempotent. This is
+// the posting the RevenueRecognized outbox consumer drives in production.
+func TestPhase7_ShiftRevenueJournal(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id = $1 AND tank_id = $2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	day, shift := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-12", 2000)
+
+	// A recognized sale: 2,000 L @ 2.95 = 5,900 gross; 18% tax-inclusive -> net
+	// 5,000, tax 900.
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO sales (tenant_id, shift_id, station_id, operating_day_id, nozzle_id, product_id, tank_id,
+		    litres, unit_price, gross_amount, tax_rate, tax_amount, net_amount, recorded_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 2000, 2.95, 5900, 18, 900, 5000, $8)
+	`, h.ids.tenantID, shift, h.ids.station1, day, nozzleID, h.ids.pmsProduct, h.ids.tankPMS, adminID); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+
+	acct := accounting.New(h.pool)
+	rev := revenue.New(h.pool)
+
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	entry, posted, err := rev.PostShiftRevenueJournal(ctx, tx, acct, h.ids.tenantID, shift, adminID)
+	if err != nil || !posted {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("post revenue journal: posted=%v err=%v", posted, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// The entry's lines: DR sales_clearing 5900, CR sales_revenue 5000, CR output_vat 900.
+	rows, err := h.pool.Query(ctx, `
+		SELECT a.system_key, jl.debit::text, jl.credit::text
+		FROM journal_lines jl JOIN accounts a ON a.id = jl.account_id
+		WHERE jl.tenant_id = $1 AND jl.journal_entry_id = $2
+	`, h.ids.tenantID, entry.ID)
+	if err != nil {
+		t.Fatalf("lines: %v", err)
+	}
+	defer rows.Close()
+	got := map[string][2]string{}
+	for rows.Next() {
+		var k, d, c string
+		if err := rows.Scan(&k, &d, &c); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[k] = [2]string{d, c}
+	}
+	if got["sales_clearing"] != [2]string{"5900.00", "0.00"} {
+		t.Fatalf("sales_clearing = %v, want DR 5900.00", got["sales_clearing"])
+	}
+	if got["sales_revenue"] != [2]string{"0.00", "5000.00"} {
+		t.Fatalf("sales_revenue = %v, want CR 5000.00", got["sales_revenue"])
+	}
+	if got["output_vat"] != [2]string{"0.00", "900.00"} {
+		t.Fatalf("output_vat = %v, want CR 900.00", got["output_vat"])
+	}
+
+	// Revenue now reaches the P&L.
+	if code, pl := h.getJSON(t, "/api/v1/finance/reports/profit-loss?from=2026-06-01&to=2026-06-30", admin); code != http.StatusOK ||
+		pl["revenue"] != "5000.00" {
+		t.Fatalf("p&l revenue = %v (status %d)", pl, code)
+	}
+
+	// Idempotent: a redelivered event must not double-post.
+	tx2, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin2: %v", err)
+	}
+	_, posted2, err := rev.PostShiftRevenueJournal(ctx, tx2, acct, h.ids.tenantID, shift, adminID)
+	_ = tx2.Rollback(ctx)
+	if err != nil || posted2 {
+		t.Fatalf("second post must be a no-op: posted=%v err=%v", posted2, err)
 	}
 }
 

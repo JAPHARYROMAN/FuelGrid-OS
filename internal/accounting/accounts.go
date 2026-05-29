@@ -69,6 +69,7 @@ var defaultChart = []AccountInput{
 	{Code: "2000", Name: "Accounts Payable", Type: "liability", NormalBalance: "credit", SystemKey: ptrStr("accounts_payable")},
 	{Code: "2100", Name: "Sales Clearing", Type: "liability", NormalBalance: "credit", SystemKey: ptrStr("sales_clearing")},
 	{Code: "2200", Name: "Customer Credits", Type: "liability", NormalBalance: "credit", SystemKey: ptrStr("customer_credits")},
+	{Code: "2300", Name: "Output VAT Payable", Type: "liability", NormalBalance: "credit", SystemKey: ptrStr("output_vat")},
 	{Code: "3000", Name: "Retained Earnings", Type: "equity", NormalBalance: "credit", SystemKey: ptrStr("retained_earnings")},
 	{Code: "4000", Name: "Sales Revenue", Type: "income", NormalBalance: "credit", SystemKey: ptrStr("sales_revenue")},
 	{Code: "4100", Name: "Discounts", Type: "contra_income", NormalBalance: "debit", SystemKey: ptrStr("discounts")},

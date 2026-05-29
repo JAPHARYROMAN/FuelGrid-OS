@@ -151,6 +151,20 @@ func (r *Repo) PostEntry(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in 
 	return &e, nil
 }
 
+// EntryExistsForSource reports whether a journal entry already exists for a
+// given source document — the idempotency guard for event-driven posting that
+// may redeliver (e.g. the outbox revenue consumer).
+func (r *Repo) EntryExistsForSource(ctx context.Context, q database.Querier, tenantID uuid.UUID, sourceType string, sourceID uuid.UUID) (bool, error) {
+	var exists bool
+	err := q.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1 FROM journal_entries
+		    WHERE tenant_id = $1 AND source_type = $2 AND source_id = $3
+		)
+	`, tenantID, sourceType, sourceID).Scan(&exists)
+	return exists, err
+}
+
 func (r *Repo) GetEntry(ctx context.Context, tenantID, id uuid.UUID) (*JournalEntry, error) {
 	return r.getEntry(ctx, r.pool, tenantID, id)
 }

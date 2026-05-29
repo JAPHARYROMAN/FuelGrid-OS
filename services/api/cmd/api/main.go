@@ -12,10 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/events"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
@@ -257,6 +261,42 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 				"aggregate_type", e.AggregateType,
 				"aggregate_id", e.AggregateID,
 			)
+			return nil
+		})
+
+		// Revenue-recognition consumer (PAY-013): when a shift's sales are
+		// recognized, post the GL revenue journal asynchronously — DR
+		// sales_clearing / CR sales_revenue / CR output_vat — in its own tx.
+		// It is idempotent; when the tenant's chart or accounting period isn't
+		// configured it logs and skips rather than retrying forever.
+		acctRepo := accounting.New(deps.DB)
+		revRepo := revenue.New(deps.DB)
+		bus.Subscribe("RevenueRecognized", func(ctx context.Context, e events.Event) error {
+			if e.TenantID == nil || e.ActorID == nil {
+				return nil
+			}
+			shiftID, perr := uuid.Parse(e.AggregateID)
+			if perr != nil {
+				logger.Warn("revenue consumer: bad shift id", "aggregate_id", e.AggregateID)
+				return nil
+			}
+			tx, berr := deps.DB.Begin(ctx)
+			if berr != nil {
+				return berr
+			}
+			defer func() { _ = tx.Rollback(ctx) }()
+			entry, posted, perr := revRepo.PostShiftRevenueJournal(ctx, tx, acctRepo, *e.TenantID, shiftID, *e.ActorID)
+			if perr != nil {
+				logger.Warn("revenue journal not posted (chart/period not ready)", "shift_id", shiftID, "error", perr)
+				return nil
+			}
+			if !posted {
+				return nil
+			}
+			if cerr := tx.Commit(ctx); cerr != nil {
+				return cerr
+			}
+			logger.Info("revenue journal posted", "shift_id", shiftID, "entry_id", entry.ID)
 			return nil
 		})
 
