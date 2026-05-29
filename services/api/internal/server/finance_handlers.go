@@ -87,6 +87,8 @@ func (s *Server) handleBalanceSheet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"as_of":  asOf.Format(dateLayout),
 		"assets": bs.Assets, "liabilities": bs.Liabilities, "equity": bs.Equity,
+		"retained_earnings": bs.RetainedEarnings, "net_income": bs.NetIncome,
+		"balanced": bs.Balanced,
 	})
 }
 
@@ -169,7 +171,7 @@ func (s *Server) handleFinanceOverview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"balance_sheet":     map[string]any{"assets": bs.Assets, "liabilities": bs.Liabilities, "equity": bs.Equity},
+		"balance_sheet":     map[string]any{"assets": bs.Assets, "liabilities": bs.Liabilities, "equity": bs.Equity, "retained_earnings": bs.RetainedEarnings, "net_income": bs.NetIncome, "balanced": bs.Balanced},
 		"income_statement":  map[string]any{"revenue": is.Revenue, "expenses": is.Expenses, "net_profit": is.NetProfit},
 		"ap_supplier_count": apOpen,
 		"open_periods":      openPeriods,

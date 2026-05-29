@@ -180,21 +180,102 @@ func TestPhase7_Reports(t *testing.T) {
 	}); code != http.StatusCreated {
 		t.Fatalf("post entry: %d", code)
 	}
+	// Pay 2,000 of operating expense in cash: debit expense, credit cash. This
+	// makes net income 3,000 (5,000 revenue − 2,000 expense), so equity that
+	// omits net income would NOT equal assets − liabilities.
+	if code, _ := h.invPostJSON(t, "/api/v1/journal-entries", admin, map[string]any{
+		"entry_date": "2026-06-13", "memo": "operating expense",
+		"lines": []map[string]any{
+			{"system_key": "operating_expense", "debit": "2000", "credit": "0"},
+			{"system_key": "cash_on_hand", "debit": "0", "credit": "2000"},
+		},
+	}); code != http.StatusCreated {
+		t.Fatalf("post expense entry: %d", code)
+	}
 
-	// Trial balance balances; P&L shows the revenue; balance sheet shows cash.
+	// Trial balance balances; P&L shows revenue net of the expense.
 	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
 		t.Fatalf("trial balance not balanced: %v", tb)
 	}
 	if code, pl := h.getJSON(t, "/api/v1/finance/reports/profit-loss?from=2026-06-01&to=2026-06-30", admin); code != http.StatusOK ||
-		pl["revenue"] != "5000.00" || pl["net_profit"] != "5000.00" {
+		pl["revenue"] != "5000.00" || pl["expenses"] != "2000.00" || pl["net_profit"] != "3000.00" {
 		t.Fatalf("profit-loss = %v", pl)
 	}
-	if code, bsh := h.getJSON(t, "/api/v1/finance/reports/balance-sheet?as_of=2026-06-30", admin); code != http.StatusOK || bsh["assets"] != "5000.00" {
-		t.Fatalf("balance sheet = %v", bsh)
+	// Balance sheet: assets = 3,000 cash (5,000 in − 2,000 out). Equity must
+	// fold in the 3,000 net income (retained earnings is 0), so the accounting
+	// identity holds exactly: assets == liabilities + equity. The old code,
+	// which only summed equity-type accounts, returned equity 0 and would fail
+	// the balanced assertion below (3,000 != 0 + 0).
+	code, bsh := h.getJSON(t, "/api/v1/finance/reports/balance-sheet?as_of=2026-06-30", admin)
+	if code != http.StatusOK {
+		t.Fatalf("balance sheet: %d %v", code, bsh)
+	}
+	if bsh["assets"] != "3000.00" || bsh["liabilities"] != "0.00" {
+		t.Fatalf("balance sheet totals = %v", bsh)
+	}
+	if bsh["equity"] != "3000.00" || bsh["net_income"] != "3000.00" {
+		t.Fatalf("equity must include net income, got equity=%v net_income=%v", bsh["equity"], bsh["net_income"])
+	}
+	if bsh["balanced"] != true {
+		t.Fatalf("balance sheet not balanced: %v", bsh)
+	}
+	// Assert the identity directly on the decimal strings (cent-exact).
+	assets := bsh["assets"].(string)
+	liabilities := bsh["liabilities"].(string)
+	equity := bsh["equity"].(string)
+	if !sumDecimalEq(t, assets, liabilities, equity) {
+		t.Fatalf("assets %s != liabilities %s + equity %s", assets, liabilities, equity)
 	}
 	if code, ov := h.getJSON(t, "/api/v1/finance/overview", admin); code != http.StatusOK || ov["balance_sheet"] == nil {
 		t.Fatalf("finance overview = %v", ov)
 	}
+}
+
+// sumDecimalEq reports whether assets == liabilities + equity, comparing the
+// numeric(14,2) decimal strings to the cent without float arithmetic.
+func sumDecimalEq(t *testing.T, assets, liabilities, equity string) bool {
+	t.Helper()
+	return decimalCents(t, assets) == decimalCents(t, liabilities)+decimalCents(t, equity)
+}
+
+// decimalCents parses a "-?digits.dd" money string into integer cents.
+func decimalCents(t *testing.T, s string) int64 {
+	t.Helper()
+	neg := false
+	if len(s) > 0 && s[0] == '-' {
+		neg = true
+		s = s[1:]
+	}
+	whole, frac := s, "00"
+	if dot := indexByte(s, '.'); dot >= 0 {
+		whole, frac = s[:dot], s[dot+1:]
+	}
+	for len(frac) < 2 {
+		frac += "0"
+	}
+	frac = frac[:2]
+	var cents int64
+	for _, c := range whole {
+		if c < '0' || c > '9' {
+			t.Fatalf("bad money string %q", s)
+		}
+		cents = cents*10 + int64(c-'0')
+	}
+	cents *= 100
+	cents += int64(frac[0]-'0')*10 + int64(frac[1]-'0')
+	if neg {
+		cents = -cents
+	}
+	return cents
+}
+
+func indexByte(s string, b byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == b {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestPhase7_CashAndBanking covers Category B: a station day's cash is

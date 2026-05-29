@@ -80,24 +80,51 @@ func (r *Repo) IncomeStatement(ctx context.Context, tenantID uuid.UUID, from, to
 }
 
 // BalanceSheet is the asset/liability/equity position as of a date.
+//
+// Equity is the accounting close-out: posted equity accounts (e.g. retained
+// earnings) PLUS current-period net income, since income/expense balances are
+// not zeroed into retained earnings until a formal close. NetIncome is the same
+// revenue − expenses figure the income statement reports, computed cumulatively
+// as of the date. Because every entry is balanced at the DB (migration 0064),
+// total debits = total credits across all accounts, which makes
+// Assets = Liabilities + Equity hold to the cent; Balanced surfaces that.
 type BalanceSheet struct {
-	Assets      string
-	Liabilities string
-	Equity      string
+	Assets           string
+	Liabilities      string
+	Equity           string
+	RetainedEarnings string
+	NetIncome        string
+	Balanced         bool
 }
 
 func (r *Repo) BalanceSheet(ctx context.Context, tenantID uuid.UUID, asOf time.Time) (BalanceSheet, error) {
 	var b BalanceSheet
+	// All numeric arithmetic stays in SQL (numeric(14,2)); Go only carries
+	// strings and the cent-exact equality flag. retained holds posted equity
+	// balances; netIncome folds income/contra_income/expense into equity.
 	err := r.pool.QueryRow(ctx, `
+		WITH bal AS (
+		    SELECT
+		        COALESCE(SUM(CASE WHEN a.type IN ('asset', 'contra_asset') THEN l.debit - l.credit END), 0) AS assets,
+		        COALESCE(SUM(CASE WHEN a.type = 'liability' THEN l.credit - l.debit END), 0) AS liabilities,
+		        COALESCE(SUM(CASE WHEN a.type = 'equity' THEN l.credit - l.debit END), 0) AS retained,
+		        COALESCE(SUM(CASE WHEN a.type = 'income' THEN l.credit - l.debit
+		                          WHEN a.type = 'contra_income' THEN -(l.debit - l.credit)
+		                          WHEN a.type = 'expense' THEN -(l.debit - l.credit) END), 0) AS net_income
+		    FROM journal_lines l
+		    JOIN journal_entries e ON e.id = l.journal_entry_id AND e.tenant_id = l.tenant_id
+		    JOIN accounts a ON a.id = l.account_id AND a.tenant_id = l.tenant_id
+		    WHERE l.tenant_id = $1 AND e.status IN ('posted', 'reversed') AND e.entry_date <= $2
+		)
 		SELECT
-		    COALESCE(SUM(CASE WHEN a.type IN ('asset', 'contra_asset') THEN l.debit - l.credit END), 0)::text,
-		    COALESCE(SUM(CASE WHEN a.type = 'liability' THEN l.credit - l.debit END), 0)::text,
-		    COALESCE(SUM(CASE WHEN a.type = 'equity' THEN l.credit - l.debit END), 0)::text
-		FROM journal_lines l
-		JOIN journal_entries e ON e.id = l.journal_entry_id AND e.tenant_id = l.tenant_id
-		JOIN accounts a ON a.id = l.account_id AND a.tenant_id = l.tenant_id
-		WHERE l.tenant_id = $1 AND e.status IN ('posted', 'reversed') AND e.entry_date <= $2
-	`, tenantID, asOf).Scan(&b.Assets, &b.Liabilities, &b.Equity)
+		    assets::numeric(14,2)::text,
+		    liabilities::numeric(14,2)::text,
+		    (retained + net_income)::numeric(14,2)::text,
+		    retained::numeric(14,2)::text,
+		    net_income::numeric(14,2)::text,
+		    (assets = liabilities + retained + net_income) AS balanced
+		FROM bal
+	`, tenantID, asOf).Scan(&b.Assets, &b.Liabilities, &b.Equity, &b.RetainedEarnings, &b.NetIncome, &b.Balanced)
 	return b, err
 }
 
