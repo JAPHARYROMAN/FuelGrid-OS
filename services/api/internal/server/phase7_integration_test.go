@@ -115,8 +115,14 @@ func TestPhase7_Payables(t *testing.T) {
 		t.Fatalf("import (empty): %d %v", code, imp)
 	}
 
-	// Seed a payable directly (the table is decoupled from Phase-5 by design).
+	// Seed a payable directly (the table is decoupled from Phase-5 by design),
+	// but against a real supplier so the AP-ledger FKs (DB-001) hold.
 	supplierID := uuid.New()
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO suppliers (id, tenant_id, code, name) VALUES ($1, $2, 'PAY-SUP-1', 'Payables Test Supplier')`,
+		supplierID, h.ids.tenantID); err != nil {
+		t.Fatalf("seed supplier: %v", err)
+	}
 	var payableID uuid.UUID
 	if err := h.pool.QueryRow(ctx, `
 		INSERT INTO payables (tenant_id, supplier_id, source_invoice_id, invoice_number, invoice_date, due_date, amount, outstanding_amount, status)
