@@ -85,11 +85,13 @@ jobs:
         # golangci-lint v2 (see .golangci.yml `version: '2'`) requires
         # golangci-lint-action v7; v6 fails to install it ("v2 is not
         # supported"), which failed the whole `go` job and skipped `migrations`
-        # (needs: go) — so the integration suite never ran. Action v7 accepts
-        # the v2.1 (major.minor) form and resolves the latest patch.
+        # (needs: go) — so the integration suite never ran. `latest` is required
+        # because golangci-lint refuses to lint when it was built with an older
+        # Go than the targeted version (go.mod is go 1.25), and the pinned
+        # v2.1.x was built with go1.24.
         uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1
+          version: latest
 
       - name: Test (with race detector)
         run: go test -race -count=1 ./...
