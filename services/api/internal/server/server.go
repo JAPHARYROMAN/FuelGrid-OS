@@ -52,7 +52,13 @@ import (
 // Identity and Policy must be non-nil whenever auth/admin routes are
 // reachable.
 type Deps struct {
-	DB       *database.Pool
+	DB *database.Pool
+	// AppDB is the pool request-scoped queries run against. When it is the
+	// non-owner fuelgrid_app pool (DATABASE_APP_URL set) Postgres RLS enforces
+	// tenant isolation per request; when nil or equal to DB, RLS is bypassed
+	// (the owner pool — current behaviour). DB always stays the owner pool for
+	// pre-auth identity reads and cross-tenant background jobs.
+	AppDB    *database.Pool
 	Redis    *cache.Client
 	Identity *identity.Service
 	Policy   *policy.Service
@@ -62,12 +68,14 @@ type Deps struct {
 // Server owns the chi router and the embedded *http.Server. It is the
 // composition root for every middleware and route the API exposes.
 type Server struct {
-	cfg      config.Config
-	logger   *slog.Logger
-	deps     Deps
-	identity *identity.Service
-	policy   *policy.Service
-	metrics  *observability.Metrics
+	cfg        config.Config
+	logger     *slog.Logger
+	deps       Deps
+	appDB      *database.Pool // request-scoped query pool (fuelgrid_app when RLS on, else owner)
+	rlsEnabled bool           // true when appDB is the non-owner pool, so requests are tenant-scoped
+	identity   *identity.Service
+	policy     *policy.Service
+	metrics    *observability.Metrics
 
 	accounting     *accounting.Repo
 	banking        *banking.Repo
@@ -111,6 +119,15 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		policy:   deps.Policy,
 		metrics:  deps.Metrics,
 	}
+
+	// appDB backs request-scoped queries. When DATABASE_APP_URL is configured
+	// it is the non-owner fuelgrid_app pool and RLS is enforced per request;
+	// otherwise it falls back to the owner pool (RLS bypassed, unchanged).
+	s.appDB = deps.AppDB
+	if s.appDB == nil {
+		s.appDB = deps.DB
+	}
+	s.rlsEnabled = deps.AppDB != nil && deps.AppDB != deps.DB
 
 	// Admin / domain repos only get built when the pool is up. Handlers
 	// gate themselves on s.deps.DB == nil checks at registration time.

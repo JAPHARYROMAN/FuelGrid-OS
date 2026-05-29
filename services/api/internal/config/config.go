@@ -27,6 +27,10 @@ type Config struct {
 	// for ultra-thin smoke tests; the readiness probe simply skips probes
 	// for un-configured dependencies.
 	DatabaseURL          string        `envconfig:"DATABASE_URL"`
+	// DatabaseAppURL, when set, connects request-scoped queries as the
+	// non-owner `fuelgrid_app` role so Postgres RLS enforces tenant isolation.
+	// Leave empty to keep connecting as the owner (RLS bypassed — the default).
+	DatabaseAppURL       string        `envconfig:"DATABASE_APP_URL"`
 	DatabaseMaxOpenConns int32         `envconfig:"DATABASE_MAX_OPEN_CONNS" default:"25"`
 	DatabaseMinIdleConns int32         `envconfig:"DATABASE_MIN_IDLE_CONNS" default:"5"`
 	DatabaseConnLifetime time.Duration `envconfig:"DATABASE_CONN_MAX_LIFETIME" default:"30m"`

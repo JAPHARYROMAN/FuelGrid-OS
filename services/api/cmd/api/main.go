@@ -165,6 +165,33 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Warn("postgres skipped — DATABASE_URL is empty")
 	}
 
+	// Application DB pool for request-scoped queries. When DATABASE_APP_URL is
+	// set it connects as the non-owner fuelgrid_app role so Postgres RLS
+	// enforces tenant isolation per request; otherwise it reuses the owner pool
+	// (RLS bypassed — current behaviour). The owner pool (deps.DB) always backs
+	// pre-auth identity reads and cross-tenant background jobs.
+	if deps.DB != nil {
+		if cfg.DatabaseAppURL != "" {
+			appPool, err := database.Connect(ctx, database.Config{
+				URL:             cfg.DatabaseAppURL,
+				MaxOpenConns:    cfg.DatabaseMaxOpenConns,
+				MinIdleConns:    cfg.DatabaseMinIdleConns,
+				ConnMaxLifetime: cfg.DatabaseConnLifetime,
+				ConnMaxIdleTime: cfg.DatabaseConnIdleTime,
+			})
+			if err != nil {
+				cleanup()
+				return deps, nil, errors.New("app db connect: " + err.Error())
+			}
+			deps.AppDB = appPool
+			cleanups = append(cleanups, appPool.Close)
+			logger.Info("application db pool connected — RLS enforced for request-scoped queries")
+		} else {
+			deps.AppDB = deps.DB
+			logger.Info("application db pool = owner pool (RLS bypassed; set DATABASE_APP_URL to enforce)")
+		}
+	}
+
 	if cfg.RedisURL != "" {
 		client, err := cache.Connect(ctx, cfg.RedisURL)
 		if err != nil {
