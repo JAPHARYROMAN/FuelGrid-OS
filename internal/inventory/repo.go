@@ -132,6 +132,15 @@ func scan(row pgx.Row, m *Movement) error {
 // movement's litres, in the same statement, so it stays consistent with
 // CurrentBalance even when several movements post in one transaction.
 func (r *Repo) PostMovement(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in PostInput) (*Movement, error) {
+	// Serialize all posts to this tank within the tx (INV-003). balance_after
+	// is derived from SUM(litres) in the INSERT below; without a lock two
+	// concurrent transactions read the same sum under READ COMMITTED and write
+	// inconsistent running balances. A transaction-scoped advisory lock keyed
+	// on the tank (uuids are unique, so the tank alone is a sufficient key)
+	// serializes per-tank posting and releases at commit/rollback.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, in.TankID); err != nil {
+		return nil, err
+	}
 	if requiresOpening(in.MovementType) {
 		has, err := r.hasOpeningTx(ctx, tx, tenantID, in.TankID)
 		if err != nil {

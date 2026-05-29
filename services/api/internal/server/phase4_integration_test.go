@@ -182,6 +182,68 @@ func TestPhase4_StockLedger(t *testing.T) {
 	}
 }
 
+// TestPhase4_StockMovementImmutable covers INV-002: the stock ledger is
+// append-only at the database. A posted movement's litres cannot be UPDATE-d
+// and the row cannot be DELETE-d directly; the only permitted mutation is the
+// posted->reversed annotation that ReverseMovement performs.
+func TestPhase4_StockMovementImmutable(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := inventory.New(h.pool)
+
+	var adminID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, h.ids.adminEmail).Scan(&adminID); err != nil {
+		t.Fatalf("lookup admin id: %v", err)
+	}
+
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
+		TankID: h.ids.tankPMS, MovementType: inventory.TypeOpening, Litres: 15000, RecordedBy: adminID,
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("post opening: %v", err)
+	}
+	delivery, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
+		TankID: h.ids.tankPMS, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
+	})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("post delivery: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	// Direct litres rewrite is rejected by the immutability trigger.
+	if _, err := h.pool.Exec(ctx,
+		`UPDATE stock_movements SET litres = litres + 1 WHERE id = $1`, delivery.ID); err == nil {
+		t.Fatal("expected UPDATE of posted movement litres to be rejected")
+	}
+	// Direct delete is rejected (no app.allow_ledger_delete on this conn).
+	if _, err := h.pool.Exec(ctx,
+		`DELETE FROM stock_movements WHERE id = $1`, delivery.ID); err == nil {
+		t.Fatal("expected DELETE of posted movement to be rejected")
+	}
+
+	// The legitimate correction path — ReverseMovement's posted->reversed
+	// annotation plus a contra entry — still succeeds through the trigger.
+	rtx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin reverse: %v", err)
+	}
+	if _, err := repo.ReverseMovement(ctx, rtx, h.ids.tenantID, delivery.ID, adminID, nil); err != nil {
+		_ = rtx.Rollback(ctx)
+		t.Fatalf("reverse movement: %v", err)
+	}
+	if err := rtx.Commit(ctx); err != nil {
+		t.Fatalf("commit reverse: %v", err)
+	}
+}
+
 func TestPhase4_OpeningBalance(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
