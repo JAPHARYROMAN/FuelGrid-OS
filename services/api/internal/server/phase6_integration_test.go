@@ -93,6 +93,16 @@ func TestPhase6_RevenueFlow(t *testing.T) {
 		map[string]any{"tender_type": "credit", "amount": "4000", "customer_id": custID}); code != http.StatusCreated {
 		t.Fatalf("within-limit credit: status %d, want 201", code)
 	}
+	// FLEET-002: a customer on credit hold cannot be charged, even for an amount
+	// within the limit — the hold is a hard stop on the real sale path.
+	if code, _ := h.invPostJSON(t, "/api/v1/customers/"+custID+"/status", admin,
+		map[string]any{"status": "on_hold"}); code != http.StatusOK {
+		t.Fatalf("set customer on_hold: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/shifts/"+shift.String()+"/payments", admin,
+		map[string]any{"tender_type": "credit", "amount": "100", "customer_id": custID}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("credit tender to on-hold customer: status %d, want 422", code)
+	}
 	code, stmt := h.getJSON(t, "/api/v1/customers/"+custID+"/statement", admin)
 	if code != http.StatusOK || stmt["balance"] != "4000.00" {
 		t.Fatalf("customer balance = %v", stmt["balance"])

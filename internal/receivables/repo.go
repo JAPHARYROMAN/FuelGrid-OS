@@ -19,6 +19,7 @@ import (
 var (
 	ErrNotFound    = errors.New("receivables: customer not found")
 	ErrCreditLimit = errors.New("receivables: charge would exceed credit limit")
+	ErrCreditHold  = errors.New("receivables: customer is on credit hold")
 )
 
 type Customer struct {
@@ -202,22 +203,51 @@ func (r *Repo) SetCustomerStatus(ctx context.Context, tx pgx.Tx, tenantID, id uu
 }
 
 // PostCharge appends an AR charge (increasing the balance) inside the caller's
-// tx. Unless allowOverLimit is set, a charge that would push the balance over
-// the credit limit is refused with ErrCreditLimit.
+// tx, enforcing the customer's full credit standing — not just the raw limit:
+//
+//   - A customer on credit hold (manual hold, or status on_hold/suspended) is
+//     refused with ErrCreditHold, even when allowOverLimit is set: a hold is a
+//     hard stop, not an over-limit condition.
+//   - Otherwise, unless allowOverLimit is set, a charge that would push total
+//     EXPOSURE (AR balance + outstanding approved authorization holds) over the
+//     credit limit is refused with ErrCreditLimit — so a held authorization and
+//     a direct charge can't both spend the same headroom.
+//
+// The customer row is locked FOR UPDATE so concurrent charges/authorizations on
+// the same customer are serialized and cannot race past the limit.
 func (r *Repo) PostCharge(ctx context.Context, tx pgx.Tx, tenantID, customerID uuid.UUID, amount string, srcType *string, srcID *uuid.UUID, recordedBy uuid.UUID, notes *string, allowOverLimit bool) (*AREntry, error) {
+	var creditLimit, arBalance, authHeld string
+	var hold bool
+	err := tx.QueryRow(ctx, `
+		SELECT c.credit_limit::text,
+		       (COALESCE(p.hold, false) OR c.status IN ('on_hold', 'suspended')),
+		       COALESCE((SELECT SUM(amount) FROM ar_entries WHERE tenant_id = $1 AND customer_id = $2), 0)::text,
+		       COALESCE((SELECT SUM(approved_amount) FROM fuel_authorizations
+		                 WHERE tenant_id = $1 AND customer_id = $2 AND status = 'approved'), 0)::text
+		FROM customers c
+		LEFT JOIN customer_credit_profiles p ON p.tenant_id = c.tenant_id AND p.customer_id = c.id
+		WHERE c.tenant_id = $1 AND c.id = $2 AND c.status <> 'deleted'
+		FOR UPDATE OF c
+	`, tenantID, customerID).Scan(&creditLimit, &hold, &arBalance, &authHeld)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if hold {
+		return nil, ErrCreditHold
+	}
+
 	var e AREntry
-	err := scanAR(tx.QueryRow(ctx, `
+	err = scanAR(tx.QueryRow(ctx, `
 		INSERT INTO ar_entries
 		    (tenant_id, customer_id, entry_type, amount, balance_after, source_ref_type, source_ref_id, recorded_by, notes)
-		SELECT $1, $2, 'charge', $3::numeric,
-		    (SELECT COALESCE(SUM(amount), 0) FROM ar_entries WHERE tenant_id = $1 AND customer_id = $2) + $3::numeric,
-		    $4, $5, $6, $7
-		WHERE $8 OR (
-		    (SELECT COALESCE(SUM(amount), 0) FROM ar_entries WHERE tenant_id = $1 AND customer_id = $2) + $3::numeric
-		    <= (SELECT credit_limit FROM customers WHERE tenant_id = $1 AND id = $2)
-		)
+		SELECT $1, $2, 'charge', $3::numeric, $9::numeric + $3::numeric, $4, $5, $6, $7
+		WHERE $8 OR ($9::numeric + $10::numeric + $3::numeric <= $11::numeric)
 		RETURNING `+arColumns,
 		tenantID, customerID, amount, srcType, srcID, recordedBy, notes, allowOverLimit,
+		arBalance, authHeld, creditLimit,
 	), &e)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrCreditLimit

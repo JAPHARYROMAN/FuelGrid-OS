@@ -123,12 +123,18 @@ func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {
 		allowOver := req.AllowOverLimit && s.actorHolds(ctx, actor, "credit.override_limit")
 		srcType := "shift"
 		if _, err := s.receivables.PostCharge(ctx, tx, actor.TenantID, *req.CustomerID, req.Amount,
-			&srcType, &shiftID, actor.UserID, req.Notes, allowOver); errors.Is(err, receivables.ErrCreditLimit) {
-			writeError(w, http.StatusUnprocessableEntity, "charge would exceed the customer's credit limit")
-			return
-		} else if err != nil {
-			s.logger.Error("record payment: ar charge", "error", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			&srcType, &shiftID, actor.UserID, req.Notes, allowOver); err != nil {
+			switch {
+			case errors.Is(err, receivables.ErrCreditHold):
+				writeError(w, http.StatusUnprocessableEntity, "customer account is on credit hold; charge refused")
+			case errors.Is(err, receivables.ErrCreditLimit):
+				writeError(w, http.StatusUnprocessableEntity, "charge would exceed the customer's credit limit")
+			case errors.Is(err, receivables.ErrNotFound):
+				writeError(w, http.StatusBadRequest, "unknown customer for this tenant")
+			default:
+				s.logger.Error("record payment: ar charge", "error", err)
+				writeError(w, http.StatusInternalServerError, "internal error")
+			}
 			return
 		}
 	}
