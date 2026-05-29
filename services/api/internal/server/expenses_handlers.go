@@ -426,7 +426,10 @@ func (s *Server) handleGetPettyCashFloat(w http.ResponseWriter, r *http.Request)
 }
 
 // handlePettyCashTransaction records a float transaction and posts its journal
-// entry (top-ups move bank -> petty cash; spend moves petty cash -> expense).
+// entry. Every money-moving type is journaled so the float can never drift from
+// the GL: top-up/reimbursement move bank -> petty cash; spend moves petty cash
+// -> expense; adjustment books an over/short gain into petty cash; transfer
+// returns petty cash -> bank.
 func (s *Server) handlePettyCashTransaction(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {
@@ -510,6 +513,21 @@ func (s *Server) handlePettyCashTransaction(w http.ResponseWriter, r *http.Reque
 			{SystemKey: key, Debit: req.Amount, Credit: "0"},
 			{SystemKey: "petty_cash", Debit: "0", Credit: req.Amount},
 		}
+	case "adjustment":
+		// An adjustment increases the float with no external source — the
+		// offset is cash over/short (an unexplained gain), mirroring how a
+		// reconciliation overage is booked. Without this, the float balance
+		// moved but the GL never saw it (audit ACCT-012).
+		lines = []accounting.PostLine{
+			{SystemKey: "petty_cash", Debit: req.Amount, Credit: "0"},
+			{SystemKey: "cash_over_short", Debit: "0", Credit: req.Amount},
+		}
+	case "transfer":
+		// A transfer returns float cash to the bank — the reverse of a top-up.
+		lines = []accounting.PostLine{
+			{SystemKey: "bank", Debit: req.Amount, Credit: "0"},
+			{SystemKey: "petty_cash", Debit: "0", Credit: req.Amount},
+		}
 	}
 	if len(lines) > 0 {
 		entry, perr := s.accounting.PostEntry(ctx, tx, actor.TenantID, accounting.PostEntryInput{
@@ -523,6 +541,10 @@ func (s *Server) handlePettyCashTransaction(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		// Reflect the linked entry on the response (RecordTransaction returns the
+		// row before the journal is posted, so its JournalEntryID was nil).
+		entryID := entry.ID
+		txn.JournalEntryID = &entryID
 	}
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,

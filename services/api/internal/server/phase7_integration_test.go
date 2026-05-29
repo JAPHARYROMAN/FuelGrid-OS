@@ -664,6 +664,22 @@ func TestPhase7_ExpensesAndPettyCash(t *testing.T) {
 		t.Fatalf("float after reconcile = %v", got)
 	}
 
+	// adjustment and transfer must each post a balanced journal entry (audit
+	// ACCT-012): the float balance moves AND the GL sees it. Before the fix both
+	// returned a null journal_entry_id and silently broke double entry.
+	code, adj := h.invPostJSON(t, "/api/v1/petty-cash-floats/"+floatID+"/transactions", admin,
+		map[string]any{"txn_type": "adjustment", "amount": "500", "date": "2026-06-11", "description": "found cash"})
+	if code != http.StatusCreated || adj["balance_after"] != "8900.00" || adj["journal_entry_id"] == nil {
+		t.Fatalf("adjustment must post a journal entry: %d %v", code, adj)
+	}
+	code, xfer := h.invPostJSON(t, "/api/v1/petty-cash-floats/"+floatID+"/transactions", admin,
+		map[string]any{"txn_type": "transfer", "amount": "1000", "date": "2026-06-12", "description": "return to bank"})
+	if code != http.StatusCreated || xfer["balance_after"] != "7900.00" || xfer["journal_entry_id"] == nil {
+		t.Fatalf("transfer must post a journal entry: %d %v", code, xfer)
+	}
+
+	// The trial balance still balances after the adjustment + transfer, proving
+	// both posted balanced entries.
 	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
 		t.Fatalf("trial balance not balanced: %v", tb)
 	}
