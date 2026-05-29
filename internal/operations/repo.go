@@ -104,6 +104,45 @@ func (r *Repo) GetDay(ctx context.Context, tenantID, id uuid.UUID) (*OperatingDa
 	return &d, nil
 }
 
+// GetDayForUpdate loads a day and locks its row FOR UPDATE inside the caller's
+// tx. A day status transition (close/reopen) must re-read and re-validate under
+// this lock so it serializes against a concurrent shift-open — which takes
+// FOR SHARE on the same row (see LockDayStatusForShare) — and against another
+// concurrent close. Returns ErrNotFound when the day does not exist.
+func (r *Repo) GetDayForUpdate(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (*OperatingDay, error) {
+	var d OperatingDay
+	err := scanDay(tx.QueryRow(ctx, `
+		SELECT `+dayColumns+`
+		FROM operating_days WHERE id = $1 AND tenant_id = $2
+		FOR UPDATE
+	`, id, tenantID), &d)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// LockDayStatusForShare takes a FOR SHARE lock on the day row inside the
+// caller's tx and returns its current status. FOR SHARE conflicts with the
+// FOR UPDATE a day close/reopen/lock takes, so a shift cannot be opened on a
+// day that is concurrently being closed (and vice versa): whichever tx commits
+// first wins, and the other observes the post-commit state. Returns ErrNotFound
+// when the day does not exist for the tenant.
+func (r *Repo) LockDayStatusForShare(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (string, error) {
+	var status string
+	err := tx.QueryRow(ctx, `
+		SELECT status FROM operating_days WHERE id = $1 AND tenant_id = $2
+		FOR SHARE
+	`, id, tenantID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return status, err
+}
+
 // OpenDay creates a new open day for a station/date inside the caller's tx.
 // The partial unique index rejects a second non-locked day for the same
 // (station, date) — surfaced as a unique-violation for the handler to map.

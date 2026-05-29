@@ -214,27 +214,6 @@ func (s *Server) handleUpdateOperatingDayStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	if before.Status == "locked" {
-		writeError(w, http.StatusConflict, "a locked day cannot change status")
-		return
-	}
-	if before.Status == req.Status {
-		writeError(w, http.StatusConflict, "already "+req.Status)
-		return
-	}
-	// A day can't close while it still has open shifts.
-	if req.Status == "closed" {
-		open, err := s.operations.OpenShiftCountForDay(ctx, actor.TenantID, before.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		if open > 0 {
-			writeError(w, http.StatusConflict, "close the day's open shifts first")
-			return
-		}
-	}
-
 	action, event := "operating_day.reopened", "OperatingDayReopened"
 	if req.Status == "closed" {
 		action, event = "operating_day.closed", "OperatingDayClosed"
@@ -246,6 +225,40 @@ func (s *Server) handleUpdateOperatingDayStatus(w http.ResponseWriter, r *http.R
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the day row, then re-validate its status — and, when closing, its
+	// open-shift count — inside the tx. A concurrent shift-open takes FOR SHARE
+	// on this same row, so it cannot slip an open shift onto a day that is being
+	// closed, and a second status change cannot race this one (OPS-007).
+	locked, err := s.operations.GetDayForUpdate(ctx, tx, actor.TenantID, id)
+	if errors.Is(err, operations.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if locked.Status == "locked" {
+		writeError(w, http.StatusConflict, "a locked day cannot change status")
+		return
+	}
+	if locked.Status == req.Status {
+		writeError(w, http.StatusConflict, "already "+req.Status)
+		return
+	}
+	// A day can't close while it still has open shifts.
+	if req.Status == "closed" {
+		open, err := s.operations.OpenShiftCountForDay(ctx, tx, actor.TenantID, locked.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if open > 0 {
+			writeError(w, http.StatusConflict, "close the day's open shifts first")
+			return
+		}
+	}
 
 	after, err := s.operations.SetStatus(ctx, tx, actor.TenantID, id, req.Status, actor.UserID)
 	if errors.Is(err, operations.ErrNotFound) {
@@ -262,7 +275,7 @@ func (s *Server) handleUpdateOperatingDayStatus(w http.ResponseWriter, r *http.R
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: action, EventType: event,
 		EntityType: "operating_day", EntityID: after.ID.String(),
-		PreviousValue: toOperatingDayDTO(before), NewValue: toOperatingDayDTO(after),
+		PreviousValue: toOperatingDayDTO(locked), NewValue: toOperatingDayDTO(after),
 		Reason: req.Reason,
 		IP:     clientIP(r), UserAgent: r.UserAgent(),
 		RequestID: chimiddleware.GetReqID(ctx),

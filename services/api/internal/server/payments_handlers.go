@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
@@ -137,6 +138,12 @@ func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		// PAY-003: couple the operational AR (ar_entries) to the GL in the same
+		// tx — DR accounts_receivable / CR sales_clearing — so the two ledgers
+		// reconcile. Skipped (not failed) when accounting is not yet configured.
+		if !s.postCreditChargeJournal(w, r, actor, tx, p) {
+			return
+		}
 	}
 
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
@@ -228,6 +235,54 @@ func (s *Server) shiftForRevenueRead(w http.ResponseWriter, r *http.Request) (id
 		return identity.Actor{}, nil, false
 	}
 	return actor, shift, true
+}
+
+// postCreditChargeJournal couples the operational AR (ar_entries) to the GL for
+// a credit tender (PAY-003): DR accounts_receivable / CR sales_clearing for the
+// charge amount, in the caller's tx, idempotent per payment. It credits the
+// sales_clearing that shift-revenue recognition debits, so the credit portion
+// of a sale settles into AR rather than leaving sales_clearing unbalanced.
+//
+// It is a no-op (returns true) when the tenant's chart of accounts or
+// accounting period is not yet configured — the operational AR still records,
+// so credit tenders work before finance is set up. Returns false only on a hard
+// error, having already written the response.
+func (s *Server) postCreditChargeJournal(w http.ResponseWriter, r *http.Request, actor identity.Actor, tx pgx.Tx, p *payments.Payment) bool {
+	ctx := r.Context()
+	exists, err := s.accounting.EntryExistsForSource(ctx, tx, actor.TenantID, "ar_charge", p.ID)
+	if err != nil {
+		s.logger.Error("credit charge journal: exists check", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	if exists {
+		return true
+	}
+	memo := "credit fuel sale — accounts receivable"
+	_, err = s.accounting.PostEntry(ctx, tx, actor.TenantID, accounting.PostEntryInput{
+		EntryDate:   p.ReceivedAt,
+		SourceType:  "ar_charge",
+		SourceID:    &p.ID,
+		StationID:   &p.StationID,
+		Memo:        &memo,
+		PostedBy:    actor.UserID,
+		AllowClosed: true,
+		Lines: []accounting.PostLine{
+			{SystemKey: "accounts_receivable", Debit: p.Amount, Credit: "0", StationID: &p.StationID},
+			{SystemKey: "sales_clearing", Debit: "0", Credit: p.Amount, StationID: &p.StationID},
+		},
+	})
+	if errors.Is(err, accounting.ErrNoPeriod) || errors.Is(err, accounting.ErrSystemAccount) {
+		s.logger.Warn("credit charge not posted to GL: accounting not configured",
+			"payment", p.ID, "reason", err)
+		return true
+	}
+	if err != nil {
+		s.logger.Error("credit charge journal: post", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return false
+	}
+	return true
 }
 
 // actorHolds reports whether the actor holds a permission in any scope.

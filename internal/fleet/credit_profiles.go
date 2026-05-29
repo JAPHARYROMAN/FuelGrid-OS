@@ -124,8 +124,12 @@ func (r *Repo) CreditPosition(ctx context.Context, q database.Querier, tenantID,
 		    SELECT COALESCE(SUM(amount), 0) AS bal FROM ar_entries WHERE tenant_id = $1 AND customer_id = $2
 		),
 		auth AS (
+		    -- Only live holds count toward exposure. An expired hold (its
+		    -- expiry_at has passed) no longer reserves credit, so excluding it
+		    -- here keeps available credit from shrinking forever (FLEET-005).
 		    SELECT COALESCE(SUM(approved_amount), 0) AS held FROM fuel_authorizations
 		    WHERE tenant_id = $1 AND customer_id = $2 AND status = 'approved'
+		      AND (expiry_at IS NULL OR expiry_at > now())
 		),
 		overdue AS (
 		    SELECT COALESCE(SUM(outstanding_amount), 0) AS od FROM customer_invoices

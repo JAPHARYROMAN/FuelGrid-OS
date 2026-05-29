@@ -82,7 +82,16 @@ var (
 	ErrPurchaseOrderNotReceivable = errors.New("inventory: purchase order is not receivable")
 	ErrPOLineNotFound             = errors.New("inventory: purchase order line not found")
 	ErrReceiptTankMismatch        = errors.New("inventory: receipt tank does not match purchase order")
+	ErrOverReceipt                = errors.New("inventory: receipt exceeds the ordered quantity")
 )
+
+// receivingTolerancePct is the measurement allowance applied when receiving
+// against a purchase order — deliberately distinct from a product's
+// loss_tolerance_percent (an evaporation/reconciliation allowance that may be
+// several percent). It bounds both the over-receipt cap and PO auto-completion,
+// so a supplier shortfall beyond this tight margin neither posts excess stock
+// nor closes the PO as fully received (PROC-07/13).
+const receivingTolerancePct = 0.5
 
 const deliveryColumns = `
     id, tenant_id, tank_id, supplier_ref, supplier_id, purchase_order_id, po_line_id, volume_litres,
@@ -146,28 +155,26 @@ func (r *Repo) ReceiveDelivery(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 // stock movement in one transaction.
 func (r *Repo) ReceiveGoodsReceipt(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in GoodsReceiptInput) (*GoodsReceiptResult, error) {
 	type lineSnapshot struct {
-		SupplierID       uuid.UUID
-		StationID        uuid.UUID
-		ProductID        uuid.UUID
-		UnitPrice        string
-		OrderedLitres    float64
-		ReceivedLitres   float64
-		Status           string
-		LossTolerancePct float64
+		SupplierID     uuid.UUID
+		StationID      uuid.UUID
+		ProductID      uuid.UUID
+		UnitPrice      string
+		OrderedLitres  float64
+		ReceivedLitres float64
+		Status         string
 	}
 
 	var snap lineSnapshot
 	err := tx.QueryRow(ctx, `
 		SELECT po.supplier_id, po.station_id, pol.product_id, pol.unit_price::text,
-		       pol.ordered_litres, pol.received_litres, po.status, p.loss_tolerance_percent
+		       pol.ordered_litres, pol.received_litres, po.status
 		FROM purchase_order_lines pol
 		JOIN purchase_orders po ON po.id = pol.purchase_order_id AND po.tenant_id = pol.tenant_id
-		JOIN products p ON p.id = pol.product_id AND p.tenant_id = pol.tenant_id
 		WHERE pol.tenant_id = $1 AND po.id = $2 AND pol.id = $3
 		FOR UPDATE OF po, pol
 	`, tenantID, in.PurchaseOrderID, in.POLineID).Scan(
 		&snap.SupplierID, &snap.StationID, &snap.ProductID, &snap.UnitPrice,
-		&snap.OrderedLitres, &snap.ReceivedLitres, &snap.Status, &snap.LossTolerancePct,
+		&snap.OrderedLitres, &snap.ReceivedLitres, &snap.Status,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrPOLineNotFound
@@ -205,7 +212,13 @@ func (r *Repo) ReceiveGoodsReceipt(ctx context.Context, tx pgx.Tx, tenantID uuid
 
 	newReceived := snap.ReceivedLitres + in.VolumeLitres
 	variance := newReceived - snap.OrderedLitres
-	toleranceLitres := snap.OrderedLitres * snap.LossTolerancePct / 100
+	toleranceLitres := snap.OrderedLitres * receivingTolerancePct / 100
+	// PROC-07: never post stock past the ordered quantity (beyond the receiving
+	// tolerance). A genuine over-delivery must be ordered for explicitly rather
+	// than slipped in on a receipt with only an advisory flag.
+	if newReceived > snap.OrderedLitres+toleranceLitres {
+		return nil, ErrOverReceipt
+	}
 	matchStatus := "matched"
 	if variance < -toleranceLitres {
 		matchStatus = "short"
@@ -283,14 +296,17 @@ func dptr(d Delivery) *Delivery { return &d }
 
 func (r *Repo) advancePurchaseOrderStatus(ctx context.Context, tx pgx.Tx, tenantID, poID uuid.UUID) (string, error) {
 	var receivedAll, receivedAny bool
+	// A line counts as fully received only within the tight receiving tolerance,
+	// not the product's (possibly large) loss tolerance — so a real supplier
+	// shortfall leaves the PO partially_received instead of auto-completing
+	// (PROC-13).
 	if err := tx.QueryRow(ctx, `
 		SELECT
-		    COALESCE(bool_and(pol.received_litres >= pol.ordered_litres - (pol.ordered_litres * p.loss_tolerance_percent / 100)), false),
-		    COALESCE(bool_or(pol.received_litres > 0), false)
-		FROM purchase_order_lines pol
-		JOIN products p ON p.id = pol.product_id AND p.tenant_id = pol.tenant_id
-		WHERE pol.tenant_id = $1 AND pol.purchase_order_id = $2
-	`, tenantID, poID).Scan(&receivedAll, &receivedAny); err != nil {
+		    COALESCE(bool_and(received_litres >= ordered_litres - (ordered_litres * $3::numeric / 100)), false),
+		    COALESCE(bool_or(received_litres > 0), false)
+		FROM purchase_order_lines
+		WHERE tenant_id = $1 AND purchase_order_id = $2
+	`, tenantID, poID, receivingTolerancePct).Scan(&receivedAll, &receivedAny); err != nil {
 		return "", err
 	}
 	status := "confirmed"

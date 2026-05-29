@@ -33,41 +33,141 @@ func scanAlert(row pgx.Row, a *Alert) error {
 		&a.SubjectType, &a.SubjectID, &a.Detail, &a.Amount, &a.Score, &a.CreatedAt)
 }
 
-// RunDetection executes the built-in detection packs, raising idempotent alerts
-// linked to immutable source facts. Returns the number of new alerts.
-func (r *Repo) RunDetection(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (int, error) {
-	created := 0
-	packs := []struct {
-		sql string
-	}{
-		// Fuel loss: tank reconciliations flagged exception (variance over tolerance).
-		{`INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, score)
-		  SELECT tr.tenant_id, 'fuel_loss', 'fuel_loss', 'high', t.station_id, 'tank_reconciliation', tr.id,
-		         'stock variance over tolerance: ' || tr.variance_litres || ' L', 70
-		  FROM tank_reconciliations tr JOIN tanks t ON t.id = tr.tank_id AND t.tenant_id = tr.tenant_id
-		  WHERE tr.tenant_id = $1 AND tr.status = 'exception'
-		    AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = tr.tenant_id AND sup.alert_type = 'fuel_loss'
-		                    AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = t.station_id))
-		  ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`},
-		// Cash shortage: posted cash reconciliations with a negative variance.
-		{`INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, amount, score)
-		  SELECT tenant_id, 'cash_shortage', 'cash_shortage', 'medium', station_id, 'cash_reconciliation', id,
-		         'counted cash short by ' || abs(variance), abs(variance), 55
-		  FROM cash_reconciliations WHERE tenant_id = $1 AND status = 'posted' AND variance < 0
-		    AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = cash_reconciliations.tenant_id AND sup.alert_type = 'cash_shortage'
-		                    AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = cash_reconciliations.station_id))
-		  ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`},
-		// Delivery discrepancy: open procurement discrepancies.
-		{`INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, subject_type, subject_id, detail, amount, score)
-		  SELECT tenant_id, 'delivery_discrepancy', 'delivery_discrepancy', 'medium', 'procurement_discrepancy', id,
-		         'open procurement discrepancy', variance_amount, 50
-		  FROM procurement_discrepancies WHERE tenant_id = $1 AND status = 'open'
-		    AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = procurement_discrepancies.tenant_id AND sup.alert_type = 'delivery_discrepancy'
-		                    AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND sup.entity_id IS NULL)
-		  ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`},
+// severityScore maps a configured severity to the alert score used for
+// ranking. Tuning a rule's severity therefore moves both the alert severity
+// and its score together.
+func severityScore(sev string) int {
+	switch sev {
+	case "critical":
+		return 90
+	case "high":
+		return 75
+	case "low":
+		return 40
+	case "info":
+		return 20
+	default: // medium
+		return 55
 	}
+}
+
+type ruleConfig struct {
+	status       string
+	severity     string
+	threshold    string // "" when the rule's threshold is NULL
+	lookbackDays int
+}
+
+// loadRuleConfigs reads the configured rules for the given codes in one query.
+func (r *Repo) loadRuleConfigs(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, codes []string) (map[string]ruleConfig, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT code, status, severity, COALESCE(threshold::text, ''), lookback_days
+		FROM risk_rules WHERE tenant_id = $1 AND code = ANY($2)
+	`, tenantID, codes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]ruleConfig{}
+	for rows.Next() {
+		var code string
+		var c ruleConfig
+		if err := rows.Scan(&code, &c.status, &c.severity, &c.threshold, &c.lookbackDays); err != nil {
+			return nil, err
+		}
+		out[code] = c
+	}
+	return out, rows.Err()
+}
+
+// Detection packs. Each raises idempotent alerts linked to immutable source
+// facts. Bind args: $1 tenant, $2 severity, $3 score, $4 threshold ('' => no
+// magnitude floor), and (where the source table has a timestamp) $5
+// lookback_days (<= 0 => no time bound).
+const fuelLossPack = `
+	INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, score)
+	SELECT tr.tenant_id, 'fuel_loss', 'fuel_loss', $2, t.station_id, 'tank_reconciliation', tr.id,
+	       'stock variance over tolerance: ' || tr.variance_litres || ' L', $3
+	FROM tank_reconciliations tr JOIN tanks t ON t.id = tr.tank_id AND t.tenant_id = tr.tenant_id
+	WHERE tr.tenant_id = $1 AND tr.status = 'exception'
+	  AND abs(tr.variance_litres) >= COALESCE(NULLIF($4, '')::numeric, 0)
+	  AND ($5 <= 0 OR tr.created_at >= now() - make_interval(days => $5))
+	  AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = tr.tenant_id AND sup.alert_type = 'fuel_loss'
+	                  AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = t.station_id))
+	ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`
+
+const cashShortagePack = `
+	INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, amount, score)
+	SELECT tenant_id, 'cash_shortage', 'cash_shortage', $2, station_id, 'cash_reconciliation', id,
+	       'counted cash short by ' || abs(variance), abs(variance), $3
+	FROM cash_reconciliations WHERE tenant_id = $1 AND status = 'posted' AND variance < 0
+	  AND abs(variance) >= COALESCE(NULLIF($4, '')::numeric, 0)
+	  AND ($5 <= 0 OR created_at >= now() - make_interval(days => $5))
+	  AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = cash_reconciliations.tenant_id AND sup.alert_type = 'cash_shortage'
+	                  AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = cash_reconciliations.station_id))
+	ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`
+
+// procurement_discrepancies has no timestamp column, so this pack honors the
+// threshold but not lookback (bind args $1..$4). Wiring a lookback here is a
+// tracked follow-up once the table carries a detected/created timestamp.
+const deliveryDiscrepancyPack = `
+	INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, subject_type, subject_id, detail, amount, score)
+	SELECT tenant_id, 'delivery_discrepancy', 'delivery_discrepancy', $2, 'procurement_discrepancy', id,
+	       'open procurement discrepancy', variance_amount, $3
+	FROM procurement_discrepancies WHERE tenant_id = $1 AND status = 'open'
+	  AND abs(variance_amount) >= COALESCE(NULLIF($4, '')::numeric, 0)
+	  AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = procurement_discrepancies.tenant_id AND sup.alert_type = 'delivery_discrepancy'
+	                  AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND sup.entity_id IS NULL)
+	ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`
+
+// RunDetection runs the built-in detection packs, now driven by the configured
+// rules instead of running unconditionally (audit RISK "pause is a no-op"):
+//
+//   - a pack whose rule is paused or retired does not run — pause is honored,
+//     including the PauseAllRules kill switch;
+//   - a pack with a configured rule uses that rule's threshold, severity (and,
+//     where the source table supports it, lookback window);
+//   - a pack with no configured rule runs with built-in defaults, so detection
+//     stays fail-safe (on by default) for tenants that have not tuned it.
+//
+// Returns the number of new alerts.
+func (r *Repo) RunDetection(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (int, error) {
+	packs := []struct {
+		code        string
+		defSeverity string
+		sql         string
+		lookback    bool
+	}{
+		{"fuel_loss", "high", fuelLossPack, true},
+		{"cash_shortage", "medium", cashShortagePack, true},
+		{"delivery_discrepancy", "medium", deliveryDiscrepancyPack, false},
+	}
+	codes := make([]string, len(packs))
+	for i := range packs {
+		codes[i] = packs[i].code
+	}
+	rules, err := r.loadRuleConfigs(ctx, tx, tenantID, codes)
+	if err != nil {
+		return 0, err
+	}
+
+	created := 0
 	for _, p := range packs {
-		tag, err := tx.Exec(ctx, p.sql, tenantID)
+		severity, threshold, lookback := p.defSeverity, "", 0
+		if cfg, ok := rules[p.code]; ok {
+			if cfg.status == "paused" || cfg.status == "retired" {
+				continue // honor pause: a disabled rule stops its pack entirely
+			}
+			if cfg.severity != "" {
+				severity = cfg.severity
+			}
+			threshold, lookback = cfg.threshold, cfg.lookbackDays
+		}
+		args := []any{tenantID, severity, severityScore(severity), threshold}
+		if p.lookback {
+			args = append(args, lookback)
+		}
+		tag, err := tx.Exec(ctx, p.sql, args...)
 		if err != nil {
 			return 0, err
 		}

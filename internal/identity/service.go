@@ -17,6 +17,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/secretcrypto"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/session"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/totp"
 )
@@ -67,11 +68,12 @@ type Service struct {
 	hasher   *password.Hasher
 	users    *repo.UserRepo
 	sessions *repo.SessionRepo
-	store    session.Store
-	limiter  *ratelimit.Limiter
-	redis    *redis.Client
-	logger   *slog.Logger
-	now      func() time.Time
+	store     session.Store
+	limiter   *ratelimit.Limiter
+	redis     *redis.Client
+	logger    *slog.Logger
+	mfaCipher *secretcrypto.Cipher
+	now       func() time.Time
 }
 
 // NewService wires the identity service. Callers own the underlying
@@ -91,18 +93,20 @@ func NewService(
 	limiter *ratelimit.Limiter,
 	redisClient *redis.Client,
 	logger *slog.Logger,
+	authPepper string,
 ) *Service {
 	return &Service{
-		cfg:      cfg.SafeDefaults(),
-		pool:     pool,
-		hasher:   hasher,
-		users:    users,
-		sessions: sessions,
-		store:    store,
-		limiter:  limiter,
-		redis:    redisClient,
-		logger:   logger,
-		now:      time.Now,
+		cfg:       cfg.SafeDefaults(),
+		pool:      pool,
+		hasher:    hasher,
+		users:     users,
+		sessions:  sessions,
+		store:     store,
+		limiter:   limiter,
+		redis:     redisClient,
+		logger:    logger,
+		mfaCipher: secretcrypto.New(authPepper),
+		now:       time.Now,
 	}
 }
 
@@ -198,14 +202,25 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 		if req.MfaCode == "" {
 			return &LoginResult{MfaRequired: true}, nil
 		}
-		if user.MfaSecret == nil || !totp.Verify(*user.MfaSecret, req.MfaCode, s.now()) {
-			// No state change on a bad MFA code; slog is the record.
-			s.logger.Info("audit",
-				"event", "UserMfaFailed",
-				"user_id", user.ID,
-				"tenant_id", user.TenantID,
-				"ip", req.IP,
-			)
+		if user.MfaSecret == nil || !s.verifyTOTP(*user.MfaSecret, req.MfaCode) {
+			// A bad MFA code is a failed authentication: count it toward the
+			// account lockout (AUTH-10) so the second factor can't be
+			// brute-forced once the password is known — the per-IP login rate
+			// limit alone is evadable by rotating source IPs. Rides a tx with
+			// its audit + outbox rows, mirroring a bad password. A successful
+			// login clears the counter (MarkLoginSuccess), so an occasional
+			// fumble before a correct code does not accumulate.
+			if err := s.inTx(ctx, func(tx pgx.Tx) error {
+				count, ferr := s.users.MarkLoginFailure(ctx, tx, user.ID, s.cfg.LoginLockAfter, s.cfg.LoginLockFor)
+				if ferr != nil {
+					return ferr
+				}
+				return s.auditAuth(ctx, tx, user.TenantID, user.ID,
+					"user.mfa_failed", "UserMfaFailed",
+					map[string]any{"failure_count": count, "ip": req.IP})
+			}); err != nil {
+				s.logger.Error("record mfa failure", "error", err, "user_id", user.ID)
+			}
 			return nil, ErrMfaInvalid
 		}
 	}
@@ -522,8 +537,20 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, token, newPassword s
 	return nil
 }
 
-// EnrollMfa generates a TOTP secret for the user, stores it disabled, and
-// returns the otpauth URL clients should render as a QR code.
+// verifyTOTP decrypts the stored MFA secret (transparently passing through a
+// legacy plaintext secret written before AUTH-13) and checks the code against
+// it at the current time. A decryption failure is treated as a verification
+// failure — a tampered or unreadable secret never authenticates.
+func (s *Service) verifyTOTP(stored, code string) bool {
+	secret, err := s.mfaCipher.Decrypt(stored)
+	if err != nil {
+		return false
+	}
+	return totp.Verify(secret, code, s.now())
+}
+
+// EnrollMfa generates a TOTP secret for the user, stores it (encrypted at rest)
+// disabled, and returns the otpauth URL clients should render as a QR code.
 func (s *Service) EnrollMfa(ctx context.Context, userID uuid.UUID, tenantID uuid.UUID) (*totp.Enrollment, error) {
 	user, err := s.users.FindByID(ctx, tenantID, userID)
 	if err != nil {
@@ -536,8 +563,12 @@ func (s *Service) EnrollMfa(ctx context.Context, userID uuid.UUID, tenantID uuid
 	if err != nil {
 		return nil, err
 	}
+	enc, err := s.mfaCipher.Encrypt(e.Secret)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.inTx(ctx, func(tx pgx.Tx) error {
-		if err := s.users.EnrollMfa(ctx, tx, userID, e.Secret); err != nil {
+		if err := s.users.EnrollMfa(ctx, tx, userID, enc); err != nil {
 			return err
 		}
 		return s.auditAuth(ctx, tx, tenantID, userID,
@@ -558,7 +589,7 @@ func (s *Service) VerifyMfa(ctx context.Context, userID, tenantID uuid.UUID, cod
 	if user.MfaSecret == nil {
 		return errors.New("identity: no MFA secret enrolled")
 	}
-	if !totp.Verify(*user.MfaSecret, code, s.now()) {
+	if !s.verifyTOTP(*user.MfaSecret, code) {
 		return ErrMfaInvalid
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {

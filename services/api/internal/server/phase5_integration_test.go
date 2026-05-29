@@ -139,3 +139,71 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 		t.Fatalf("receive balance: %d %v", code, receipt)
 	}
 }
+
+// TestPhase5_ReceivingGuards proves PROC-07/13: a receipt cannot post stock past
+// the ordered quantity, and a product's (large) loss tolerance is no longer
+// reused as a receiving tolerance — so a real supplier shortfall leaves the PO
+// partially_received instead of auto-completing as fully received.
+func TestPhase5_ReceivingGuards(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+	suffix := time.Now().UnixNano()
+
+	// A deliberately large 10% product loss tolerance, which must NOT leak into
+	// receiving acceptance.
+	if _, err := h.pool.Exec(ctx, `UPDATE products SET loss_tolerance_percent = 10.0 WHERE id = $1`, h.ids.agoProduct); err != nil {
+		t.Fatalf("set loss tolerance: %v", err)
+	}
+
+	code, supplier := h.invPostJSON(t, "/api/v1/suppliers", admin, map[string]any{
+		"code": fmt.Sprintf("SUPG-%d", suffix), "name": "Guards Supplier",
+		"payment_terms_days": 14, "product_ids": []string{h.ids.agoProduct.String()},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create supplier: %d %v", code, supplier)
+	}
+	code, po := h.invPostJSON(t, "/api/v1/purchase-orders", admin, map[string]any{
+		"station_id": h.ids.station1.String(), "supplier_id": supplier["id"].(string),
+		"lines": []map[string]any{{"product_id": h.ids.agoProduct.String(), "ordered_litres": 10000, "unit_price": "2500.00"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create PO: %d %v", code, po)
+	}
+	poID := po["id"].(string)
+	lineID := po["lines"].([]any)[0].(map[string]any)["id"].(string)
+	for _, st := range []string{"submitted", "confirmed"} {
+		if code, _ := h.invPostJSON(t, "/api/v1/purchase-orders/"+poID+"/status", admin, map[string]any{"status": st}); code != http.StatusOK {
+			t.Fatalf("PO %s: %d", st, code)
+		}
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/opening-balance", admin, map[string]any{"litres": 5000}); code != http.StatusCreated {
+		t.Fatalf("opening balance: %d", code)
+	}
+
+	// PROC-07: receiving 11,000 against a 10,000 line is refused — stock cannot
+	// be posted past the order (beyond the receiving tolerance).
+	if code, _ := h.invPostJSON(t, "/api/v1/purchase-orders/"+poID+"/receipts", admin, map[string]any{
+		"tank_id": h.ids.tankAGO.String(), "po_line_id": lineID, "volume_litres": 11000,
+	}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("over-receipt should be 422, got %d", code)
+	}
+
+	// PROC-13: a 1,000 L (10%) shortfall — within the product's 10% loss
+	// tolerance but far beyond the 0.5% receiving tolerance — leaves the PO
+	// partially_received, not auto-completed as received.
+	code, receipt := h.invPostJSON(t, "/api/v1/purchase-orders/"+poID+"/receipts", admin, map[string]any{
+		"tank_id": h.ids.tankAGO.String(), "po_line_id": lineID, "volume_litres": 9000,
+	})
+	if code != http.StatusCreated || receipt["purchase_order_status"] != "partially_received" {
+		t.Fatalf("9,000 of 10,000 receipt: %d status=%v, want partially_received", code, receipt["purchase_order_status"])
+	}
+
+	// Receiving the remaining 1,000 completes the PO.
+	if code, receipt := h.invPostJSON(t, "/api/v1/purchase-orders/"+poID+"/receipts", admin, map[string]any{
+		"tank_id": h.ids.tankAGO.String(), "po_line_id": lineID, "volume_litres": 1000,
+	}); code != http.StatusCreated || receipt["purchase_order_status"] != "received" {
+		t.Fatalf("balance receipt: %d status=%v, want received", code, receipt["purchase_order_status"])
+	}
+}

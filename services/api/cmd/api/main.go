@@ -236,6 +236,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			limiter,
 			deps.Redis,
 			logger,
+			cfg.AuthPasswordPepper,
 		)
 		logger.Info("identity service wired")
 

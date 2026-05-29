@@ -181,19 +181,40 @@ export class Client {
       Object.assign(headers, opts.headers);
     }
 
-    const res = await this.fetchImpl(url, {
-      method: opts.method ?? 'GET',
-      headers,
-      body,
-      signal: opts.signal,
-      credentials: 'omit',
-    });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, {
+        method: opts.method ?? 'GET',
+        headers,
+        body,
+        signal: opts.signal,
+        credentials: 'omit',
+      });
+    } catch (err) {
+      // A deliberate cancellation propagates unchanged so callers (and React
+      // Query) can detect it. Any other transport failure (offline, DNS, TLS,
+      // CORS) is surfaced as an SdkError with status 0 — not a raw TypeError —
+      // so the same error handling applies everywhere (SDK-03).
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw err;
+      }
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new SdkError(`network request failed: ${detail}`, 0, null);
+    }
 
     if (res.status === 204) {
       return undefined as T;
     }
 
-    const text = await res.text();
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw err;
+      }
+      throw new SdkError('failed to read the response body', 0, null);
+    }
     const parsed = text ? safeParse(text) : null;
 
     if (!res.ok) {

@@ -807,6 +807,9 @@ func (s *Server) handleReceivePurchaseOrderReceipt(w http.ResponseWriter, r *htt
 	case errors.Is(err, inventory.ErrReceiptTankMismatch):
 		writeError(w, http.StatusBadRequest, "tank does not match the purchase order station/product")
 		return
+	case errors.Is(err, inventory.ErrOverReceipt):
+		writeError(w, http.StatusUnprocessableEntity, "receipt exceeds the ordered quantity")
+		return
 	case err != nil:
 		s.logger.Error("receive PO receipt", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

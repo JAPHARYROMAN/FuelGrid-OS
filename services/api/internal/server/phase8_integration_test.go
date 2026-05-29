@@ -360,3 +360,63 @@ func mustAdminID(t *testing.T, ctx context.Context, h *harness) uuid.UUID {
 	}
 	return id
 }
+
+// TestPhase8_AuthorizationLimitsAndExpiry proves the authorization engine
+// enforces windowed limits beyond per-transaction (FLEET-003/004) and that an
+// expired hold stops counting toward both exposure and those limits (FLEET-005).
+func TestPhase8_AuthorizationLimitsAndExpiry(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+	station := h.ids.station1.String()
+
+	// A high credit limit, so the *daily* limit — not credit — is the binding cap.
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin,
+		map[string]any{"code": "LIMCO", "name": "Lim Co", "credit_limit": "100000"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d", code)
+	}
+	custID := cust["id"].(string)
+
+	// A 5,000-per-day limit on this customer.
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-limits", admin,
+		map[string]any{"customer_id": custID, "period": "day", "max_amount": "5000"}); code != http.StatusCreated {
+		t.Fatalf("create daily limit: %d", code)
+	}
+
+	// First 3,000 is within the daily cap.
+	if code, a := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin,
+		map[string]any{"customer_id": custID, "station_id": station, "requested_amount": "3000"}); code != http.StatusCreated || a["status"] != "approved" {
+		t.Fatalf("first auth = %d %v", code, a)
+	}
+
+	// A second 3,000 would total 6,000 > 5,000/day. Credit is ample, so the
+	// daily limit is the binding rule — previously day/week/month limits were
+	// inert and this would have been approved.
+	code, denied := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin,
+		map[string]any{"customer_id": custID, "station_id": station, "requested_amount": "3000"})
+	if code != http.StatusUnprocessableEntity || denied["rule_code"] != "daily_limit" {
+		t.Fatalf("expected daily_limit denial = %d %v", code, denied)
+	}
+
+	// Expire the outstanding hold by hand (simulate the 1-hour TTL lapsing).
+	if _, err := h.pool.Exec(ctx, `
+		UPDATE fuel_authorizations SET expiry_at = now() - interval '1 hour'
+		WHERE tenant_id = $1 AND customer_id = $2 AND status = 'approved'
+	`, h.ids.tenantID, custID); err != nil {
+		t.Fatalf("expire hold: %v", err)
+	}
+
+	// Exposure no longer counts the expired hold: full credit is available.
+	if code, pos := h.getJSON(t, "/api/v1/customers/"+custID+"/credit-position", admin); code != http.StatusOK || pos["available_credit"] != "100000.00" {
+		t.Fatalf("available credit after expiry = %v", pos)
+	}
+
+	// And a fresh 3,000 is approved again: requesting it auto-expires the stale
+	// hold, dropping it from the daily total, so 3,000 < 5,000/day.
+	if code, a := h.invPostJSON(t, "/api/v1/fuel-authorizations", admin,
+		map[string]any{"customer_id": custID, "station_id": station, "requested_amount": "3000"}); code != http.StatusCreated || a["status"] != "approved" {
+		t.Fatalf("post-expiry auth = %d %v", code, a)
+	}
+}

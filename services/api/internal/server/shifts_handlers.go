@@ -166,6 +166,25 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Re-check the day's status under a FOR SHARE lock inside the tx. This
+	// conflicts with the FOR UPDATE a day close/reopen takes, so the day cannot
+	// be closed between the pool read above and inserting the shift — closing
+	// the TOCTOU where an open shift lands on a just-closed day (OPS-007).
+	status, err := s.operations.LockDayStatusForShare(ctx, tx, actor.TenantID, req.OperatingDayID)
+	if errors.Is(err, operations.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "operating day not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("open shift: lock day", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if status != "open" {
+		writeError(w, http.StatusConflict, "operating day is not open")
+		return
+	}
+
 	shift, err := s.operations.OpenShift(ctx, tx, actor.TenantID, stationID, req.OperatingDayID, actor.UserID, req.Name, req.Notes)
 	if err != nil {
 		s.logger.Error("open shift", "error", err)
