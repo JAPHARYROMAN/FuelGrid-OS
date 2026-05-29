@@ -2,6 +2,9 @@ package fleet
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -42,6 +45,17 @@ func maskToken(raw string) string {
 	return "****" + raw[len(raw)-4:]
 }
 
+// hashToken returns the HMAC-SHA256 (keyed by the server pepper) of a raw
+// credential token, salted with the tenant id. It is deterministic so a token
+// can be looked up by hash, and keyed so a stolen database alone cannot
+// brute-force a low-entropy token (e.g. a manual code) without the server
+// secret. Raw tokens are never stored.
+func (r *Repo) hashToken(tenantID uuid.UUID, raw string) string {
+	mac := hmac.New(sha256.New, r.tokenKey)
+	mac.Write([]byte(tenantID.String() + ":" + raw))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 const credentialColumns = `
     id, tenant_id, customer_id, vehicle_id, driver_id, credential_type, masked_label,
     status, issued_at, expiry_date, last_used_at, created_at
@@ -68,7 +82,7 @@ func (r *Repo) IssueCredential(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING `+credentialColumns,
 		tenantID, in.CustomerID, in.VehicleID, in.DriverID, ct,
-		hashSecret(tenantID, in.RawToken), maskToken(in.RawToken), in.ExpiryDate,
+		r.hashToken(tenantID, in.RawToken), maskToken(in.RawToken), in.ExpiryDate,
 	), &c)
 	if isUniqueViolation(err) {
 		return nil, ErrConflict
@@ -139,7 +153,7 @@ func (r *Repo) ValidateCredential(ctx context.Context, tx pgx.Tx, tenantID uuid.
 		FROM fuel_credentials fc
 		JOIN customers c ON c.id = fc.customer_id AND c.tenant_id = fc.tenant_id
 		WHERE fc.tenant_id = $1 AND fc.token_hash = $2
-	`, tenantID, hashSecret(tenantID, rawToken)).Scan(
+	`, tenantID, r.hashToken(tenantID, rawToken)).Scan(
 		&out.Credential.ID, &out.Credential.TenantID, &out.Credential.CustomerID, &out.Credential.VehicleID,
 		&out.Credential.DriverID, &out.Credential.CredentialType, &out.Credential.MaskedLabel, &out.Credential.Status,
 		&out.Credential.IssuedAt, &out.Credential.ExpiryDate, &out.Credential.LastUsedAt, &out.Credential.CreatedAt,

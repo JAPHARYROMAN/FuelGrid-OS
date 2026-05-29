@@ -2,8 +2,6 @@ package fleet
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"time"
 
@@ -36,13 +34,6 @@ type DriverInput struct {
 	AssignmentRule    string
 }
 
-// hashSecret salts a PIN/token with the tenant id and returns a hex SHA-256.
-// Raw secrets are never stored; validation recomputes this hash.
-func hashSecret(tenantID uuid.UUID, raw string) string {
-	sum := sha256.Sum256([]byte(tenantID.String() + ":" + raw))
-	return hex.EncodeToString(sum[:])
-}
-
 const driverColumns = `
     id, tenant_id, customer_id, name, phone, license_number, (pin_hash IS NOT NULL),
     status, allowed_product_ids, assignment_rule, created_at, updated_at
@@ -58,7 +49,10 @@ func scanDriver(row pgx.Row, d *Driver) error {
 func (r *Repo) CreateDriver(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in DriverInput) (*Driver, error) {
 	var pinHash *string
 	if in.PIN != nil && *in.PIN != "" {
-		h := hashSecret(tenantID, *in.PIN)
+		h, herr := r.hasher.Hash(*in.PIN)
+		if herr != nil {
+			return nil, herr
+		}
 		pinHash = &h
 	}
 	rule := in.AssignmentRule
@@ -138,7 +132,10 @@ func (r *Repo) SetDriverStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid
 func (r *Repo) ResetDriverPIN(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, pin string) error {
 	var pinHash *string
 	if pin != "" {
-		h := hashSecret(tenantID, pin)
+		h, herr := r.hasher.Hash(pin)
+		if herr != nil {
+			return herr
+		}
 		pinHash = &h
 	}
 	tag, err := tx.Exec(ctx, `UPDATE customer_drivers SET pin_hash = $3 WHERE tenant_id = $1 AND id = $2`, tenantID, id, pinHash)
@@ -164,5 +161,9 @@ func (r *Repo) VerifyDriverPIN(ctx context.Context, tenantID, id uuid.UUID, pin 
 	if stored == nil {
 		return false, nil
 	}
-	return *stored == hashSecret(tenantID, pin), nil
+	match, _, verr := r.hasher.Verify(pin, *stored)
+	if verr != nil {
+		return false, verr
+	}
+	return match, nil
 }

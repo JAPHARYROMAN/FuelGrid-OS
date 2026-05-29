@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 )
 
 var (
@@ -26,9 +27,27 @@ var (
 	ErrValidation = errors.New("fleet: validation failed")
 )
 
-type Repo struct{ pool *database.Pool }
+type Repo struct {
+	pool *database.Pool
+	// hasher hashes driver PINs with argon2id (slow, salted) — PINs are
+	// verified against a known driver, so a per-record salt is fine.
+	hasher *password.Hasher
+	// tokenKey keys the HMAC used for credential token hashes. Tokens are looked
+	// up by hash, so they need a deterministic keyed digest (not a per-record
+	// salt); HMAC-SHA256 keyed by the pepper makes offline brute-force of a
+	// low-entropy token infeasible without the server secret.
+	tokenKey []byte
+}
 
-func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
+// New builds the fleet repo. pepper is the server password pepper; it keys both
+// the PIN hasher and the credential-token HMAC. Empty is acceptable in dev.
+func New(pool *database.Pool, pepper string) *Repo {
+	return &Repo{
+		pool:     pool,
+		hasher:   password.New(password.DefaultParams, pepper),
+		tokenKey: []byte(pepper),
+	}
+}
 
 // nullableMoney returns nil for an empty string so a SQL COALESCE can fall back
 // to a default; otherwise it returns a pointer to the decimal string.

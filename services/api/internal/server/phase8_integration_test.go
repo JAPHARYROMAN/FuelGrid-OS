@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/japharyroman/fuelgrid-os/internal/fleet"
 )
 
 // jsonBody marshals v into an io.Reader for harness PUT/PATCH requests.
@@ -130,6 +132,17 @@ func TestPhase8_FleetIdentity(t *testing.T) {
 	drvID := drv["id"].(string)
 	if code, _ := h.invPostJSON(t, "/api/v1/fleet/drivers/"+drvID+"/reset-pin", admin, map[string]any{"pin": "9999"}); code != http.StatusOK {
 		t.Fatalf("reset pin: %d", code)
+	}
+	// FLEET-007: PINs are argon2id-hashed (salted, slow), not single-round
+	// SHA-256. The reset PIN verifies and the old one does not — proving the
+	// hash round-trips. The harness pepper is empty, matching the server's repo.
+	fleetRepo := fleet.New(h.pool, "")
+	drvUUID := uuid.MustParse(drvID)
+	if ok, err := fleetRepo.VerifyDriverPIN(context.Background(), h.ids.tenantID, drvUUID, "9999"); err != nil || !ok {
+		t.Fatalf("argon2 PIN: correct PIN must verify (ok=%v err=%v)", ok, err)
+	}
+	if ok, _ := fleetRepo.VerifyDriverPIN(context.Background(), h.ids.tenantID, drvUUID, "4821"); ok {
+		t.Fatal("argon2 PIN: the pre-reset PIN must not verify")
 	}
 
 	// Credential: issue a QR token, masked to its last 4.
