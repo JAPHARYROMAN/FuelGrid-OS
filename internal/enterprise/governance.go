@@ -275,6 +275,11 @@ func (r *Repo) Decide(ctx context.Context, tx pgx.Tx, tenantID, requestID, decid
 	if a.Status != "requested" {
 		return nil, ErrBadState
 	}
+	// Separation of duties (four-eyes): the requester cannot decide their own
+	// approval request — neither approve nor reject it.
+	if a.RequestedBy == deciderID {
+		return nil, ErrSelfApproval
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO approval_decisions (tenant_id, approval_request_id, decision, comment, decided_by)
 		VALUES ($1, $2, $3, $4, $5)

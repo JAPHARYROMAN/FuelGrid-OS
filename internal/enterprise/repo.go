@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("enterprise: not found")
-	ErrConflict = errors.New("enterprise: conflict")
-	ErrBadState = errors.New("enterprise: invalid state transition")
+	ErrNotFound     = errors.New("enterprise: not found")
+	ErrConflict     = errors.New("enterprise: conflict")
+	ErrBadState     = errors.New("enterprise: invalid state transition")
+	ErrSelfApproval = errors.New("enterprise: requester cannot decide their own approval request")
 )
 
 type Repo struct{ pool *database.Pool }

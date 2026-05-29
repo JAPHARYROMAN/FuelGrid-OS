@@ -18,7 +18,7 @@ func TestPhase9_Governance(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	ctx := context.Background()
-	adminID, _, admin := h.adminContext(t, ctx)
+	adminID, slug, admin := h.adminContext(t, ctx)
 
 	// Station group + membership.
 	code, grp := h.invPostJSON(t, "/api/v1/enterprise/station-groups", admin, map[string]any{"name": "Highway Corridor", "kind": "corridor"})
@@ -61,7 +61,12 @@ func TestPhase9_Governance(t *testing.T) {
 		t.Fatalf("raise request = %d %v", code, ar)
 	}
 	reqID := ar["id"].(string)
-	if code, dec := h.invPostJSON(t, "/api/v1/approval-requests/"+reqID+"/decide", admin, map[string]any{"decision": "approve"}); code != http.StatusOK || dec["status"] != "approved" {
+	// Separation of duties: the requester cannot decide their own request.
+	if code, _ := h.invPostJSON(t, "/api/v1/approval-requests/"+reqID+"/decide", admin, map[string]any{"decision": "approve"}); code != http.StatusForbidden {
+		t.Fatalf("self-decide should be 403, got %d", code)
+	}
+	approver := h.secondApprover(t, ctx, slug)
+	if code, dec := h.invPostJSON(t, "/api/v1/approval-requests/"+reqID+"/decide", approver, map[string]any{"decision": "approve"}); code != http.StatusOK || dec["status"] != "approved" {
 		t.Fatalf("approve = %d %v", code, dec)
 	}
 	// Deciding an already-approved request is rejected.
@@ -74,7 +79,7 @@ func TestPhase9_Governance(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("raise request 2: %d", code)
 	}
-	if code, dec := h.invPostJSON(t, "/api/v1/approval-requests/"+ar2["id"].(string)+"/decide", admin, map[string]any{"decision": "reject", "comment": "no"}); code != http.StatusOK || dec["status"] != "rejected" {
+	if code, dec := h.invPostJSON(t, "/api/v1/approval-requests/"+ar2["id"].(string)+"/decide", approver, map[string]any{"decision": "reject", "comment": "no"}); code != http.StatusOK || dec["status"] != "rejected" {
 		t.Fatalf("reject = %d %v", code, dec)
 	}
 }

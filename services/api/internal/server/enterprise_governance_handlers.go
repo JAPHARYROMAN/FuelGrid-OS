@@ -312,6 +312,10 @@ func (s *Server) handleDecideApproval(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "request is no longer pending")
 			return "", err
 		}
+		if errors.Is(err, enterprise.ErrSelfApproval) {
+			writeError(w, http.StatusForbidden, "separation of duties: you cannot decide an approval request you raised")
+			return "", err
+		}
 		if errors.Is(err, enterprise.ErrConflict) {
 			writeError(w, http.StatusConflict, "you have already decided this request")
 			return "", err
