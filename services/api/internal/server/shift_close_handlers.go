@@ -193,6 +193,25 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Lock the shift row and re-validate it is still open inside the tx, before
+	// inserting any close lines. A second concurrent close blocks here, then
+	// sees 'closed' and is rejected — so a shift cannot be closed twice and its
+	// per-nozzle close-line snapshot cannot be written twice (OPS-008). The
+	// narrower window where a meter/dip correction commits between the reads
+	// above and this lock is tracked as a follow-up (the record paths must take
+	// FOR SHARE on the shift to fully serialize).
+	if locked, err := s.operations.GetShiftForUpdate(ctx, tx, actor.TenantID, shift.ID); errors.Is(err, operations.ErrShiftNotFound) {
+		writeError(w, http.StatusNotFound, "shift not found")
+		return
+	} else if err != nil {
+		s.logger.Error("close shift: lock", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if locked.Status != "open" {
+		writeError(w, http.StatusConflict, "shift is not open")
+		return
+	}
+
 	for i := range lines {
 		if err := s.operations.InsertCloseLine(ctx, tx, actor.TenantID, lines[i]); err != nil {
 			s.logger.Error("close shift: line", "error", err)
