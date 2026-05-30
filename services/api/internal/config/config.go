@@ -16,13 +16,19 @@ import (
 // Defaults are tuned for local development; production values are
 // supplied via environment variables.
 type Config struct {
-	Env             string        `envconfig:"NODE_ENV" default:"development"`
-	Host            string        `envconfig:"API_HOST" default:"0.0.0.0"`
-	Port            int           `envconfig:"API_PORT" default:"8080"`
-	LogLevel        string        `envconfig:"API_LOG_LEVEL" default:"info"`
-	LogFormat       string        `envconfig:"API_LOG_FORMAT" default:"json"`
-	CORSOrigins     []string      `envconfig:"API_CORS_ALLOWED_ORIGINS" default:"http://localhost:3000"`
-	ShutdownTimeout time.Duration `envconfig:"API_SHUTDOWN_TIMEOUT" default:"15s"`
+	Env         string   `envconfig:"NODE_ENV" default:"development"`
+	Host        string   `envconfig:"API_HOST" default:"0.0.0.0"`
+	Port        int      `envconfig:"API_PORT" default:"8080"`
+	LogLevel    string   `envconfig:"API_LOG_LEVEL" default:"info"`
+	LogFormat   string   `envconfig:"API_LOG_FORMAT" default:"json"`
+	CORSOrigins []string `envconfig:"API_CORS_ALLOWED_ORIGINS" default:"http://localhost:3000"`
+	// TrustedProxyDepth is the number of trusted reverse proxies in front of
+	// the API. 0 (default) means trust none — the client IP is r.RemoteAddr and
+	// X-Forwarded-For is ignored (it's client-spoofable). Set it to the number
+	// of proxy hops (e.g. 1 behind a single load balancer) so clientIP reads
+	// the address inserted by the outermost trusted proxy (AUTH-09).
+	TrustedProxyDepth int           `envconfig:"API_TRUSTED_PROXY_DEPTH" default:"0"`
+	ShutdownTimeout   time.Duration `envconfig:"API_SHUTDOWN_TIMEOUT" default:"15s"`
 
 	// Optional deps. Leaving DatabaseURL / RedisURL unset is supported
 	// for ultra-thin smoke tests; the readiness probe simply skips probes

@@ -5,10 +5,16 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
+
+// trustedProxyDepth is the number of trusted reverse proxies in front of the
+// API, set once at server construction from API_TRUSTED_PROXY_DEPTH. clientIP
+// reads it to decide whether (and how far into) X-Forwarded-For to trust.
+var trustedProxyDepth int
 
 // loginRequest is the JSON body for POST /api/v1/auth/login.
 type loginRequest struct {
@@ -246,10 +252,28 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	})
 }
 
-// clientIP returns the best-effort client IP for audit / rate limit
-// bucketing. Honors X-Forwarded-For only when ForwardedTrusted is wired
-// in a later stage — for now we always use r.RemoteAddr.
+// clientIP returns the best-effort client IP for audit / rate-limit bucketing.
+// X-Forwarded-For is honored only when trustedProxyDepth > 0 (set from
+// API_TRUSTED_PROXY_DEPTH) — otherwise the header is client-spoofable and is
+// ignored in favour of r.RemoteAddr (AUTH-09).
 func clientIP(r *http.Request) string {
+	if trustedProxyDepth > 0 {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			// Each trusted proxy appends the address that connected to it, so
+			// the rightmost trustedProxyDepth entries are proxy-attested. The
+			// real client is the entry just left of them — index len-depth.
+			// Entries further left are client-supplied and spoofable. Clamp to
+			// 0 if depth is mis-set higher than the chain length.
+			idx := len(parts) - trustedProxyDepth
+			if idx < 0 {
+				idx = 0
+			}
+			if ip := strings.TrimSpace(parts[idx]); ip != "" {
+				return ip
+			}
+		}
+	}
 	// SplitHostPort strips the port and unwraps the IPv6 brackets, so a
 	// RemoteAddr of "[::1]:54321" yields "::1" rather than "[::1]" (which
 	// is not valid INET syntax and would fail an audit insert).
