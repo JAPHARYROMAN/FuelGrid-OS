@@ -268,31 +268,45 @@ func (r *Repo) ReceiveTransfer(ctx context.Context, tx pgx.Tx, tenantID, id, rec
 	if fromProduct != t.ProductID || toProduct != t.ProductID {
 		return nil, ErrProductMismatch
 	}
-	var fromBal, toBal float64
-	if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT balance_after FROM stock_movements WHERE tenant_id=$1 AND tank_id=$2 AND status='posted' ORDER BY seq DESC LIMIT 1),0)`, tenantID, t.FromTankID).Scan(&fromBal); err != nil {
+	// ENT-24/INV-003: serialize on both tanks before reading or posting.
+	// Lock by hashed key in ascending order (canonical, so two opposing
+	// transfers can't deadlock), matching inventory.PostMovement's per-tank key.
+	if _, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(k)
+		FROM unnest(ARRAY[hashtextextended($1::text, 0), hashtextextended($2::text, 0)]) AS k
+		ORDER BY k
+	`, t.FromTankID, t.ToTankID); err != nil {
 		return nil, err
 	}
-	var litres float64
-	if err := tx.QueryRow(ctx, `SELECT $1::numeric`, t.Litres).Scan(&litres); err != nil {
+	// Available stock is the authoritative ledger SUM (every row, so a reversed
+	// movement nets against its contra) — not a stale, status-filtered
+	// balance_after snapshot that ignored contra entries (ENT-24).
+	var sufficient bool
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE((SELECT SUM(litres) FROM stock_movements WHERE tenant_id = $1 AND tank_id = $2), 0) >= $3::numeric
+	`, tenantID, t.FromTankID, t.Litres).Scan(&sufficient); err != nil {
 		return nil, err
 	}
-	if fromBal < litres {
+	if !sufficient {
 		return nil, ErrInsufficientStock
 	}
-	if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT balance_after FROM stock_movements WHERE tenant_id=$1 AND tank_id=$2 AND status='posted' ORDER BY seq DESC LIMIT 1),0)`, tenantID, t.ToTankID).Scan(&toBal); err != nil {
-		return nil, err
-	}
+	// Each leg derives balance_after from the live ledger SUM in the same
+	// statement (as PostMovement does), so the running balance stays consistent.
 	var outID, inID uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO stock_movements (tenant_id, tank_id, movement_type, source_ref_type, source_ref_id, litres, balance_after, recorded_by)
-		VALUES ($1, $2, 'transfer', 'transfer', $3, -$4::numeric, ($5::numeric - $4::numeric), $6) RETURNING id
-	`, tenantID, t.FromTankID, id, t.Litres, fromBal, recordedBy).Scan(&outID); err != nil {
+		VALUES ($1, $2, 'transfer', 'transfer', $3, -$4::numeric,
+		    (SELECT COALESCE(SUM(litres), 0) FROM stock_movements WHERE tenant_id = $1 AND tank_id = $2) - $4::numeric, $5)
+		RETURNING id
+	`, tenantID, t.FromTankID, id, t.Litres, recordedBy).Scan(&outID); err != nil {
 		return nil, err
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO stock_movements (tenant_id, tank_id, movement_type, source_ref_type, source_ref_id, litres, balance_after, recorded_by)
-		VALUES ($1, $2, 'transfer', 'transfer', $3, $4::numeric, ($5::numeric + $4::numeric), $6) RETURNING id
-	`, tenantID, t.ToTankID, id, t.Litres, toBal, recordedBy).Scan(&inID); err != nil {
+		VALUES ($1, $2, 'transfer', 'transfer', $3, $4::numeric,
+		    (SELECT COALESCE(SUM(litres), 0) FROM stock_movements WHERE tenant_id = $1 AND tank_id = $2) + $4::numeric, $5)
+		RETURNING id
+	`, tenantID, t.ToTankID, id, t.Litres, recordedBy).Scan(&inID); err != nil {
 		return nil, err
 	}
 	var out Transfer

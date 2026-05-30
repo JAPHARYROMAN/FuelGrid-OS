@@ -372,6 +372,21 @@ func (s *Server) handlePeriodTransition(action string) http.HandlerFunc {
 			Action: "accounting_period." + action, EventType: "AccountingPeriod" + action,
 			EntityType: "accounting_period", EntityID: id.String(),
 		}, func(tx pgx.Tx) (string, error) {
+			// ACCT-004: closing or locking a period is refused while the
+			// close checklist has unresolved blockers (unposted cash recons,
+			// in-flight deposits, unmatched bank lines, expenses awaiting
+			// posting, draft invoices). Checked inside the tx for consistency.
+			if action == "closed" || action == "locked" {
+				_, blockers, cErr := s.periodCloseChecklist(ctx, tx, actor.TenantID)
+				if cErr != nil {
+					writeError(w, http.StatusInternalServerError, "internal error")
+					return "", cErr
+				}
+				if blockers > 0 {
+					writeError(w, http.StatusUnprocessableEntity, "period has unresolved close-checklist blockers; clear them before closing or locking")
+					return "", errors.New("period close blocked by checklist")
+				}
+			}
 			var p *accounting.Period
 			var tErr error
 			switch action {
