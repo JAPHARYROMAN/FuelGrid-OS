@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type OdometerReading struct {
@@ -19,39 +20,32 @@ type OdometerReading struct {
 	CapturedAt       time.Time
 }
 
-// RecordOdometer validates and stores an odometer reading. A non-increasing
-// reading is flagged 'warning' (or 'override' when overridden); distance since
-// the prior reading is computed in SQL.
-func (r *Repo) RecordOdometer(ctx context.Context, tenantID, vehicleID uuid.UUID, authorizationID, stationID *uuid.UUID, reading string, note *string, override bool, recordedBy uuid.UUID) (*OdometerReading, error) {
-	var last *float64
-	if err := r.pool.QueryRow(ctx, `
-		SELECT max(reading) FROM vehicle_odometer_readings WHERE tenant_id = $1 AND vehicle_id = $2
-	`, tenantID, vehicleID).Scan(&last); err != nil {
-		return nil, err
-	}
-	// Determine validation status from monotonicity (comparison only; the
-	// stored reading value stays a SQL numeric).
-	status := "valid"
-	var cur float64
-	if err := r.pool.QueryRow(ctx, `SELECT $1::numeric`, reading).Scan(&cur); err != nil {
-		return nil, err
-	}
-	if last != nil && cur <= *last {
-		if override {
-			status = "override"
-		} else {
-			status = "warning"
-		}
+// RecordOdometer validates and stores an odometer reading inside the caller's
+// transaction (FLEET-008). The prior maximum, the monotonicity check, and
+// distance-since are all evaluated in one SQL statement against SQL numeric —
+// no Go float64 ever touches the mileage, and there is no read-then-insert
+// gap. A non-increasing reading is flagged 'warning' (or 'override' when the
+// caller overrides).
+func (r *Repo) RecordOdometer(ctx context.Context, tx pgx.Tx, tenantID, vehicleID uuid.UUID, authorizationID, stationID *uuid.UUID, reading string, note *string, override bool, recordedBy uuid.UUID) (*OdometerReading, error) {
+	nonValidStatus := "warning"
+	if override {
+		nonValidStatus = "override"
 	}
 	var o OdometerReading
-	err := r.pool.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		INSERT INTO vehicle_odometer_readings
 		    (tenant_id, vehicle_id, authorization_id, station_id, reading, distance_since, validation_status, note, recorded_by)
-		VALUES ($1, $2, $3, $4, $5::numeric,
-		        (SELECT $5::numeric - max(reading) FROM vehicle_odometer_readings WHERE tenant_id = $1 AND vehicle_id = $2),
-		        $6, $7, $8)
+		SELECT $1, $2, $3, $4, $5::numeric,
+		       $5::numeric - prev.max_reading,
+		       CASE WHEN prev.max_reading IS NOT NULL AND $5::numeric <= prev.max_reading
+		            THEN $6 ELSE 'valid' END,
+		       $7, $8
+		FROM (
+		    SELECT max(reading) AS max_reading
+		    FROM vehicle_odometer_readings WHERE tenant_id = $1 AND vehicle_id = $2
+		) prev
 		RETURNING id, vehicle_id, authorization_id, station_id, reading::text, distance_since::text, validation_status, note, captured_at
-	`, tenantID, vehicleID, authorizationID, stationID, reading, status, note, recordedBy).Scan(
+	`, tenantID, vehicleID, authorizationID, stationID, reading, nonValidStatus, note, recordedBy).Scan(
 		&o.ID, &o.VehicleID, &o.AuthorizationID, &o.StationID, &o.Reading, &o.DistanceSince, &o.ValidationStatus, &o.Note, &o.CapturedAt,
 	)
 	if err != nil {

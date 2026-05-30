@@ -40,7 +40,17 @@ func (s *Server) handleRecordOdometer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "reading must be a non-negative decimal")
 		return
 	}
-	reading, err := s.fleet.RecordOdometer(r.Context(), actor.TenantID, vehicleID, req.AuthorizationID, req.StationID, req.Reading, req.Note, req.Override, actor.UserID)
+	// Record the reading and its audit in one transaction so a failed audit
+	// rolls the reading back (FLEET-008) — the audit trail can't silently drop.
+	ctx := r.Context()
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	reading, err := s.fleet.RecordOdometer(ctx, tx, actor.TenantID, vehicleID, req.AuthorizationID, req.StationID, req.Reading, req.Note, req.Override, actor.UserID)
 	if err != nil {
 		if isForeignKeyViolation(err) {
 			writeError(w, http.StatusBadRequest, "unknown vehicle")
@@ -50,15 +60,19 @@ func (s *Server) handleRecordOdometer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	// Audit (best-effort, outside the read path's tx).
-	if tx, txErr := s.deps.DB.Begin(r.Context()); txErr == nil {
-		_ = audit.WriteWithOutbox(r.Context(), tx, audit.TxRecord{
-			TenantID: actor.TenantID, ActorID: actor.UserID,
-			Action: "vehicle_odometer.recorded", EventType: "VehicleOdometerRecorded", EntityType: "vehicle_odometer_reading",
-			EntityID: reading.ID.String(), NewValue: map[string]any{"reading": reading.Reading, "validation_status": reading.ValidationStatus},
-			IP: clientIP(r), UserAgent: r.UserAgent(),
-		})
-		_ = tx.Commit(r.Context())
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "vehicle_odometer.recorded", EventType: "VehicleOdometerRecorded", EntityType: "vehicle_odometer_reading",
+		EntityID: reading.ID.String(), NewValue: map[string]any{"reading": reading.Reading, "validation_status": reading.ValidationStatus},
+		IP: clientIP(r), UserAgent: r.UserAgent(),
+	}); err != nil {
+		s.logger.Error("record odometer: audit", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": reading.ID, "vehicle_id": reading.VehicleID, "reading": reading.Reading,
