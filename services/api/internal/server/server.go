@@ -111,6 +111,10 @@ type Server struct {
 // New wires the router, middleware stack, and route table for the API.
 // It does not start the listener — call Start for that.
 func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
+	// How many trusted proxies sit in front of the API — drives clientIP's
+	// X-Forwarded-For handling for audit and rate-limit bucketing (AUTH-09).
+	trustedProxyDepth.Store(int64(cfg.TrustedProxyDepth))
+
 	s := &Server{
 		cfg:      cfg,
 		logger:   logger,

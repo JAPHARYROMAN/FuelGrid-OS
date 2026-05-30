@@ -147,12 +147,21 @@ type LoginResult struct {
 // uniform — the caller cannot distinguish "user not found" from "bad
 // password" so attackers can't enumerate users.
 func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, error) {
-	rateBucket := "login:" + strings.ToLower(req.IP)
-	if err := s.limiter.Allow(ctx, rateBucket, s.cfg.LoginRateMax, s.cfg.LoginRateWindow); err != nil {
-		if errors.Is(err, ratelimit.ErrLimited) {
-			return nil, ErrRateLimited
+	// Rate-limit by source IP and, independently, by the targeted account
+	// (tenant + email). The IP bucket caps a single origin; the per-account
+	// bucket caps a distributed credential-stuffing attack on one account that
+	// rotates IPs — neither alone covers the other (AUTH-09).
+	rateBuckets := []string{
+		"login:ip:" + strings.ToLower(req.IP),
+		"login:acct:" + strings.ToLower(req.TenantSlug) + ":" + strings.ToLower(req.Email),
+	}
+	for _, bucket := range rateBuckets {
+		if err := s.limiter.Allow(ctx, bucket, s.cfg.LoginRateMax, s.cfg.LoginRateWindow); err != nil {
+			if errors.Is(err, ratelimit.ErrLimited) {
+				return nil, ErrRateLimited
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 
 	user, err := s.users.FindForLogin(ctx, req.TenantSlug, req.Email)
@@ -265,7 +274,9 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 	if err != nil {
 		return nil, err
 	}
-	_ = s.limiter.Reset(ctx, rateBucket)
+	for _, bucket := range rateBuckets {
+		_ = s.limiter.Reset(ctx, bucket)
+	}
 
 	sess := &session.Session{
 		ID:           sessID,
