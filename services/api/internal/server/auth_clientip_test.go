@@ -9,8 +9,8 @@ import (
 // configured number of trusted proxies, and the chosen entry is the
 // proxy-attested client address (not a client-spoofable left entry).
 func TestClientIP(t *testing.T) {
-	prev := trustedProxyDepth
-	defer func() { trustedProxyDepth = prev }()
+	prev := trustedProxyDepth.Load()
+	defer trustedProxyDepth.Store(prev)
 
 	mk := func(remote, xff string) *http.Request {
 		r := &http.Request{RemoteAddr: remote, Header: http.Header{}}
@@ -37,7 +37,7 @@ func TestClientIP(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			trustedProxyDepth = c.depth
+			trustedProxyDepth.Store(int64(c.depth))
 			if got := clientIP(mk(c.remote, c.xff)); got != c.want {
 				t.Fatalf("clientIP(depth=%d, remote=%q, xff=%q) = %q, want %q", c.depth, c.remote, c.xff, got, c.want)
 			}

@@ -6,15 +6,17 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
 
 // trustedProxyDepth is the number of trusted reverse proxies in front of the
-// API, set once at server construction from API_TRUSTED_PROXY_DEPTH. clientIP
-// reads it to decide whether (and how far into) X-Forwarded-For to trust.
-var trustedProxyDepth int
+// API, set at server construction from API_TRUSTED_PROXY_DEPTH. clientIP reads
+// it to decide whether (and how far into) X-Forwarded-For to trust. It's atomic
+// so concurrent New() calls (e.g. multiple test servers) don't race the reads.
+var trustedProxyDepth atomic.Int64
 
 // loginRequest is the JSON body for POST /api/v1/auth/login.
 type loginRequest struct {
@@ -257,15 +259,15 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // API_TRUSTED_PROXY_DEPTH) — otherwise the header is client-spoofable and is
 // ignored in favour of r.RemoteAddr (AUTH-09).
 func clientIP(r *http.Request) string {
-	if trustedProxyDepth > 0 {
+	if depth := int(trustedProxyDepth.Load()); depth > 0 {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			// Each trusted proxy appends the address that connected to it, so
-			// the rightmost trustedProxyDepth entries are proxy-attested. The
-			// real client is the entry just left of them — index len-depth.
-			// Entries further left are client-supplied and spoofable. Clamp to
-			// 0 if depth is mis-set higher than the chain length.
-			idx := len(parts) - trustedProxyDepth
+			// the rightmost `depth` entries are proxy-attested. The real client
+			// is the entry just left of them — index len-depth. Entries further
+			// left are client-supplied and spoofable. Clamp to 0 if depth is
+			// mis-set higher than the chain length.
+			idx := len(parts) - depth
 			if idx < 0 {
 				idx = 0
 			}
