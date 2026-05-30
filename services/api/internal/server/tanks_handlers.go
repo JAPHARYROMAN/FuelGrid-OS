@@ -397,6 +397,18 @@ func (s *Server) handleDeleteTank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Don't orphan the stock ledger: once a tank has been opened it carries
+	// inventory history (movements, reconciliations) that a soft-delete would
+	// strand. A tank holding fuel — or any past stock — must be retired via
+	// status, not deleted (ORG-03).
+	if opened, err := s.inventory.HasOpeningBalance(ctx, actor.TenantID, id); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	} else if opened {
+		writeError(w, http.StatusConflict, "tank has stock-ledger history and cannot be deleted")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

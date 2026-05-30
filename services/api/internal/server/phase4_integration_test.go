@@ -244,6 +244,46 @@ func TestPhase4_StockMovementImmutable(t *testing.T) {
 	}
 }
 
+// TestPhase4_TankDeleteBlockedByLedger covers ORG-03: a tank that has been
+// opened carries stock-ledger history and can't be deleted (it would orphan
+// the ledger). tankMSA has no nozzles, so this isolates the ledger guard from
+// the live-nozzle guard.
+func TestPhase4_TankDeleteBlockedByLedger(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := inventory.New(h.pool)
+
+	var adminID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, h.ids.adminEmail).Scan(&adminID); err != nil {
+		t.Fatalf("lookup admin id: %v", err)
+	}
+	var slug string
+	if err := h.pool.QueryRow(ctx, `SELECT slug FROM tenants WHERE id = $1`, h.ids.tenantID).Scan(&slug); err != nil {
+		t.Fatalf("lookup slug: %v", err)
+	}
+	admin := h.login(t, slug, h.ids.adminEmail)
+
+	// Open tankMSA (no nozzles feed it), giving it ledger history.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
+		TankID: h.ids.tankMSA, MovementType: inventory.TypeOpening, Litres: 5000, RecordedBy: adminID,
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("post opening: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	if code, _ := h.do(t, http.MethodDelete, "/api/v1/tanks/"+h.ids.tankMSA.String(), admin, nil, ""); code != http.StatusConflict {
+		t.Fatalf("delete tank with ledger = %d, want 409", code)
+	}
+}
+
 func TestPhase4_OpeningBalance(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
