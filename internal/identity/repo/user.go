@@ -31,6 +31,10 @@ type User struct {
 	LastLoginAt       *time.Time
 	FailedLoginCount  int
 	LockedUntil       *time.Time
+	// SessionEpoch is bumped on every global revoke; sessions stamp it at
+	// mint time so the auth hot path can detect authoritative revocation
+	// (SEC-1 / AUTH-04, migration 0073).
+	SessionEpoch int
 }
 
 // IsActive returns true when the user can authenticate. Doesn't speak to
@@ -56,7 +60,8 @@ const userColumns = `
     u.id, u.tenant_id, u.email, u.full_name, u.status,
     u.password_hash, u.password_changed_at,
     u.mfa_secret, u.mfa_enabled,
-    u.last_login_at, u.failed_login_count, u.locked_until
+    u.last_login_at, u.failed_login_count, u.locked_until,
+    u.session_epoch
 `
 
 func scanUser(row pgx.Row, u *User) error {
@@ -65,6 +70,7 @@ func scanUser(row pgx.Row, u *User) error {
 		&u.PasswordHash, &u.PasswordChangedAt,
 		&u.MfaSecret, &u.MfaEnabled,
 		&u.LastLoginAt, &u.FailedLoginCount, &u.LockedUntil,
+		&u.SessionEpoch,
 	)
 }
 
@@ -184,6 +190,29 @@ func (r *UserRepo) TenantOf(ctx context.Context, userID uuid.UUID) (uuid.UUID, e
 		`SELECT tenant_id FROM users WHERE id = $1`, userID,
 	).Scan(&tenantID)
 	return tenantID, err
+}
+
+// CurrentSessionEpoch returns the user's current session_epoch. This is the
+// authoritative value the auth hot path (Service.Resolve) compares each
+// session's stamped epoch against: a mismatch is an authoritative revocation
+// (SEC-1 / AUTH-04). Takes a Querier so it can be read on the pool directly.
+func (r *UserRepo) CurrentSessionEpoch(ctx context.Context, q database.Querier, userID uuid.UUID) (int, error) {
+	var epoch int
+	err := q.QueryRow(ctx,
+		`SELECT session_epoch FROM users WHERE id = $1`, userID,
+	).Scan(&epoch)
+	return epoch, err
+}
+
+// BumpSessionEpoch increments the user's session_epoch by one. Every global
+// revoke (password reset, password change, "log out everywhere") calls this
+// inside the same transaction as the durable session revoke; the bump is the
+// authoritative revocation that no longer depends on Redis cleanup. Takes a
+// Querier so it rides the caller's transaction.
+func (r *UserRepo) BumpSessionEpoch(ctx context.Context, q database.Querier, userID uuid.UUID) error {
+	_, err := q.Exec(ctx,
+		`UPDATE users SET session_epoch = session_epoch + 1 WHERE id = $1`, userID)
+	return err
 }
 
 // -----------------------------------------------------------------------

@@ -33,6 +33,13 @@ type Session struct {
 	// MfaSatisfied flags sessions that completed MFA during login.
 	MfaSatisfied bool
 
+	// SessionEpoch is the user's session_epoch at the instant this session
+	// was minted. The auth hot path compares it against the user's current
+	// epoch in Postgres; a mismatch means the session was authoritatively
+	// revoked (e.g. a password reset bumped the epoch), regardless of whether
+	// the live Redis entry was successfully cleaned up. See migration 0073.
+	SessionEpoch int
+
 	// RawToken is populated only on Issue. It is the value the client
 	// should send back in subsequent requests as a bearer token.
 	RawToken string `json:"-"`
