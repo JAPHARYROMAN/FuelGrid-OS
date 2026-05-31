@@ -94,6 +94,33 @@ func (r *Repo) ListActiveForShift(ctx context.Context, tenantID, shiftID uuid.UU
 	return out, rows.Err()
 }
 
+// ListActiveForShiftPage returns a page of the shift's active readings, ordered
+// by nozzle then type (opening precedes closing) with id as a deterministic
+// tiebreaker so paging is stable. limit/offset come from the clamped HTTP page
+// params.
+func (r *Repo) ListActiveForShiftPage(ctx context.Context, tenantID, shiftID uuid.UUID, limit, offset int) ([]MeterReading, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+meterColumns+`
+		FROM meter_readings
+		WHERE tenant_id = $1 AND shift_id = $2 AND status = 'active'
+		ORDER BY nozzle_id, reading_type, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, shiftID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MeterReading
+	for rows.Next() {
+		var m MeterReading
+		if err := scanMeter(rows, &m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // DispensedForShift returns, per nozzle that has BOTH an active opening and
 // closing reading on the shift, the opening, closing, and litres dispensed —
 // all computed in SQL numeric (closing - opening) and returned as exact decimal

@@ -631,15 +631,23 @@ func (s *Server) handleListStationReconciliations(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "operating_day_id query param is required")
 		return
 	}
-	rows, err := s.reconciliation.ListForStationDay(r.Context(), actor.TenantID, stationID, dayID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.reconciliation.ListForStationDayPage(r.Context(), actor.TenantID, stationID, dayID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list station reconciliations", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]reconciliationDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toReconciliationDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }

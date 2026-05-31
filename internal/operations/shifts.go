@@ -88,6 +88,33 @@ func (r *Repo) ListShifts(ctx context.Context, tenantID, stationID uuid.UUID, da
 	return out, rows.Err()
 }
 
+// ListShiftsPage returns a page of a station's shifts, optionally filtered to
+// one day, newest opened first with id as a deterministic tiebreaker so paging
+// is stable. limit/offset come from the clamped HTTP page params.
+func (r *Repo) ListShiftsPage(ctx context.Context, tenantID, stationID uuid.UUID, dayID *uuid.UUID, limit, offset int) ([]Shift, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+shiftColumns+`
+		FROM shifts
+		WHERE tenant_id = $1 AND station_id = $2
+		  AND ($3::uuid IS NULL OR operating_day_id = $3)
+		ORDER BY opened_at DESC, id DESC
+		LIMIT $4 OFFSET $5
+	`, tenantID, stationID, dayID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Shift
+	for rows.Next() {
+		var s Shift
+		if err := scanShift(rows, &s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ListOpenShiftsForStation returns the station's currently-open shifts (for
 // the dashboard strip).
 func (r *Repo) ListOpenShiftsForStation(ctx context.Context, tenantID, stationID uuid.UUID) ([]Shift, error) {

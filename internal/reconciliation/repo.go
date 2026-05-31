@@ -379,6 +379,33 @@ func (r *Repo) ListForStationDay(ctx context.Context, tenantID, stationID, dayID
 	return out, rows.Err()
 }
 
+// ListForStationDayPage returns a page of the day's reconciliations for the
+// station's tanks (joined through tanks) in tank-code order, with rec.id as a
+// deterministic tiebreaker so paging is stable.
+func (r *Repo) ListForStationDayPage(ctx context.Context, tenantID, stationID, dayID uuid.UUID, limit, offset int) ([]Reconciliation, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+prefixedColumns+`
+		FROM tank_reconciliations rec
+		JOIN tanks t ON t.id = rec.tank_id AND t.tenant_id = rec.tenant_id
+		WHERE rec.tenant_id = $1 AND t.station_id = $2 AND rec.operating_day_id = $3
+		ORDER BY t.code, rec.id
+		LIMIT $4 OFFSET $5
+	`, tenantID, stationID, dayID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Reconciliation
+	for rows.Next() {
+		var rec Reconciliation
+		if err := scan(rows, &rec); err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
 // RecentReconciliation is a lightweight reconciliation row joined to its
 // operating day's business date — the variance history the inventory
 // dashboard renders.

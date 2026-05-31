@@ -76,6 +76,33 @@ func (r *Repo) ListDays(ctx context.Context, tenantID, stationID uuid.UUID) ([]O
 	return out, rows.Err()
 }
 
+// ListDaysPage returns a page of a station's operating days, newest date
+// first, with id as a deterministic tiebreaker so paging is stable across
+// calls. limit/offset are applied by the caller (HTTP layer) after clamping.
+func (r *Repo) ListDaysPage(ctx context.Context, tenantID, stationID uuid.UUID, limit, offset int) ([]OperatingDay, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+dayColumns+`
+		FROM operating_days
+		WHERE tenant_id = $1 AND station_id = $2
+		ORDER BY business_date DESC, id DESC
+		LIMIT $3 OFFSET $4
+	`, tenantID, stationID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OperatingDay
+	for rows.Next() {
+		var d OperatingDay
+		if err := scanDay(rows, &d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // LatestActiveDayForStation returns the station's most recent day still being
 // operated (open or closed — locked days are done), or pgx.ErrNoRows. This is
 // the day the supervisor operations dashboard runs against.
