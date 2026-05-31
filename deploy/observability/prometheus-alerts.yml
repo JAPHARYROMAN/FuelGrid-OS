@@ -1,0 +1,136 @@
+# Prometheus alerting rules for FuelGrid OS.
+#
+# Load via prometheus.yml:
+#   rule_files:
+#     - /etc/prometheus/rules/prometheus-alerts.yml
+#
+# Metric names are emitted by internal/observability/metrics.go and the
+# pgx pool stats collector. Confirmed surfaces:
+#   fuelgrid_http_requests_total{method,path,status}
+#   fuelgrid_http_request_duration_seconds_bucket{method,path,status}
+#   fuelgrid_http_requests_inflight
+#   fuelgrid_outbox_unpublished_events
+#   fuelgrid_outbox_oldest_unpublished_age_seconds
+#   pgxpool_acquired_conns / pgxpool_max_conns  (see slo.md — collector must be wired)
+#   up{job="fuelgrid-api"}                       (scrape liveness, from Prometheus itself)
+#
+# The `job` label is assumed to be "fuelgrid-api"; adjust if your scrape
+# config names it differently.
+groups:
+  - name: fuelgrid-api-availability
+    rules:
+      - alert: ApiHigh5xxRate
+        expr: |
+          (
+            sum(rate(fuelgrid_http_requests_total{job="fuelgrid-api", status=~"5.."}[5m]))
+            /
+            sum(rate(fuelgrid_http_requests_total{job="fuelgrid-api"}[5m]))
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API 5xx error ratio above 2% (current: {{ $value | humanizePercentage }})"
+          description: >
+            More than 2% of HTTP responses are 5xx over the last 5 minutes.
+            This burns the availability error budget. See runbook.
+          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/api-5xx.md"
+
+      - alert: ApiReadinessFailing
+        # The /readyz probe returns 503 when a backing dep (Postgres/Redis)
+        # is unreachable. We detect it two ways: the scrape target going
+        # down, and a sustained burst of 503s on the readyz path.
+        expr: |
+          max_over_time(up{job="fuelgrid-api"}[5m]) == 0
+          or
+          sum(rate(fuelgrid_http_requests_total{job="fuelgrid-api", path="/readyz", status="503"}[5m])) > 0
+        for: 3m
+        labels:
+          severity: critical
+          service: api
+        annotations:
+          summary: "API readiness probe failing or target down"
+          description: >
+            The API is either unreachable to the scraper (up == 0) or its
+            /readyz probe is returning 503, meaning a backing dependency
+            (Postgres or Redis) is unhealthy.
+          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/db-unavailable.md"
+
+  - name: fuelgrid-api-latency
+    rules:
+      - alert: ApiHighP99Latency
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le) (
+              rate(fuelgrid_http_request_duration_seconds_bucket{job="fuelgrid-api"}[5m])
+            )
+          ) > 0.75
+        for: 10m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "API p99 latency above 750ms (current: {{ $value | humanizeDuration }})"
+          description: >
+            The 99th percentile request latency has exceeded the 750ms SLO
+            objective for 10 minutes. Investigate slow downstream calls,
+            DB pool contention, or saturation.
+          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/api-5xx.md"
+
+  - name: fuelgrid-database
+    rules:
+      - alert: DbPoolSaturation
+        # pgx pool stats: acquired connections vs. max. Above 90% sustained
+        # means requests are queueing for a connection.
+        expr: |
+          (
+            sum(pgxpool_acquired_conns{job="fuelgrid-api"})
+            /
+            sum(pgxpool_max_conns{job="fuelgrid-api"})
+          ) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "DB connection pool above 90% saturation"
+          description: >
+            Acquired connections are above 90% of the configured pool max
+            for 5 minutes. New requests will block on connection acquisition,
+            inflating latency. Investigate slow queries or undersized pool.
+          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/db-unavailable.md"
+
+  - name: fuelgrid-outbox
+    rules:
+      - alert: OutboxDeadLetterBacklog
+        # Unpublished outbox events that are not draining. A high count or a
+        # large age both indicate the publisher is stuck or failing.
+        expr: |
+          fuelgrid_outbox_unpublished_events{job="fuelgrid-api"} > 500
+        for: 10m
+        labels:
+          severity: warning
+          service: outbox
+        annotations:
+          summary: "Outbox backlog above 500 unpublished events"
+          description: >
+            More than 500 outbox events have not been published for 10
+            minutes. Downstream consumers are not receiving domain events.
+          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/outbox-stuck.md"
+
+      - alert: OutboxPublisherStalled
+        expr: |
+          fuelgrid_outbox_oldest_unpublished_age_seconds{job="fuelgrid-api"} > 300
+        for: 5m
+        labels:
+          severity: critical
+          service: outbox
+        annotations:
+          summary: "Oldest unpublished outbox event older than 5 minutes"
+          description: >
+            The oldest unpublished outbox row is more than 300s old, meaning
+            the publisher loop has effectively stalled rather than merely
+            falling behind on volume.
+          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/outbox-stuck.md"
