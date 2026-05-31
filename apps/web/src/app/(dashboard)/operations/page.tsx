@@ -17,6 +17,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 import { formatLitres, formatMoney, parseDecimal } from '@/lib/money';
 
@@ -175,9 +176,11 @@ export default function OperationsPage() {
           title="No active operating day"
           description="Open a day for this station to start running shifts."
           action={
-            <Button disabled={openDay.isPending} onClick={() => openDay.mutate()}>
-              {openDay.isPending ? 'Opening…' : 'Open operating day'}
-            </Button>
+            <PermissionGate permission="operations.manage_day" stationId={stationID}>
+              <Button disabled={openDay.isPending} onClick={() => openDay.mutate()}>
+                {openDay.isPending ? 'Opening…' : 'Open operating day'}
+              </Button>
+            </PermissionGate>
           }
         />
       ) : (
@@ -205,13 +208,15 @@ export default function OperationsPage() {
                     value={newShiftName}
                     onChange={(e) => setNewShiftName(e.target.value)}
                   />
-                  <Button
-                    size="sm"
-                    disabled={!newShiftName.trim() || openShift.isPending}
-                    onClick={() => openShift.mutate(overview.data.day!.id)}
-                  >
-                    {openShift.isPending ? 'Opening…' : 'Open shift'}
-                  </Button>
+                  <PermissionGate permission="shift.open" stationId={stationID}>
+                    <Button
+                      size="sm"
+                      disabled={!newShiftName.trim() || openShift.isPending}
+                      onClick={() => openShift.mutate(overview.data.day!.id)}
+                    >
+                      {openShift.isPending ? 'Opening…' : 'Open shift'}
+                    </Button>
+                  </PermissionGate>
                 </div>
               ) : null}
             </CardContent>
@@ -225,12 +230,13 @@ export default function OperationsPage() {
                 <ShiftCard
                   key={shift.id}
                   shift={shift}
+                  stationID={stationID}
                   onApprove={() => approve.mutate(shift.id)}
                   onResolve={(id) => resolve.mutate(id)}
                   onClose={() => closeShift.mutate(shift.id)}
-                  approving={approve.isPending}
-                  resolving={resolve.isPending}
-                  closing={closeShift.isPending}
+                  approving={approve.isPending && approve.variables === shift.id}
+                  resolvingExceptionID={resolve.isPending ? (resolve.variables ?? null) : null}
+                  closing={closeShift.isPending && closeShift.variables === shift.id}
                 />
               ))}
             </div>
@@ -243,19 +249,21 @@ export default function OperationsPage() {
 
 function ShiftCard({
   shift,
+  stationID,
   onApprove,
   onResolve,
   onClose,
   approving,
-  resolving,
+  resolvingExceptionID,
   closing,
 }: {
   shift: OperationsShift;
+  stationID: string;
   onApprove: () => void;
   onResolve: (exceptionID: string) => void;
   onClose: () => void;
   approving: boolean;
-  resolving: boolean;
+  resolvingExceptionID: string | null;
   closing: boolean;
 }) {
   const cash = shift.cash_submission;
@@ -323,14 +331,16 @@ function ShiftCard({
                   ) : null}
                 </div>
                 {exc.status === 'open' ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={resolving}
-                    onClick={() => onResolve(exc.id)}
-                  >
-                    Resolve
-                  </Button>
+                  <PermissionGate permission="shift.approve" stationId={stationID}>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={resolvingExceptionID === exc.id}
+                      onClick={() => onResolve(exc.id)}
+                    >
+                      {resolvingExceptionID === exc.id ? 'Resolving…' : 'Resolve'}
+                    </Button>
+                  </PermissionGate>
                 ) : (
                   <Badge tone="neutral">resolved</Badge>
                 )}
@@ -341,18 +351,22 @@ function ShiftCard({
 
         {/* Lifecycle actions */}
         {shift.status === 'open' ? (
-          <Button className="h-10" disabled={closing} onClick={onClose}>
-            {closing ? 'Closing…' : 'Close shift'}
-          </Button>
+          <PermissionGate permission="shift.close" stationId={stationID}>
+            <Button className="h-10" disabled={closing} onClick={onClose}>
+              {closing ? 'Closing…' : 'Close shift'}
+            </Button>
+          </PermissionGate>
         ) : null}
         {shift.status === 'closed' ? (
-          <Button className="h-10" disabled={!canApprove || approving} onClick={onApprove}>
-            {approving
-              ? 'Approving…'
-              : canApprove
-                ? 'Approve shift'
-                : 'Resolve exceptions to approve'}
-          </Button>
+          <PermissionGate permission="shift.approve" stationId={stationID}>
+            <Button className="h-10" disabled={!canApprove || approving} onClick={onApprove}>
+              {approving
+                ? 'Approving…'
+                : canApprove
+                  ? 'Approve shift'
+                  : 'Resolve exceptions to approve'}
+            </Button>
+          </PermissionGate>
         ) : null}
       </CardContent>
     </Card>

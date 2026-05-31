@@ -16,6 +16,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 function money(n?: string) {
@@ -126,9 +127,11 @@ export default function RevenuePage() {
                   : 'No active operating day'}
               </CardTitle>
               {overview.data.day ? (
-                <Button size="sm" disabled={closeDay.isPending} onClick={() => closeDay.mutate()}>
-                  {closeDay.isPending ? 'Closing…' : 'Close & lock day'}
-                </Button>
+                <PermissionGate permission="period.lock">
+                  <Button size="sm" disabled={closeDay.isPending} onClick={() => closeDay.mutate()}>
+                    {closeDay.isPending ? 'Closing…' : 'Close & lock day'}
+                  </Button>
+                </PermissionGate>
               ) : null}
             </CardHeader>
             {overview.data.summary ? (
