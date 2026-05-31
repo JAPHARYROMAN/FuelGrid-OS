@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { headers } from 'next/headers';
 
 import { Providers } from './providers';
 import './globals.css';
@@ -30,7 +31,17 @@ export const viewport: Viewport = {
   themeColor: '#3b82f6',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Read the per-request nonce that src/middleware.ts forwards on the `x-nonce`
+  // request header. Reading headers() also opts every route into dynamic
+  // rendering, which is required for Next to inject the per-request nonce onto
+  // its inline hydration/bootstrap scripts — a statically prerendered page is
+  // generated at build time and could not carry a request-scoped nonce, so the
+  // nonce CSP would block hydration. (The nonce value itself is consumed by
+  // Next internally via the request CSP header; reading it here is what makes
+  // the render dynamic.)
+  await headers();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
