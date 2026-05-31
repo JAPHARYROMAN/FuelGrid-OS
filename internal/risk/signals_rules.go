@@ -63,6 +63,35 @@ func (r *Repo) ListSignals(ctx context.Context, tenantID uuid.UUID, signalType s
 	return out, rows.Err()
 }
 
+// ListSignalsPage is the paginated variant of ListSignals (REL-REPO). occurred_at
+// is not unique, so id is appended as a deterministic tiebreaker; the prior
+// hard LIMIT 500 is replaced by the caller-supplied limit/offset window.
+func (r *Repo) ListSignalsPage(ctx context.Context, tenantID uuid.UUID, signalType string, limit, offset int) ([]map[string]any, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, signal_type, source_event_id, station_id, amount::text, litres::text, occurred_at
+		FROM risk_signals WHERE tenant_id = $1 AND ($2 = '' OR signal_type = $2)
+		ORDER BY occurred_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, signalType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, src uuid.UUID
+		var st string
+		var station *uuid.UUID
+		var amount, litres *string
+		var occurred any
+		if err := rows.Scan(&id, &st, &src, &station, &amount, &litres, &occurred); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"id": id, "signal_type": st, "source_event_id": src, "station_id": station, "amount": amount, "litres": litres})
+	}
+	return out, rows.Err()
+}
+
 // ---- Rules ----
 
 func (r *Repo) CreateRule(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, code, name, ruleType, severity, description string, threshold string, lookbackDays int) (uuid.UUID, error) {
@@ -83,6 +112,33 @@ func (r *Repo) ListRules(ctx context.Context, tenantID uuid.UUID) ([]map[string]
 		SELECT id, code, name, rule_type, status, threshold::text, lookback_days, severity, description
 		FROM risk_rules WHERE tenant_id = $1 ORDER BY code
 	`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var code, name, rt, status, severity string
+		var threshold, desc *string
+		var lookback int
+		if err := rows.Scan(&id, &code, &name, &rt, &status, &threshold, &lookback, &severity, &desc); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"id": id, "code": code, "name": name, "rule_type": rt, "status": status, "threshold": threshold, "lookback_days": lookback, "severity": severity, "description": desc})
+	}
+	return out, rows.Err()
+}
+
+// ListRulesPage is the paginated variant of ListRules (REL-REPO). code is unique
+// per tenant, so it alone is a stable ordering key.
+func (r *Repo) ListRulesPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, code, name, rule_type, status, threshold::text, lookback_days, severity, description
+		FROM risk_rules WHERE tenant_id = $1
+		ORDER BY code
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -30,16 +30,24 @@ func (s *Server) handleListVehicles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.fleet.ListVehicles(r.Context(), actor.TenantID, queryUUID(r, "customer_id"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListVehiclesPage(r.Context(), actor.TenantID, queryUUID(r, "customer_id"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, vehicleMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleCreateVehicle(w http.ResponseWriter, r *http.Request) {
@@ -120,16 +128,24 @@ func (s *Server) handleListDrivers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.fleet.ListDrivers(r.Context(), actor.TenantID, queryUUID(r, "customer_id"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListDriversPage(r.Context(), actor.TenantID, queryUUID(r, "customer_id"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, driverMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleCreateDriver(w http.ResponseWriter, r *http.Request) {
@@ -242,16 +258,24 @@ func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.fleet.ListCredentials(r.Context(), actor.TenantID, queryUUID(r, "customer_id"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListCredentialsPage(r.Context(), actor.TenantID, queryUUID(r, "customer_id"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, credentialMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleIssueCredential(w http.ResponseWriter, r *http.Request) {

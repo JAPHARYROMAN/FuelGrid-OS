@@ -74,6 +74,30 @@ func (r *Repo) ListOdometerReadings(ctx context.Context, tenantID, vehicleID uui
 	return out, rows.Err()
 }
 
+// ListOdometerReadingsPage is the paginated variant of ListOdometerReadings
+// (REL-REPO). captured_at is not unique, so id is appended as a tiebreaker.
+func (r *Repo) ListOdometerReadingsPage(ctx context.Context, tenantID, vehicleID uuid.UUID, limit, offset int) ([]OdometerReading, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, vehicle_id, authorization_id, station_id, reading::text, distance_since::text, validation_status, note, captured_at
+		FROM vehicle_odometer_readings WHERE tenant_id = $1 AND vehicle_id = $2
+		ORDER BY captured_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, vehicleID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []OdometerReading{}
+	for rows.Next() {
+		var o OdometerReading
+		if err := rows.Scan(&o.ID, &o.VehicleID, &o.AuthorizationID, &o.StationID, &o.Reading, &o.DistanceSince, &o.ValidationStatus, &o.Note, &o.CapturedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // VehicleConsumption is a per-vehicle consumption summary over a period: the
 // authorized spend (from fulfilled authorizations) and odometer distance.
 type VehicleConsumption struct {

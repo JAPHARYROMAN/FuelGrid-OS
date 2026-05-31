@@ -144,6 +144,40 @@ func (r *Repo) ListPurchaseOrders(ctx context.Context, tenantID uuid.UUID, f Pur
 	return out, rows.Err()
 }
 
+// ListPurchaseOrdersPage is the paginated variant of ListPurchaseOrders
+// (REL-REPO). created_at is not unique, so id is appended as a tiebreaker.
+func (r *Repo) ListPurchaseOrdersPage(ctx context.Context, tenantID uuid.UUID, f PurchaseOrderFilter, limit, offset int) ([]PurchaseOrder, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+purchaseOrderColumns+`
+		FROM purchase_orders
+		WHERE tenant_id = $1
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
+		  AND ($3::uuid IS NULL OR supplier_id = $3)
+		  AND ($4::text IS NULL OR status = $4)
+		ORDER BY created_at DESC, id
+		LIMIT $5 OFFSET $6
+	`, tenantID, database.UUIDStrings(f.StationIDs), f.SupplierID, f.Status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []PurchaseOrder{}
+	for rows.Next() {
+		var po PurchaseOrder
+		if err := scanPurchaseOrder(rows, &po); err != nil {
+			return nil, err
+		}
+		lines, err := r.listPurchaseOrderLines(ctx, r.pool, tenantID, po.ID)
+		if err != nil {
+			return nil, err
+		}
+		po.Lines = lines
+		out = append(out, po)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetPurchaseOrder(ctx context.Context, tenantID, id uuid.UUID) (*PurchaseOrder, error) {
 	po, err := r.getPurchaseOrder(ctx, r.pool, tenantID, id)
 	if errors.Is(err, pgx.ErrNoRows) {

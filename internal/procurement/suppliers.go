@@ -87,6 +87,37 @@ func (r *Repo) ListSuppliers(ctx context.Context, tenantID uuid.UUID) ([]Supplie
 	return out, rows.Err()
 }
 
+// ListSuppliersPage is the paginated variant of ListSuppliers (REL-REPO). name
+// is not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListSuppliersPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Supplier, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+supplierColumns+`
+		FROM suppliers
+		WHERE tenant_id = $1
+		ORDER BY name, id
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []Supplier{}
+	for rows.Next() {
+		var s Supplier
+		if err := scanSupplier(rows, &s); err != nil {
+			return nil, err
+		}
+		ids, err := r.supplierProductIDs(ctx, r.pool, tenantID, s.ID)
+		if err != nil {
+			return nil, err
+		}
+		s.ProductIDs = ids
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetSupplier(ctx context.Context, tenantID, id uuid.UUID) (*Supplier, error) {
 	s, err := r.getSupplier(ctx, r.pool, tenantID, id)
 	if errors.Is(err, pgx.ErrNoRows) {

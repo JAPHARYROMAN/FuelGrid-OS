@@ -92,10 +92,18 @@ func (s *Server) handleListOdometer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid vehicle id")
 		return
 	}
-	rows, err := s.fleet.ListOdometerReadings(r.Context(), actor.TenantID, vehicleID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListOdometerReadingsPage(r.Context(), actor.TenantID, vehicleID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -105,7 +113,7 @@ func (s *Server) handleListOdometer(w http.ResponseWriter, r *http.Request) {
 			"validation_status": o.ValidationStatus, "note": o.Note, "captured_at": o.CapturedAt.Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // ---- Fleet consumption (Stage 11) ----

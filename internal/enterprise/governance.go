@@ -46,6 +46,25 @@ func (r *Repo) ListGroups(ctx context.Context, tenantID uuid.UUID) ([]StationGro
 	return out, rows.Err()
 }
 
+// ListGroupsPage is the paginated variant of ListGroups (REL-REPO). name is not
+// unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListGroupsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]StationGroup, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id, name, kind, status FROM station_groups WHERE tenant_id = $1 ORDER BY name, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []StationGroup{}
+	for rows.Next() {
+		var g StationGroup
+		if err := rows.Scan(&g.ID, &g.Name, &g.Kind, &g.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 // AddGroupMember assigns a station to a group; the composite FK guarantees the
 // station belongs to the tenant.
 func (r *Repo) AddGroupMember(ctx context.Context, tx pgx.Tx, tenantID, groupID, stationID uuid.UUID) error {
@@ -211,6 +230,33 @@ func (r *Repo) ListPolicies(ctx context.Context, tenantID uuid.UUID) ([]map[stri
 	return out, rows.Err()
 }
 
+// ListPoliciesPage is the paginated variant of ListPolicies (REL-REPO).
+// workflow_type is not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListPoliciesPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, workflow_type, min_amount::text, required_approvals, required_role, status
+		FROM approval_policies WHERE tenant_id = $1
+		ORDER BY workflow_type, id
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var wf, minAmt, status string
+		var req int
+		var role *string
+		if err := rows.Scan(&id, &wf, &minAmt, &req, &role, &status); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"id": id, "workflow_type": wf, "min_amount": minAmt, "required_approvals": req, "required_role": role, "status": status})
+	}
+	return out, rows.Err()
+}
+
 // RaiseRequest creates an approval request, snapshotting the required-approvals
 // count from the strictest matching active policy (default 1 when none).
 func (r *Repo) RaiseRequest(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, workflowType string, refType *string, refID *uuid.UUID, amount string, stationID *uuid.UUID, requestedBy uuid.UUID) (*ApprovalRequest, error) {
@@ -250,6 +296,30 @@ func (r *Repo) ListRequests(ctx context.Context, tenantID uuid.UUID, status stri
 		SELECT `+approvalReqColumns+` FROM approval_requests
 		WHERE tenant_id = $1 AND ($2 = '' OR status = $2) ORDER BY created_at DESC
 	`, tenantID, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ApprovalRequest{}
+	for rows.Next() {
+		var a ApprovalRequest
+		if err := scanApprovalReq(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListRequestsPage is the paginated variant of ListRequests (REL-REPO).
+// created_at is not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListRequestsPage(ctx context.Context, tenantID uuid.UUID, status string, limit, offset int) ([]ApprovalRequest, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+approvalReqColumns+` FROM approval_requests
+		WHERE tenant_id = $1 AND ($2 = '' OR status = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, status, limit, offset)
 	if err != nil {
 		return nil, err
 	}

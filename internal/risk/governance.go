@@ -64,6 +64,39 @@ func (r *Repo) ListSuppressions(ctx context.Context, tenantID uuid.UUID) ([]map[
 	return out, rows.Err()
 }
 
+// ListSuppressionsPage is the paginated variant of ListSuppressions (REL-REPO).
+// created_at is not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListSuppressionsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, alert_type, entity_id, reason, expires_at FROM risk_suppressions
+		WHERE tenant_id = $1
+		ORDER BY created_at DESC, id
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var at string
+		var entity *uuid.UUID
+		var reason string
+		var expires *time.Time
+		if err := rows.Scan(&id, &at, &entity, &reason, &expires); err != nil {
+			return nil, err
+		}
+		var exp *string
+		if expires != nil {
+			v := expires.Format(time.RFC3339)
+			exp = &v
+		}
+		out = append(out, map[string]any{"id": id, "alert_type": at, "entity_id": entity, "reason": reason, "expires_at": exp})
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) RecordFeedback(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, alertID *uuid.UUID, disposition, note string, createdBy uuid.UUID) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `

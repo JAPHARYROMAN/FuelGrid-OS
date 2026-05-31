@@ -104,6 +104,35 @@ func (r *Repo) ListVehicles(ctx context.Context, tenantID, customerID uuid.UUID)
 	return out, rows.Err()
 }
 
+// ListVehiclesPage is the paginated variant of ListVehicles (REL-REPO). It runs
+// the same tenant/customer-scoped query with a deterministic ORDER BY plus
+// LIMIT/OFFSET so paging is stable across requests.
+func (r *Repo) ListVehiclesPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]Vehicle, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+vehicleColumns+` FROM customer_vehicles
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY registration, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Vehicle{}
+	for rows.Next() {
+		var v Vehicle
+		if err := scanVehicle(rows, &v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) SetVehicleStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) (*Vehicle, error) {
 	var v Vehicle
 	err := scanVehicle(tx.QueryRow(ctx, `

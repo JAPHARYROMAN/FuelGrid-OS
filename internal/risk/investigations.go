@@ -78,6 +78,30 @@ func (r *Repo) ListCases(ctx context.Context, tenantID uuid.UUID, status string)
 	return out, rows.Err()
 }
 
+// ListCasesPage is the paginated variant of ListCases (REL-REPO). created_at is
+// not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListCasesPage(ctx context.Context, tenantID uuid.UUID, status string, limit, offset int) ([]Case, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+caseColumns+` FROM investigation_cases
+		WHERE tenant_id = $1 AND ($2 = '' OR status = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Case{}
+	for rows.Next() {
+		var c Case
+		if err := scanCase(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetCase(ctx context.Context, tenantID, id uuid.UUID) (*Case, error) {
 	var c Case
 	err := scanCase(r.pool.QueryRow(ctx, `SELECT `+caseColumns+` FROM investigation_cases WHERE tenant_id = $1 AND id = $2`, tenantID, id), &c)

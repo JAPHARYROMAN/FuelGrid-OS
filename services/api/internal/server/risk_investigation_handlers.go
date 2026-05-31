@@ -68,16 +68,24 @@ func (s *Server) handleListCases(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.risk.ListCases(r.Context(), actor.TenantID, r.URL.Query().Get("status"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.risk.ListCasesPage(r.Context(), actor.TenantID, r.URL.Query().Get("status"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, caseMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetCaseTimeline(w http.ResponseWriter, r *http.Request) {

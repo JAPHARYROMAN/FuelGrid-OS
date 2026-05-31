@@ -227,6 +227,34 @@ func (r *Repo) ListAuthorizations(ctx context.Context, tenantID, customerID uuid
 	return out, rows.Err()
 }
 
+// ListAuthorizationsPage is the paginated variant of ListAuthorizations
+// (REL-REPO). created_at is not unique, so id is appended as a tiebreaker.
+func (r *Repo) ListAuthorizationsPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]Authorization, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+authColumns+` FROM fuel_authorizations
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Authorization{}
+	for rows.Next() {
+		var a Authorization
+		if err := scanAuth(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // FulfillAuthorization consumes an approved authorization exactly once, linking
 // it to the Phase-6 sale. A second fulfillment yields ErrConsumed.
 func (r *Repo) FulfillAuthorization(ctx context.Context, tx pgx.Tx, tenantID, id, consumedBy uuid.UUID) (*Authorization, error) {
@@ -266,6 +294,39 @@ func (r *Repo) SetAuthorizationStatus(ctx context.Context, tx pgx.Tx, tenantID, 
 		return nil, err
 	}
 	return &a, nil
+}
+
+// ListLimitsPage is the paginated variant of ListLimits (REL-REPO).
+func (r *Repo) ListLimitsPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, customer_id, vehicle_id, product_id, scope, period, max_amount::text, max_litres::text
+		FROM fuel_limits WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var cust, veh, prod *uuid.UUID
+		var scope, period string
+		var maxAmt, maxLit *string
+		if err := rows.Scan(&id, &cust, &veh, &prod, &scope, &period, &maxAmt, &maxLit); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{
+			"id": id, "customer_id": cust, "vehicle_id": veh, "product_id": prod,
+			"scope": scope, "period": period, "max_amount": maxAmt, "max_litres": maxLit,
+		})
+	}
+	return out, rows.Err()
 }
 
 // money0 returns "0" for an empty string so SQL numeric casts never fail.

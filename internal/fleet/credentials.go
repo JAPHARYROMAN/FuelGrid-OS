@@ -118,6 +118,34 @@ func (r *Repo) ListCredentials(ctx context.Context, tenantID, customerID uuid.UU
 	return out, rows.Err()
 }
 
+// ListCredentialsPage is the paginated variant of ListCredentials (REL-REPO).
+// created_at is not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListCredentialsPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]Credential, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+credentialColumns+` FROM fuel_credentials
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Credential{}
+	for rows.Next() {
+		var c Credential
+		if err := scanCredential(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) SetCredentialStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) (*Credential, error) {
 	var c Credential
 	err := scanCredential(tx.QueryRow(ctx, `
