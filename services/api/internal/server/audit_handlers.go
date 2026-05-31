@@ -28,12 +28,10 @@ type auditLogEntry struct {
 	OccurredAt    time.Time       `json:"occurred_at"`
 }
 
-const auditMaxLimit = 200
-
 // handleListAuditLogs returns audit_logs scoped to the actor's tenant,
-// filtered by optional query params. Capped at 200 rows per call — the
-// auditor UI paginates rather than scrolling through the full history
-// in one shot.
+// filtered by optional query params, using the standard limit/offset paging
+// helper — the auditor UI pages rather than scrolling the full history in one
+// shot.
 //
 // Query params:
 //
@@ -43,7 +41,7 @@ const auditMaxLimit = 200
 //	actor_id     uuid    exact match
 //	since        RFC3339 inclusive lower bound on occurred_at
 //	until        RFC3339 inclusive upper bound
-//	limit        int     1..200 (default 50)
+//	limit/offset int     standard page params (see parsePage)
 func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {
@@ -51,20 +49,12 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := r.URL.Query()
-	limit := 50
-	if v := q.Get("limit"); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			writeError(w, http.StatusBadRequest, "invalid limit")
-			return
-		}
-		if n > auditMaxLimit {
-			n = auditMaxLimit
-		}
-		limit = n
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
 	}
 
+	q := r.URL.Query()
 	var (
 		args  = []any{actor.TenantID}
 		where = "WHERE tenant_id = $1"
@@ -109,14 +99,18 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		where += " AND occurred_at <= " + addArg(t)
 	}
 
+	// occurred_at is not unique, so add id as a deterministic tiebreaker for
+	// stable paging. Fetch limit+1 to learn whether a further page exists.
+	limitArg := addArg(limit + 1)
+	offsetArg := addArg(offset)
 	query := `
 		SELECT id, tenant_id, actor_id, action, entity_type, entity_id,
 		       previous_value, new_value, reason,
 		       host(ip), user_agent, request_id, occurred_at
 		FROM audit_logs
 		` + where + `
-		ORDER BY occurred_at DESC
-		LIMIT ` + strconv.Itoa(limit)
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT ` + limitArg + ` OFFSET ` + offsetArg
 
 	rows, err := s.deps.DB.Query(r.Context(), query, args...)
 	if err != nil {
@@ -146,9 +140,9 @@ func (s *Server) handleListAuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"items": out,
-		"count": len(out),
-		"limit": limit,
-	})
+	hasMore := len(out) > limit
+	if hasMore {
+		out = out[:limit]
+	}
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }

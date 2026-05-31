@@ -229,17 +229,25 @@ func (s *Server) handleListShiftExceptions(w http.ResponseWriter, r *http.Reques
 	if !s.authorizeStation(w, r, actor, "station.read", shift.StationID) {
 		return
 	}
-	rows, err := s.operations.ListExceptionsForShift(ctx, actor.TenantID, id)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.operations.ListExceptionsForShiftPage(ctx, actor.TenantID, id, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list shift exceptions", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]shiftExceptionDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toShiftExceptionDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type resolveExceptionRequest struct {

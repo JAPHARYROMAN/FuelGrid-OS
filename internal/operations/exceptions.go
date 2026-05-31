@@ -75,6 +75,30 @@ func (r *Repo) ListExceptionsForShift(ctx context.Context, tenantID, shiftID uui
 	return out, rows.Err()
 }
 
+// ListExceptionsForShiftPage returns a page of a shift's exceptions, newest
+// raised first with id as a deterministic tiebreaker so paging is stable.
+func (r *Repo) ListExceptionsForShiftPage(ctx context.Context, tenantID, shiftID uuid.UUID, limit, offset int) ([]ShiftException, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+exceptionColumns+`
+		FROM shift_exceptions WHERE tenant_id = $1 AND shift_id = $2
+		ORDER BY raised_at DESC, id DESC
+		LIMIT $3 OFFSET $4
+	`, tenantID, shiftID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ShiftException
+	for rows.Next() {
+		var e ShiftException
+		if err := scanException(rows, &e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetException(ctx context.Context, tenantID, id uuid.UUID) (*ShiftException, error) {
 	var e ShiftException
 	if err := scanException(r.pool.QueryRow(ctx, `

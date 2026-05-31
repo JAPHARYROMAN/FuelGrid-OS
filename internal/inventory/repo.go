@@ -217,6 +217,32 @@ func (r *Repo) ListMovements(ctx context.Context, tenantID, tankID uuid.UUID) ([
 	return out, rows.Err()
 }
 
+// ListMovementsPage returns a page of a tank's stock-movement ledger in seq
+// order (seq is monotonic, so it is a stable paging key on its own).
+// limit/offset come from the clamped HTTP page params.
+func (r *Repo) ListMovementsPage(ctx context.Context, tenantID, tankID uuid.UUID, limit, offset int) ([]Movement, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM stock_movements
+		WHERE tenant_id = $1 AND tank_id = $2
+		ORDER BY seq
+		LIMIT $3 OFFSET $4
+	`, tenantID, tankID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Movement
+	for rows.Next() {
+		var m Movement
+		if err := scan(rows, &m); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // GetMovement returns one movement by id within the tenant, or
 // ErrMovementNotFound.
 func (r *Repo) GetMovement(ctx context.Context, tenantID, id uuid.UUID) (*Movement, error) {

@@ -100,17 +100,25 @@ func (s *Server) handleListShifts(w http.ResponseWriter, r *http.Request) {
 		}
 		dayID = &id
 	}
-	rows, err := s.operations.ListShifts(r.Context(), actor.TenantID, stationID, dayID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.operations.ListShiftsPage(r.Context(), actor.TenantID, stationID, dayID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list shifts", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]shiftDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toShiftDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type openShiftRequest struct {

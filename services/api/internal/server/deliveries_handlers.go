@@ -181,13 +181,17 @@ func (s *Server) handleListTankDeliveries(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	rows, err := s.inventory.ListDeliveriesForTank(r.Context(), actor.TenantID, tankID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.inventory.ListDeliveriesForTankPage(r.Context(), actor.TenantID, tankID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list tank deliveries", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, deliveryListResponse(rows))
+	s.writePagedDeliveries(w, rows, limit, offset)
 }
 
 func (s *Server) handleListStationDeliveries(w http.ResponseWriter, r *http.Request) {
@@ -201,13 +205,31 @@ func (s *Server) handleListStationDeliveries(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	rows, err := s.inventory.ListDeliveriesForStation(r.Context(), actor.TenantID, stationID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.inventory.ListDeliveriesForStationPage(r.Context(), actor.TenantID, stationID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list station deliveries", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, deliveryListResponse(rows))
+	s.writePagedDeliveries(w, rows, limit, offset)
+}
+
+// writePagedDeliveries trims the limit+1 fetch, maps to DTOs, and writes the
+// standard paged envelope with a precise has_more flag.
+func (s *Server) writePagedDeliveries(w http.ResponseWriter, rows []inventory.Delivery, limit, offset int) {
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	out := make([]deliveryDTO, 0, len(rows))
+	for i := range rows {
+		out = append(out, toDeliveryDTO(&rows[i]))
+	}
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetDeliveryReceipt(w http.ResponseWriter, r *http.Request) {
@@ -240,12 +262,4 @@ func (s *Server) handleGetDeliveryReceipt(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, toDeliveryDTO(d))
-}
-
-func deliveryListResponse(rows []inventory.Delivery) map[string]any {
-	out := make([]deliveryDTO, 0, len(rows))
-	for i := range rows {
-		out = append(out, toDeliveryDTO(&rows[i]))
-	}
-	return map[string]any{"items": out, "count": len(out)}
 }

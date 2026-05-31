@@ -74,11 +74,19 @@ func (s *Server) handleListMeterReadings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := s.readings.ListActiveForShift(ctx, actor.TenantID, id)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.readings.ListActiveForShiftPage(ctx, actor.TenantID, id, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list meter readings", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 
 	items := make([]meterReadingDTO, 0, len(rows))
@@ -103,8 +111,12 @@ func (s *Server) handleListMeterReadings(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
+	// Standard paged envelope plus the dispensed companion this endpoint has
+	// always returned alongside the readings page.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items": items, "count": len(items), "dispensed": dispensed,
+		"items": items, "count": len(items),
+		"limit": limit, "offset": offset, "has_more": hasMore,
+		"dispensed": dispensed,
 	})
 }
 

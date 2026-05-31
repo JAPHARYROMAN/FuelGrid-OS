@@ -54,17 +54,26 @@ func (s *Server) handleListOperatingDays(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	rows, err := s.operations.ListDays(r.Context(), actor.TenantID, stationID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	// Fetch one extra row to learn whether a further page exists, then trim.
+	rows, err := s.operations.ListDaysPage(r.Context(), actor.TenantID, stationID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list operating days", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]operatingDayDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toOperatingDayDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type openOperatingDayRequest struct {

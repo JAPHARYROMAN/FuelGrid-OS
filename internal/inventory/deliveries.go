@@ -344,6 +344,22 @@ func (r *Repo) ListDeliveriesForTank(ctx context.Context, tenantID, tankID uuid.
 	return collectDeliveries(rows)
 }
 
+// ListDeliveriesForTankPage returns a page of a tank's deliveries, newest
+// received first with id as a deterministic tiebreaker so paging is stable.
+func (r *Repo) ListDeliveriesForTankPage(ctx context.Context, tenantID, tankID uuid.UUID, limit, offset int) ([]Delivery, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+deliveryColumns+`
+		FROM deliveries
+		WHERE tenant_id = $1 AND tank_id = $2
+		ORDER BY received_at DESC, id DESC
+		LIMIT $3 OFFSET $4
+	`, tenantID, tankID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return collectDeliveries(rows)
+}
+
 func (r *Repo) GetDelivery(ctx context.Context, tenantID, id uuid.UUID) (*Delivery, error) {
 	var d Delivery
 	err := scanDelivery(r.pool.QueryRow(ctx, `
@@ -367,6 +383,24 @@ func (r *Repo) ListDeliveriesForStation(ctx context.Context, tenantID, stationID
 		WHERE d.tenant_id = $1 AND t.station_id = $2
 		ORDER BY d.received_at DESC
 	`, tenantID, stationID)
+	if err != nil {
+		return nil, err
+	}
+	return collectDeliveries(rows)
+}
+
+// ListDeliveriesForStationPage returns a page of every delivery into the
+// station's tanks, newest received first with id as a deterministic tiebreaker
+// so paging is stable.
+func (r *Repo) ListDeliveriesForStationPage(ctx context.Context, tenantID, stationID uuid.UUID, limit, offset int) ([]Delivery, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+prefixedDeliveryColumns+`
+		FROM deliveries d
+		JOIN tanks t ON t.id = d.tank_id
+		WHERE d.tenant_id = $1 AND t.station_id = $2
+		ORDER BY d.received_at DESC, d.id DESC
+		LIMIT $3 OFFSET $4
+	`, tenantID, stationID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

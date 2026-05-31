@@ -84,6 +84,32 @@ func (r *Repo) ListDipsForShift(ctx context.Context, tenantID, shiftID uuid.UUID
 	return out, rows.Err()
 }
 
+// ListDipsForShiftPage returns a page of the shift's active dip readings,
+// ordered by tank then type with id as a deterministic tiebreaker so paging is
+// stable. limit/offset come from the clamped HTTP page params.
+func (r *Repo) ListDipsForShiftPage(ctx context.Context, tenantID, shiftID uuid.UUID, limit, offset int) ([]DipReading, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+dipColumns+`
+		FROM tank_dip_readings
+		WHERE tenant_id = $1 AND shift_id = $2 AND status = 'active'
+		ORDER BY tank_id, reading_type, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, shiftID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DipReading
+	for rows.Next() {
+		var d DipReading
+		if err := scanDip(rows, &d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetDip(ctx context.Context, tenantID, id uuid.UUID) (*DipReading, error) {
 	var d DipReading
 	if err := scanDip(r.pool.QueryRow(ctx, `
