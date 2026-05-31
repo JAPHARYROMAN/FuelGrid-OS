@@ -20,9 +20,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
+
+// isUniqueViolation reports whether err is a Postgres unique-constraint error
+// (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
 
 // Movement types — the litre-flow category of a ledger row.
 const (
@@ -314,6 +322,13 @@ func (r *Repo) OpeningBalance(ctx context.Context, tenantID, tankID uuid.UUID) (
 // SetOpeningBalance seeds a tank's opening balance inside the caller's tx,
 // posting the genesis 'opening' movement. A tank that already has an opening
 // yields ErrOpeningExists.
+//
+// The fast-path check below short-circuits the common case, but it is racy on
+// its own (two concurrent openers both read "none"). The partial unique index
+// uq_stock_mvt_one_opening (migration 0072) is the authoritative guard: the
+// loser's INSERT fails with a unique violation, which we translate back into
+// ErrOpeningExists so callers see one consistent error regardless of which
+// guard fired.
 func (r *Repo) SetOpeningBalance(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in OpeningInput) (*Movement, error) {
 	has, err := r.hasOpeningTx(ctx, tx, tenantID, in.TankID)
 	if err != nil {
@@ -327,7 +342,7 @@ func (r *Repo) SetOpeningBalance(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		s := "opening"
 		srcType = &s
 	}
-	return r.PostMovement(ctx, tx, tenantID, PostInput{
+	m, err := r.PostMovement(ctx, tx, tenantID, PostInput{
 		TankID:        in.TankID,
 		MovementType:  TypeOpening,
 		SourceRefType: srcType,
@@ -335,4 +350,11 @@ func (r *Repo) SetOpeningBalance(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		RecordedBy:    in.RecordedBy,
 		Notes:         in.Notes,
 	})
+	if isUniqueViolation(err) {
+		return nil, ErrOpeningExists
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
 }
