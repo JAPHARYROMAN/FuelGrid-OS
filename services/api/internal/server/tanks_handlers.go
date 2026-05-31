@@ -19,21 +19,22 @@ import (
 const dateLayout = "2006-01-02"
 
 type tankDTO struct {
-	ID               uuid.UUID `json:"id"`
-	TenantID         uuid.UUID `json:"tenant_id"`
-	StationID        uuid.UUID `json:"station_id"`
-	ProductID        uuid.UUID `json:"product_id"`
-	Name             string    `json:"name"`
-	Code             string    `json:"code"`
-	CapacityLitres   float64   `json:"capacity_litres"`
-	SafeMinLitres    float64   `json:"safe_min_litres"`
-	SafeMaxLitres    float64   `json:"safe_max_litres"`
-	DeadStockLitres  float64   `json:"dead_stock_litres"`
-	HasWaterSensor   bool      `json:"has_water_sensor"`
-	HasTempSensor    bool      `json:"has_temp_sensor"`
-	Status           string    `json:"status"`
-	InstallationDate *string   `json:"installation_date,omitempty"`
-	DecommissionDate *string   `json:"decommission_date,omitempty"`
+	ID        uuid.UUID `json:"id"`
+	TenantID  uuid.UUID `json:"tenant_id"`
+	StationID uuid.UUID `json:"station_id"`
+	ProductID uuid.UUID `json:"product_id"`
+	Name      string    `json:"name"`
+	Code      string    `json:"code"`
+	// Litre limits are exact decimal STRINGS (numeric(14,3)).
+	CapacityLitres   string  `json:"capacity_litres"`
+	SafeMinLitres    string  `json:"safe_min_litres"`
+	SafeMaxLitres    string  `json:"safe_max_litres"`
+	DeadStockLitres  string  `json:"dead_stock_litres"`
+	HasWaterSensor   bool    `json:"has_water_sensor"`
+	HasTempSensor    bool    `json:"has_temp_sensor"`
+	Status           string  `json:"status"`
+	InstallationDate *string `json:"installation_date,omitempty"`
+	DecommissionDate *string `json:"decommission_date,omitempty"`
 	// CurrentLitres is the latest dip-resolved volume. Populated only by the
 	// station overview (from tank_dip_readings); nil elsewhere. The companion
 	// fields describe how current that reading is, so the dashboard can flag a
@@ -129,17 +130,17 @@ func (s *Server) handleGetTank(w http.ResponseWriter, r *http.Request) {
 }
 
 type createTankRequest struct {
-	StationID        uuid.UUID `json:"station_id"`
-	ProductID        uuid.UUID `json:"product_id"`
-	Name             string    `json:"name"`
-	Code             string    `json:"code"`
-	CapacityLitres   float64   `json:"capacity_litres"`
-	SafeMinLitres    float64   `json:"safe_min_litres"`
-	SafeMaxLitres    float64   `json:"safe_max_litres"`
-	DeadStockLitres  float64   `json:"dead_stock_litres"`
-	HasWaterSensor   bool      `json:"has_water_sensor"`
-	HasTempSensor    bool      `json:"has_temp_sensor"`
-	InstallationDate *string   `json:"installation_date,omitempty"`
+	StationID        uuid.UUID    `json:"station_id"`
+	ProductID        uuid.UUID    `json:"product_id"`
+	Name             string       `json:"name"`
+	Code             string       `json:"code"`
+	CapacityLitres   decimalInput `json:"capacity_litres"`
+	SafeMinLitres    decimalInput `json:"safe_min_litres"`
+	SafeMaxLitres    decimalInput `json:"safe_max_litres"`
+	DeadStockLitres  decimalInput `json:"dead_stock_litres"`
+	HasWaterSensor   bool         `json:"has_water_sensor"`
+	HasTempSensor    bool         `json:"has_temp_sensor"`
+	InstallationDate *string      `json:"installation_date,omitempty"`
 }
 
 func (s *Server) handleCreateTank(w http.ResponseWriter, r *http.Request) {
@@ -157,11 +158,26 @@ func (s *Server) handleCreateTank(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "station_id, product_id, name, and code are required")
 		return
 	}
-	if req.CapacityLitres <= 0 {
+	// Litre limits are decimal strings; safe_min/dead_stock default to "0".
+	// They are stored as exact decimals and the DB CHECK
+	// (safe_min <= safe_max <= capacity, capacity > 0) is authoritative; the
+	// parses below are an early, friendlier 400 on obviously-bad input.
+	capacity := req.CapacityLitres.ValueOr("")
+	safeMin := req.SafeMinLitres.ValueOr("0")
+	safeMax := req.SafeMaxLitres.ValueOr("")
+	deadStock := req.DeadStockLitres.ValueOr("0")
+	if !validDecimal(capacity) || !validDecimal(safeMax) ||
+		(req.SafeMinLitres.Set() && !req.SafeMinLitres.Valid()) ||
+		(req.DeadStockLitres.Set() && !req.DeadStockLitres.Valid()) {
+		writeError(w, http.StatusBadRequest, "capacity_litres, safe_min_litres, safe_max_litres, and dead_stock_litres must be non-negative decimals")
+		return
+	}
+	capF, safeMinF, safeMaxF := dispDecimal(capacity), dispDecimal(safeMin), dispDecimal(safeMax)
+	if capF <= 0 {
 		writeError(w, http.StatusBadRequest, "capacity_litres must be positive")
 		return
 	}
-	if req.SafeMinLitres > req.SafeMaxLitres || req.SafeMaxLitres > req.CapacityLitres {
+	if safeMinF > safeMaxF || safeMaxF > capF {
 		writeError(w, http.StatusBadRequest, "require safe_min <= safe_max <= capacity")
 		return
 	}
@@ -207,8 +223,8 @@ func (s *Server) handleCreateTank(w http.ResponseWriter, r *http.Request) {
 	t, err := s.tanks.Create(ctx, tx, actor.TenantID, tanks.CreateInput{
 		StationID: req.StationID, ProductID: req.ProductID,
 		Name: req.Name, Code: req.Code,
-		CapacityLitres: req.CapacityLitres, SafeMinLitres: req.SafeMinLitres,
-		SafeMaxLitres: req.SafeMaxLitres, DeadStockLitres: req.DeadStockLitres,
+		CapacityLitres: capacity, SafeMinLitres: safeMin,
+		SafeMaxLitres: safeMax, DeadStockLitres: deadStock,
 		HasWaterSensor: req.HasWaterSensor, HasTempSensor: req.HasTempSensor,
 		InstallationDate: installDate,
 	})
@@ -242,17 +258,17 @@ func (s *Server) handleCreateTank(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateTankRequest struct {
-	ProductID        *uuid.UUID `json:"product_id,omitempty"`
-	Name             *string    `json:"name,omitempty"`
-	Code             *string    `json:"code,omitempty"`
-	CapacityLitres   *float64   `json:"capacity_litres,omitempty"`
-	SafeMinLitres    *float64   `json:"safe_min_litres,omitempty"`
-	SafeMaxLitres    *float64   `json:"safe_max_litres,omitempty"`
-	DeadStockLitres  *float64   `json:"dead_stock_litres,omitempty"`
-	HasWaterSensor   *bool      `json:"has_water_sensor,omitempty"`
-	HasTempSensor    *bool      `json:"has_temp_sensor,omitempty"`
-	InstallationDate *string    `json:"installation_date,omitempty"`
-	DecommissionDate *string    `json:"decommission_date,omitempty"`
+	ProductID        *uuid.UUID   `json:"product_id,omitempty"`
+	Name             *string      `json:"name,omitempty"`
+	Code             *string      `json:"code,omitempty"`
+	CapacityLitres   decimalInput `json:"capacity_litres,omitempty"`
+	SafeMinLitres    decimalInput `json:"safe_min_litres,omitempty"`
+	SafeMaxLitres    decimalInput `json:"safe_max_litres,omitempty"`
+	DeadStockLitres  decimalInput `json:"dead_stock_litres,omitempty"`
+	HasWaterSensor   *bool        `json:"has_water_sensor,omitempty"`
+	HasTempSensor    *bool        `json:"has_temp_sensor,omitempty"`
+	InstallationDate *string      `json:"installation_date,omitempty"`
+	DecommissionDate *string      `json:"decommission_date,omitempty"`
 	// status is intentionally not editable here — lifecycle changes go
 	// through PATCH /tanks/{id}/status so transition rules apply.
 }
@@ -271,6 +287,13 @@ func (s *Server) handleUpdateTank(w http.ResponseWriter, r *http.Request) {
 	var req updateTankRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if (req.CapacityLitres.Set() && !req.CapacityLitres.Valid()) ||
+		(req.SafeMinLitres.Set() && !req.SafeMinLitres.Valid()) ||
+		(req.SafeMaxLitres.Set() && !req.SafeMaxLitres.Valid()) ||
+		(req.DeadStockLitres.Set() && !req.DeadStockLitres.Valid()) {
+		writeError(w, http.StatusBadRequest, "litre limits must be non-negative decimals")
 		return
 	}
 	installDate, err := parseDate(req.InstallationDate)
@@ -322,8 +345,8 @@ func (s *Server) handleUpdateTank(w http.ResponseWriter, r *http.Request) {
 
 	after, err := s.tanks.Update(ctx, tx, actor.TenantID, id, tanks.UpdateInput{
 		ProductID: req.ProductID, Name: req.Name, Code: req.Code,
-		CapacityLitres: req.CapacityLitres, SafeMinLitres: req.SafeMinLitres,
-		SafeMaxLitres: req.SafeMaxLitres, DeadStockLitres: req.DeadStockLitres,
+		CapacityLitres: req.CapacityLitres.Ptr(), SafeMinLitres: req.SafeMinLitres.Ptr(),
+		SafeMaxLitres: req.SafeMaxLitres.Ptr(), DeadStockLitres: req.DeadStockLitres.Ptr(),
 		HasWaterSensor: req.HasWaterSensor, HasTempSensor: req.HasTempSensor,
 		InstallationDate: installDate, DecommissionDate: decomDate,
 	})

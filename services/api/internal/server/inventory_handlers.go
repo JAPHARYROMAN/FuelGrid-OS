@@ -170,7 +170,9 @@ func (s *Server) handleSetTankOpeningBalance(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		litres = dip.VolumeLitres
+		// MD boundary: SetOpeningBalance still takes a float (INV-001 owns that
+		// input); the dip volume is an exact-decimal string, parsed here.
+		litres = dispDecimal(dip.VolumeLitres)
 		srcType = "opening"
 	} else {
 		if req.Litres == nil || *req.Litres < 0 {

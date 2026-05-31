@@ -16,18 +16,19 @@ import (
 )
 
 type productDTO struct {
-	ID                   uuid.UUID `json:"id"`
-	TenantID             uuid.UUID `json:"tenant_id"`
-	Code                 string    `json:"code"`
-	Name                 string    `json:"name"`
-	Category             string    `json:"category"`
-	Unit                 string    `json:"unit"`
-	DefaultPrice         float64   `json:"default_price"`
-	TaxRate              float64   `json:"tax_rate"`
-	DensityKgM3          *float64  `json:"density_kg_m3,omitempty"`
-	LossTolerancePercent float64   `json:"loss_tolerance_percent"`
-	Color                string    `json:"color"`
-	Status               string    `json:"status"`
+	ID       uuid.UUID `json:"id"`
+	TenantID uuid.UUID `json:"tenant_id"`
+	Code     string    `json:"code"`
+	Name     string    `json:"name"`
+	Category string    `json:"category"`
+	Unit     string    `json:"unit"`
+	// Money/rate/density figures are exact decimal STRINGS (numeric columns).
+	DefaultPrice         string  `json:"default_price"`
+	TaxRate              string  `json:"tax_rate"`
+	DensityKgM3          *string `json:"density_kg_m3,omitempty"`
+	LossTolerancePercent string  `json:"loss_tolerance_percent"`
+	Color                string  `json:"color"`
+	Status               string  `json:"status"`
 }
 
 func toProductDTO(p *products.Product) productDTO {
@@ -84,15 +85,15 @@ func (s *Server) handleGetProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 type createProductRequest struct {
-	Code                 string   `json:"code"`
-	Name                 string   `json:"name"`
-	Category             string   `json:"category,omitempty"`
-	Unit                 string   `json:"unit,omitempty"`
-	DefaultPrice         float64  `json:"default_price,omitempty"`
-	TaxRate              float64  `json:"tax_rate,omitempty"`
-	DensityKgM3          *float64 `json:"density_kg_m3,omitempty"`
-	LossTolerancePercent float64  `json:"loss_tolerance_percent,omitempty"`
-	Color                string   `json:"color,omitempty"`
+	Code                 string       `json:"code"`
+	Name                 string       `json:"name"`
+	Category             string       `json:"category,omitempty"`
+	Unit                 string       `json:"unit,omitempty"`
+	DefaultPrice         decimalInput `json:"default_price,omitempty"`
+	TaxRate              decimalInput `json:"tax_rate,omitempty"`
+	DensityKgM3          decimalInput `json:"density_kg_m3,omitempty"`
+	LossTolerancePercent decimalInput `json:"loss_tolerance_percent,omitempty"`
+	Color                string       `json:"color,omitempty"`
 }
 
 func (s *Server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +111,16 @@ func (s *Server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "code and name are required")
 		return
 	}
+	// Numeric fields are optional; when present they must be non-negative
+	// decimals. Absent fields fall back to the column defaults ("0"; density
+	// stays NULL). Values are stored as exact decimal strings, never floats.
+	if (req.DefaultPrice.Set() && !req.DefaultPrice.Valid()) ||
+		(req.TaxRate.Set() && !req.TaxRate.Valid()) ||
+		(req.DensityKgM3.Set() && !req.DensityKgM3.Valid()) ||
+		(req.LossTolerancePercent.Set() && !req.LossTolerancePercent.Valid()) {
+		writeError(w, http.StatusBadRequest, "default_price, tax_rate, density_kg_m3, and loss_tolerance_percent must be non-negative decimals")
+		return
+	}
 
 	ctx := r.Context()
 	tx, err := s.deps.DB.Begin(ctx)
@@ -121,8 +132,8 @@ func (s *Server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 
 	p, err := s.products.Create(ctx, tx, actor.TenantID, products.CreateInput{
 		Code: req.Code, Name: req.Name, Category: req.Category, Unit: req.Unit,
-		DefaultPrice: req.DefaultPrice, TaxRate: req.TaxRate,
-		DensityKgM3: req.DensityKgM3, LossTolerancePercent: req.LossTolerancePercent,
+		DefaultPrice: req.DefaultPrice.ValueOr("0"), TaxRate: req.TaxRate.ValueOr("0"),
+		DensityKgM3: req.DensityKgM3.Ptr(), LossTolerancePercent: req.LossTolerancePercent.ValueOr("0"),
 		Color: req.Color,
 	})
 	if isUniqueViolation(err) {
@@ -155,16 +166,16 @@ func (s *Server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateProductRequest struct {
-	Code                 *string  `json:"code,omitempty"`
-	Name                 *string  `json:"name,omitempty"`
-	Category             *string  `json:"category,omitempty"`
-	Unit                 *string  `json:"unit,omitempty"`
-	DefaultPrice         *float64 `json:"default_price,omitempty"`
-	TaxRate              *float64 `json:"tax_rate,omitempty"`
-	DensityKgM3          *float64 `json:"density_kg_m3,omitempty"`
-	LossTolerancePercent *float64 `json:"loss_tolerance_percent,omitempty"`
-	Color                *string  `json:"color,omitempty"`
-	Status               *string  `json:"status,omitempty"`
+	Code                 *string      `json:"code,omitempty"`
+	Name                 *string      `json:"name,omitempty"`
+	Category             *string      `json:"category,omitempty"`
+	Unit                 *string      `json:"unit,omitempty"`
+	DefaultPrice         decimalInput `json:"default_price,omitempty"`
+	TaxRate              decimalInput `json:"tax_rate,omitempty"`
+	DensityKgM3          decimalInput `json:"density_kg_m3,omitempty"`
+	LossTolerancePercent decimalInput `json:"loss_tolerance_percent,omitempty"`
+	Color                *string      `json:"color,omitempty"`
+	Status               *string      `json:"status,omitempty"`
 }
 
 func (s *Server) handleUpdateProduct(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +192,13 @@ func (s *Server) handleUpdateProduct(w http.ResponseWriter, r *http.Request) {
 	var req updateProductRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if (req.DefaultPrice.Set() && !req.DefaultPrice.Valid()) ||
+		(req.TaxRate.Set() && !req.TaxRate.Valid()) ||
+		(req.DensityKgM3.Set() && !req.DensityKgM3.Valid()) ||
+		(req.LossTolerancePercent.Set() && !req.LossTolerancePercent.Valid()) {
+		writeError(w, http.StatusBadRequest, "default_price, tax_rate, density_kg_m3, and loss_tolerance_percent must be non-negative decimals")
 		return
 	}
 
@@ -204,8 +222,8 @@ func (s *Server) handleUpdateProduct(w http.ResponseWriter, r *http.Request) {
 
 	after, err := s.products.Update(ctx, tx, actor.TenantID, id, products.UpdateInput{
 		Code: req.Code, Name: req.Name, Category: req.Category, Unit: req.Unit,
-		DefaultPrice: req.DefaultPrice, TaxRate: req.TaxRate,
-		DensityKgM3: req.DensityKgM3, LossTolerancePercent: req.LossTolerancePercent,
+		DefaultPrice: req.DefaultPrice.Ptr(), TaxRate: req.TaxRate.Ptr(),
+		DensityKgM3: req.DensityKgM3.Ptr(), LossTolerancePercent: req.LossTolerancePercent.Ptr(),
 		Color: req.Color, Status: req.Status,
 	})
 	if errors.Is(err, products.ErrNotFound) {

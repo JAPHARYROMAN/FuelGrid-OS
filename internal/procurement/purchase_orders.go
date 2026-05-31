@@ -48,16 +48,18 @@ type PurchaseOrderLine struct {
 	TenantID        uuid.UUID
 	PurchaseOrderID uuid.UUID
 	ProductID       uuid.UUID
-	OrderedLitres   float64
-	UnitPrice       string
-	ReceivedLitres  float64
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// Ordered/received litres are exact decimal STRINGS (both numeric(14,3)
+	// read ::text); never Go float64.
+	OrderedLitres  string
+	UnitPrice      string
+	ReceivedLitres string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type PurchaseOrderLineInput struct {
 	ProductID     uuid.UUID
-	OrderedLitres float64
+	OrderedLitres string // numeric(14,3), bound $N::numeric
 	UnitPrice     string
 }
 
@@ -92,8 +94,8 @@ const purchaseOrderColumns = `
 `
 
 const purchaseOrderLineColumns = `
-    id, tenant_id, purchase_order_id, product_id, ordered_litres,
-    unit_price::text, received_litres, created_at, updated_at
+    id, tenant_id, purchase_order_id, product_id, ordered_litres::text,
+    unit_price::text, received_litres::text, created_at, updated_at
 `
 
 func scanPurchaseOrder(row pgx.Row, po *PurchaseOrder) error {
@@ -313,7 +315,7 @@ func (r *Repo) insertPurchaseOrderLines(ctx context.Context, tx pgx.Tx, tenantID
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO purchase_order_lines
 			    (tenant_id, purchase_order_id, product_id, ordered_litres, unit_price)
-			VALUES ($1, $2, $3, $4, $5::numeric)
+			VALUES ($1, $2, $3, $4::numeric, $5::numeric)
 		`, tenantID, poID, ln.ProductID, ln.OrderedLitres, ln.UnitPrice); err != nil {
 			return err
 		}

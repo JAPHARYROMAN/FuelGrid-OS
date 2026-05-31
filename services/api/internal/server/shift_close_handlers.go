@@ -123,7 +123,10 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 			e = &ends{}
 			meterByNozzle[meterRows[i].NozzleID] = e
 		}
-		v := meterRows[i].Reading
+		// MD boundary (W5-MD-SHIFT owns shift-close expected_value/variance):
+		// readings are exact-decimal strings; parse to float here for the
+		// close-line math until that wave retypes CloseLine.
+		v := dispDecimal(meterRows[i].Reading)
 		if meterRows[i].ReadingType == "opening" {
 			e.opening = &v
 		} else {
@@ -168,11 +171,15 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 			rollbackNozzles = append(rollbackNozzles, nozzleID)
 			continue
 		}
+		// MD boundary (W5-MD-SHIFT owns expected_value/variance): the nozzle's
+		// default price is an exact-decimal string; parse to float for the
+		// close-line snapshot until CloseLine is retyped in that wave.
+		unitPrice := dispDecimal(nozzle.DefaultPrice)
 		lines = append(lines, operations.CloseLine{
 			ShiftID: shift.ID, NozzleID: nozzleID,
 			OpeningReading: *e.opening, ClosingReading: *e.closing,
-			LitresSold: litres, UnitPrice: nozzle.DefaultPrice,
-			ExpectedValue: litres * nozzle.DefaultPrice,
+			LitresSold: litres, UnitPrice: unitPrice,
+			ExpectedValue: litres * unitPrice,
 		})
 	}
 
