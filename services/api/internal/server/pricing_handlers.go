@@ -102,8 +102,10 @@ func (s *Server) handleSetPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Below-cost guard: refuse a selling price under the product's landed cost
-	// at this station unless explicitly overridden.
+	// Below-cost guard: refuse a selling price under the product's cumulative
+	// weighted-average landed cost at this station (lifetime average over posted
+	// deliveries, not a perpetual moving average; see docs/costing-policy.md)
+	// unless explicitly overridden.
 	if !req.AllowBelowCost {
 		cost, found, err := s.inventory.AverageLandedCostForStationProduct(ctx, actor.TenantID, stationID, req.ProductID)
 		if err != nil {

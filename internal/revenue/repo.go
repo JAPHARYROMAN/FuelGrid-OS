@@ -1,7 +1,15 @@
 // Package revenue is the data layer for recognized sales — valuing each
 // approved shift's metered litres at the resolved selling price, splitting
-// net + tax, and costing them at the tank's moving-average landed cost for
-// COGS and margin (Phase 6, Stages 3-4).
+// net + tax, and costing them at the tank's cumulative weighted-average landed
+// cost for COGS and margin (Phase 6, Stages 3-4).
+//
+// COSTING POLICY: COGS, margin, and stock value use a CUMULATIVE (lifetime)
+// weighted-average landed cost per litre — the litre-weighted average over all
+// of a tank's posted, non-superseded delivery movements. It is deliberately NOT
+// a perpetual ("moving") average: it is never decremented as stock is sold, so
+// it equals a true moving average only while landed cost per litre is constant
+// across deliveries and drifts from it otherwise. See docs/costing-policy.md
+// for the full policy, its limitation, and when it is accurate.
 //
 // All money is computed in SQL (numeric) and carried as decimal strings.
 package revenue
@@ -52,7 +60,8 @@ type DaySummary struct {
 	SaleCount    int
 }
 
-// TankValuation is a tank's stock-on-hand valued at moving-average cost.
+// TankValuation is a tank's stock-on-hand valued at cumulative
+// weighted-average cost (see docs/costing-policy.md).
 type TankValuation struct {
 	TankID     uuid.UUID
 	Code       string
@@ -84,9 +93,11 @@ func scan(row pgx.Row, s *Sale) error {
 // RecognizeShiftSales values a shift's close lines into sale rows inside the
 // caller's tx, idempotently (one sale per shift/nozzle). The selling price is
 // the price resolved for the product at the station as of now; it is treated
-// as tax-inclusive (net = gross − tax). COGS uses the tank's moving-average
-// landed cost when costed deliveries exist. Lines for products with no
-// resolvable price are skipped. Returns the number of sales recognized.
+// as tax-inclusive (net = gross − tax). COGS uses the tank's cumulative
+// weighted-average landed cost (lifetime litre-weighted average over posted,
+// non-superseded deliveries — NOT a perpetual moving average; see
+// docs/costing-policy.md) when costed deliveries exist. Lines for products with
+// no resolvable price are skipped. Returns the number of sales recognized.
 func (r *Repo) RecognizeShiftSales(ctx context.Context, tx pgx.Tx, tenantID, shiftID, recordedBy uuid.UUID) (int64, error) {
 	tag, err := tx.Exec(ctx, `
 		WITH lines AS (
@@ -103,6 +114,10 @@ func (r *Repo) RecognizeShiftSales(ctx context.Context, tx pgx.Tx, tenantID, shi
 		          AND pc.product_id = n.product_id AND pc.effective_from <= now()
 		        ORDER BY pc.effective_from DESC, pc.created_at DESC LIMIT 1
 		    ) price ON true
+		    -- avg_cost is the CUMULATIVE (lifetime) weighted-average landed cost
+		    -- per litre over the tank's posted, non-superseded deliveries — it is
+		    -- NOT decremented as stock is sold (not a perpetual moving average).
+		    -- See docs/costing-policy.md.
 		    LEFT JOIN LATERAL (
 		        SELECT (SUM(sm.litres * sm.landed_cost_per_litre) / NULLIF(SUM(sm.litres), 0)) AS avg_cost
 		        FROM stock_movements sm
@@ -181,7 +196,10 @@ func (r *Repo) DaySummary(ctx context.Context, q database.Querier, tenantID, sta
 }
 
 // InventoryValuation values each of a station's tanks' book stock at its
-// moving-average landed cost.
+// cumulative weighted-average landed cost (lifetime average over posted,
+// non-superseded deliveries; not a perpetual moving average — see
+// docs/costing-policy.md). The `avg_cost` SQL alias names this cumulative
+// average, not a moving one.
 func (r *Repo) InventoryValuation(ctx context.Context, tenantID, stationID uuid.UUID) ([]TankValuation, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT t.id, t.code, t.name, t.product_id,
