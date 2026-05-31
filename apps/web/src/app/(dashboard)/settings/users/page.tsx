@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 export default function UsersPage() {
@@ -97,10 +98,12 @@ export default function UsersPage() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">{list.data?.count ?? 0} users</p>
-        <Button onClick={() => setInviteOpen(true)}>
-          <Plus className="size-4" />
-          Invite user
-        </Button>
+        <PermissionGate permission="users.invite">
+          <Button onClick={() => setInviteOpen(true)}>
+            <Plus className="size-4" />
+            Invite user
+          </Button>
+        </PermissionGate>
       </div>
 
       {list.isPending ? (
@@ -175,25 +178,38 @@ export default function UsersPage() {
                 </TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="sm" onClick={() => openScope(u)}>
-                      Manage
-                    </Button>
+                    <PermissionGate permission="users.assign_roles">
+                      <Button variant="ghost" size="sm" onClick={() => openScope(u)}>
+                        Manage
+                      </Button>
+                    </PermissionGate>
                     {u.status === 'active' ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => updateStatus.mutate({ userID: u.id, status: 'suspended' })}
-                      >
-                        <ShieldOff className="size-3.5" />
-                      </Button>
+                      <PermissionGate permission="users.manage">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={
+                            updateStatus.isPending && updateStatus.variables?.userID === u.id
+                          }
+                          onClick={() => updateStatus.mutate({ userID: u.id, status: 'suspended' })}
+                          title="Suspend user"
+                        >
+                          <ShieldOff className="size-3.5" />
+                        </Button>
+                      </PermissionGate>
                     ) : u.status === 'suspended' ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => updateStatus.mutate({ userID: u.id, status: 'active' })}
-                      >
-                        Activate
-                      </Button>
+                      <PermissionGate permission="users.manage">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={
+                            updateStatus.isPending && updateStatus.variables?.userID === u.id
+                          }
+                          onClick={() => updateStatus.mutate({ userID: u.id, status: 'active' })}
+                        >
+                          Activate
+                        </Button>
+                      </PermissionGate>
                     ) : null}
                   </div>
                 </TableCell>
@@ -288,23 +304,24 @@ export default function UsersPage() {
                   {(roles.data?.items ?? []).map((r) => {
                     const has = scope.roles.includes(r.code);
                     return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() =>
-                          has
-                            ? revokeRole.mutate({ userID: scope.id, code: r.code })
-                            : grantRole.mutate({ userID: scope.id, code: r.code })
-                        }
-                        className={
-                          has
-                            ? 'inline-flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent'
-                            : 'inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-accent hover:text-accent'
-                        }
-                      >
-                        {has ? <X className="size-3" /> : <Plus className="size-3" />}
-                        {r.code}
-                      </button>
+                      <PermissionGate key={r.id} permission="users.assign_roles">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            has
+                              ? revokeRole.mutate({ userID: scope.id, code: r.code })
+                              : grantRole.mutate({ userID: scope.id, code: r.code })
+                          }
+                          className={
+                            has
+                              ? 'inline-flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent disabled:opacity-50'
+                              : 'inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-accent hover:text-accent disabled:opacity-50'
+                          }
+                        >
+                          {has ? <X className="size-3" /> : <Plus className="size-3" />}
+                          {r.code}
+                        </button>
+                      </PermissionGate>
                     );
                   })}
                 </div>
@@ -323,23 +340,24 @@ export default function UsersPage() {
                   {(stations.data?.items ?? []).map((s) => {
                     const has = scope.station_ids.includes(s.id);
                     return (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={() =>
-                          has
-                            ? revokeStation.mutate({ userID: scope.id, stationID: s.id })
-                            : grantStation.mutate({ userID: scope.id, stationID: s.id })
-                        }
-                        className={
-                          has
-                            ? 'inline-flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent'
-                            : 'inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-accent hover:text-accent'
-                        }
-                      >
-                        {has ? <X className="size-3" /> : <Plus className="size-3" />}
-                        {s.code}
-                      </button>
+                      <PermissionGate key={s.id} permission="users.assign_roles">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            has
+                              ? revokeStation.mutate({ userID: scope.id, stationID: s.id })
+                              : grantStation.mutate({ userID: scope.id, stationID: s.id })
+                          }
+                          className={
+                            has
+                              ? 'inline-flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent disabled:opacity-50'
+                              : 'inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-accent hover:text-accent disabled:opacity-50'
+                          }
+                        >
+                          {has ? <X className="size-3" /> : <Plus className="size-3" />}
+                          {s.code}
+                        </button>
+                      </PermissionGate>
                     );
                   })}
                 </div>

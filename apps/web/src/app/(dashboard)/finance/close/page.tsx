@@ -14,6 +14,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 const CHECK_LABELS: Record<string, string> = {
@@ -118,33 +119,42 @@ export default function FinanceClosePage() {
                     <span className="flex items-center gap-2">
                       <Badge tone={p.status === 'locked' ? 'neutral' : 'warning'}>{p.status}</Badge>
                       {p.status === 'open' ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={transition.isPending}
-                          onClick={() => transition.mutate({ id: p.id, action: 'start-close' })}
-                        >
-                          Start close
-                        </Button>
+                        <PermissionGate permission="period.close">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={transition.isPending && transition.variables?.id === p.id}
+                            onClick={() => transition.mutate({ id: p.id, action: 'start-close' })}
+                          >
+                            Start close
+                          </Button>
+                        </PermissionGate>
                       ) : null}
                       {p.status === 'closing' ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={transition.isPending}
-                          onClick={() => transition.mutate({ id: p.id, action: 'close' })}
-                        >
-                          Close
-                        </Button>
+                        <PermissionGate permission="period.close">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={transition.isPending && transition.variables?.id === p.id}
+                            onClick={() => transition.mutate({ id: p.id, action: 'close' })}
+                          >
+                            Close
+                          </Button>
+                        </PermissionGate>
                       ) : null}
                       {p.status === 'closed' ? (
-                        <Button
-                          size="sm"
-                          disabled={transition.isPending || !checklist.data.can_close}
-                          onClick={() => transition.mutate({ id: p.id, action: 'lock' })}
-                        >
-                          Lock
-                        </Button>
+                        <PermissionGate permission="period.lock">
+                          <Button
+                            size="sm"
+                            disabled={
+                              (transition.isPending && transition.variables?.id === p.id) ||
+                              !checklist.data.can_close
+                            }
+                            onClick={() => transition.mutate({ id: p.id, action: 'lock' })}
+                          >
+                            Lock
+                          </Button>
+                        </PermissionGate>
                       ) : null}
                     </span>
                   </div>

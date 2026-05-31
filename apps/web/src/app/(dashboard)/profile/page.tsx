@@ -143,8 +143,13 @@ export default function ProfilePage() {
                     </TableCell>
                     <TableCell className="text-right">
                       {!s.is_current ? (
-                        <Button variant="ghost" size="sm" onClick={() => revoke.mutate(s.id)}>
-                          Revoke
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={revoke.isPending && revoke.variables === s.id}
+                          onClick={() => revoke.mutate(s.id)}
+                        >
+                          {revoke.isPending && revoke.variables === s.id ? 'Revoking…' : 'Revoke'}
                         </Button>
                       ) : null}
                     </TableCell>

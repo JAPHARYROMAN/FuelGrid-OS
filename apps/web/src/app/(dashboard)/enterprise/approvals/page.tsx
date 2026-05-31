@@ -15,6 +15,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 const EXCEPTION_LABELS: Record<string, string> = {
@@ -104,21 +105,25 @@ export default function EnterpriseApprovalsPage() {
                     </span>
                   </span>
                   <span className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      disabled={decide.isPending}
-                      onClick={() => decide.mutate({ id: a.id, decision: 'approve' })}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={decide.isPending}
-                      onClick={() => decide.mutate({ id: a.id, decision: 'reject' })}
-                    >
-                      Reject
-                    </Button>
+                    <PermissionGate permission="approval_request.decide">
+                      <Button
+                        size="sm"
+                        disabled={decide.isPending && decide.variables?.id === a.id}
+                        onClick={() => decide.mutate({ id: a.id, decision: 'approve' })}
+                      >
+                        Approve
+                      </Button>
+                    </PermissionGate>
+                    <PermissionGate permission="approval_request.decide">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={decide.isPending && decide.variables?.id === a.id}
+                        onClick={() => decide.mutate({ id: a.id, decision: 'reject' })}
+                      >
+                        Reject
+                      </Button>
+                    </PermissionGate>
                   </span>
                 </div>
               ))}

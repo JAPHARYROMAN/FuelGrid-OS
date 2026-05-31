@@ -14,6 +14,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 function money(n?: string) {
@@ -49,14 +50,16 @@ export default function EnterprisePage() {
             Network revenue, margin, exposure, and station ranking.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={rebuild.isPending}
-          onClick={() => rebuild.mutate()}
-        >
-          {rebuild.isPending ? 'Rebuilding…' : 'Rebuild projections'}
-        </Button>
+        <PermissionGate permission="enterprise_projection.admin">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={rebuild.isPending}
+            onClick={() => rebuild.mutate()}
+          >
+            {rebuild.isPending ? 'Rebuilding…' : 'Rebuild projections'}
+          </Button>
+        </PermissionGate>
       </header>
 
       {overview.isPending ? (

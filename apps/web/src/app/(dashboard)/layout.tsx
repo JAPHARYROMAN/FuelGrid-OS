@@ -7,6 +7,7 @@ import { CommandPalette } from '@/components/layout/command-palette';
 import { RightPanel } from '@/components/layout/right-panel';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Topbar } from '@/components/layout/topbar';
+import { Toaster } from '@/components/toaster';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [commandOpen, setCommandOpen] = useState(false);
@@ -24,6 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </div>
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />
+      <Toaster />
     </ProtectedRoute>
   );
 }

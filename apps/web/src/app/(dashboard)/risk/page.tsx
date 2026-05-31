@@ -15,6 +15,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 function sevTone(sev: string): 'neutral' | 'warning' {
@@ -56,14 +57,16 @@ export default function RiskPage() {
             Open alerts, station risk scores, and detection.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={detect.isPending}
-          onClick={() => detect.mutate()}
-        >
-          {detect.isPending ? 'Running…' : 'Run detection'}
-        </Button>
+        <PermissionGate permission="risk_alert.manage">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={detect.isPending}
+            onClick={() => detect.mutate()}
+          >
+            {detect.isPending ? 'Running…' : 'Run detection'}
+          </Button>
+        </PermissionGate>
       </header>
 
       {overview.isPending ? (
@@ -120,14 +123,16 @@ export default function RiskPage() {
                     <span>{a.alert_type}</span>
                     <span className="text-muted-foreground">{a.detail}</span>
                   </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={resolve.isPending}
-                    onClick={() => resolve.mutate(a.id)}
-                  >
-                    Resolve
-                  </Button>
+                  <PermissionGate permission="risk_alert.manage">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={resolve.isPending && resolve.variables === a.id}
+                      onClick={() => resolve.mutate(a.id)}
+                    >
+                      {resolve.isPending && resolve.variables === a.id ? 'Resolving…' : 'Resolve'}
+                    </Button>
+                  </PermissionGate>
                 </div>
               ))}
             </div>

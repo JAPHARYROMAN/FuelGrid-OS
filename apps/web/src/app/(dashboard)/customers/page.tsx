@@ -15,6 +15,7 @@ import {
   LoadingState,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
 function money(n?: string) {
@@ -53,9 +54,16 @@ export default function CustomersPage() {
             Credit accounts, status, and credit-risk alerts.
           </p>
         </div>
-        <Button size="sm" variant="outline" disabled={scan.isPending} onClick={() => scan.mutate()}>
-          {scan.isPending ? 'Scanning…' : 'Scan credit alerts'}
-        </Button>
+        <PermissionGate permission="customer_credit_alert.manage">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={scan.isPending}
+            onClick={() => scan.mutate()}
+          >
+            {scan.isPending ? 'Scanning…' : 'Scan credit alerts'}
+          </Button>
+        </PermissionGate>
       </header>
 
       {/* Open credit alerts */}

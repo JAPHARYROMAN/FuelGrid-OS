@@ -8,6 +8,7 @@ import { SdkError } from '@fuelgrid/sdk';
 
 import { handleUnauthorized } from '@/lib/api';
 import { captureError, initSentry } from '@/lib/sentry';
+import { toast } from '@/lib/toast';
 
 /**
  * Central error sink for every query and mutation. Two jobs:
@@ -33,10 +34,34 @@ function reportError(error: unknown) {
   captureError(error);
 }
 
+/**
+ * Mutation failures must be *visible* (PAGE-008) — a silent onSuccess-only
+ * mutation used to swallow the error. This is the global backstop: every
+ * mutation that doesn't surface its own message still pops a toast. A 401
+ * still routes through reportError to the logout backstop and is not toasted.
+ */
+function reportMutationError(error: unknown) {
+  if (error instanceof SdkError) {
+    if (error.status === 401) {
+      reportError(error);
+      return;
+    }
+    toast.error(
+      error.status === 403 ? "You don't have permission" : 'Action failed',
+      error.message,
+    );
+    reportError(error);
+    return;
+  }
+  if (error instanceof DOMException && error.name === 'AbortError') return;
+  toast.error('Something went wrong', error instanceof Error ? error.message : undefined);
+  reportError(error);
+}
+
 function makeQueryClient() {
   return new QueryClient({
     queryCache: new QueryCache({ onError: reportError }),
-    mutationCache: new MutationCache({ onError: reportError }),
+    mutationCache: new MutationCache({ onError: reportMutationError }),
     defaultOptions: {
       queries: {
         // Most dashboard data is read often and changes rarely; tune
