@@ -131,6 +131,39 @@ func (r *Repo) DispensedForShift(ctx context.Context, tenantID, shiftID uuid.UUI
 	return out, rows.Err()
 }
 
+// RollbackNozzlesForShift returns the nozzles on the shift that have BOTH an
+// active opening and closing reading where the closing reads BELOW the opening
+// (a meter rollback), comparing the readings in SQL numeric — no Go float
+// (OPS-001). Mirrors the LitresDispensed guard for the close path's
+// pre-validation; results are ordered by nozzle_id for stable output.
+func (r *Repo) RollbackNozzlesForShift(ctx context.Context, tenantID, shiftID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT o.nozzle_id
+		FROM meter_readings o
+		JOIN meter_readings c
+		  ON c.tenant_id = o.tenant_id AND c.shift_id = o.shift_id
+		 AND c.nozzle_id = o.nozzle_id
+		 AND c.reading_type = 'closing' AND c.status = 'active'
+		WHERE o.tenant_id = $1 AND o.shift_id = $2
+		  AND o.reading_type = 'opening' AND o.status = 'active'
+		  AND c.reading < o.reading
+		ORDER BY o.nozzle_id
+	`, tenantID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*MeterReading, error) {
 	var m MeterReading
 	if err := scanMeter(r.pool.QueryRow(ctx, `

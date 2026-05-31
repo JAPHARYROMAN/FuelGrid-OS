@@ -25,8 +25,8 @@ type operationsShiftDTO struct {
 	shiftDTO
 	Attendants         []operationsAttendantDTO `json:"attendants"`
 	NozzleAssignments  []nozzleAssignmentDTO    `json:"nozzle_assignments"`
-	ExpectedCash       float64                  `json:"expected_cash"`
-	LitresSold         float64                  `json:"litres_sold"`
+	ExpectedCash       string                   `json:"expected_cash"`
+	LitresSold         string                   `json:"litres_sold"`
 	CashSubmission     *cashSubmissionDTO       `json:"cash_submission,omitempty"`
 	Exceptions         []shiftExceptionDTO      `json:"exceptions"`
 	OpenExceptionCount int                      `json:"open_exception_count"`
@@ -129,16 +129,15 @@ func (s *Server) handleOperationsOverview(w http.ResponseWriter, r *http.Request
 			dto.NozzleAssignments = append(dto.NozzleAssignments, toNozzleAssignmentDTO(&nas[j]))
 		}
 
-		lines, err := s.operations.ListCloseLines(ctx, actor.TenantID, sh.ID)
+		// Close totals (expected cash + litres sold) are summed in SQL numeric.
+		totals, err := s.operations.CloseTotalsForShift(ctx, actor.TenantID, sh.ID)
 		if err != nil {
-			s.logger.Error("operations overview: close lines", "error", err)
+			s.logger.Error("operations overview: close totals", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		for j := range lines {
-			dto.ExpectedCash += lines[j].ExpectedValue
-			dto.LitresSold += lines[j].LitresSold
-		}
+		dto.ExpectedCash = totals.ExpectedCash
+		dto.LitresSold = totals.LitresSold
 
 		if cash, err := s.operations.GetCashSubmission(ctx, actor.TenantID, sh.ID); err == nil {
 			cd := toCashSubmissionDTO(cash)

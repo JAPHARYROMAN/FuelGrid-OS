@@ -39,7 +39,7 @@ type myShiftDTO struct {
 	Shift           *shiftDTO          `json:"shift"`
 	AssignedNozzles []myNozzleDTO      `json:"assigned_nozzles"`
 	AssignedTanks   []myTankDTO        `json:"assigned_tanks"`
-	ExpectedCash    *float64           `json:"expected_cash,omitempty"`
+	ExpectedCash    *string            `json:"expected_cash,omitempty"`
 	CashSubmission  *cashSubmissionDTO `json:"cash_submission,omitempty"`
 }
 
@@ -164,12 +164,12 @@ func (s *Server) handleMyActiveShift(w http.ResponseWriter, r *http.Request) {
 
 	// Once closed, surface expected cash and any submission for the cash form.
 	if shift.Status == "closed" {
-		lines, err := s.operations.ListCloseLines(ctx, actor.TenantID, shift.ID)
+		// Expected cash is SUM(expected_value) computed in SQL numeric.
+		expected, err := s.operations.SumExpectedForShift(ctx, s.operations.Pool(), actor.TenantID, shift.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		expected := sumExpected(lines)
 		out.ExpectedCash = &expected
 		if cash, err := s.operations.GetCashSubmission(ctx, actor.TenantID, shift.ID); err == nil {
 			dto := toCashSubmissionDTO(cash)

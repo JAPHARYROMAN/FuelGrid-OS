@@ -165,13 +165,15 @@ func TestPhase3_DayWorkflow(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("close: %d %v", code, closeBody)
 	}
-	if exp := closeBody["expected_cash"].(float64); exp != 1475000 {
-		t.Fatalf("expected_cash = %v, want 1475000", exp)
+	// expected_cash is the exact SQL-numeric decimal string (numeric(14,2)):
+	// 500.000 L * 2950.00 = 1,475,000.00.
+	if exp := closeBody["expected_cash"].(string); exp != "1475000.00" {
+		t.Fatalf("expected_cash = %v, want 1475000.00", exp)
 	}
 
 	// Cash submitted to match -> zero variance -> no blocking exception.
 	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission", admin,
-		`{"cash_amount":1475000}`); code != http.StatusCreated {
+		`{"cash_amount":"1475000"}`); code != http.StatusCreated {
 		t.Fatalf("cash: %d %v", code, b)
 	}
 	// Separation of duties (OPS-002): the closer (admin, who closed above) may
