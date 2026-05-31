@@ -5,9 +5,7 @@ import { useAuthStore } from './auth-store';
 const PRESENCE_COOKIE = 'fg_authed';
 
 function presenceCookieValue(): string | null {
-  const match = document.cookie
-    .split('; ')
-    .find((c) => c.startsWith(`${PRESENCE_COOKIE}=`));
+  const match = document.cookie.split('; ').find((c) => c.startsWith(`${PRESENCE_COOKIE}=`));
   if (!match) return null;
   return match.slice(PRESENCE_COOKIE.length + 1);
 }

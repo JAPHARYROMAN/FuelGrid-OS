@@ -48,7 +48,11 @@ describe('LoginForm', () => {
 
     await waitFor(() => {
       expect(login).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'ops@demo.test', password: 'sup3rsecret', tenant_slug: 'demo' }),
+        expect.objectContaining({
+          email: 'ops@demo.test',
+          password: 'sup3rsecret',
+          tenant_slug: 'demo',
+        }),
       );
     });
     expect(useAuthStore.getState().token).toBe('tok-abc');
