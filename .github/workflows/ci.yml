@@ -93,13 +93,31 @@ jobs:
         with:
           version: latest
 
-      - name: Test (with race detector)
+      - name: Test (with race detector + coverage gate)
         # CONTRACT_STRICT flips the route↔OpenAPI contract test
         # (services/api/internal/server) from skip to enforce: any
         # registered route missing from docs/openapi.yaml fails CI.
+        #
+        # COVERAGE GATE (QA-6): the race run also writes a coverage profile
+        # and the job FAILS if total statement coverage regresses below the
+        # ratchet FLOOR. This job runs WITHOUT a database (the `migrations`
+        # job owns Postgres/Redis), so the DB-backed integration suite skips
+        # here — FLOOR reflects the no-DB total and is set a few points under
+        # the current measurement (~5.1%). Ratchet upward as coverage grows;
+        # never lower it to make a red build green.
         env:
           CONTRACT_STRICT: '1'
-        run: go test -race -count=1 ./...
+        run: |
+          FLOOR=4.0
+          go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+          total=$(go tool cover -func=coverage.out | tail -1 | grep -oE '[0-9]+\.[0-9]+')
+          echo "total Go statement coverage: ${total}% (floor ${FLOOR}%)"
+          awk -v t="$total" -v f="$FLOOR" 'BEGIN {
+            if (t + 0 < f + 0) {
+              printf "coverage %.1f%% is below the ratchet floor %.1f%%\n", t, f
+              exit 1
+            }
+          }'
 
       - name: Build
         run: go build ./...

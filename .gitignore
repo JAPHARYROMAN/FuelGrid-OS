@@ -16,6 +16,12 @@ next-env.d.ts
 coverage/
 .nyc_output/
 
+# --- Playwright e2e ---
+playwright-report/
+test-results/
+.playwright/
+blob-report/
+
 # --- Go ---
 bin/
 *.exe
