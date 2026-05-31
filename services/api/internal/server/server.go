@@ -167,11 +167,16 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 
 	r := chi.NewRouter()
 
+	// Recoverer must wrap the entire chain so a panic in *any* downstream
+	// middleware (logger, metrics) — not just in a route handler — is turned
+	// into a clean 500 instead of crashing the connection. RequestID and its
+	// echo run first so the recovered request still carries an X-Request-Id
+	// for correlation; everything after Recoverer is panic-protected (arch-05).
 	r.Use(chimiddleware.RequestID)
 	r.Use(echoRequestID)
+	r.Use(chimiddleware.Recoverer)
 	r.Use(s.logRequests)
 	r.Use(s.recordMetrics)
-	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(limitRequestBody)
 	r.Use(cors.Handler(cors.Options{
