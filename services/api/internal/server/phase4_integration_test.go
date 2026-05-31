@@ -340,11 +340,28 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 		t.Fatalf("book balance after delivery = %v", body["book_balance"])
 	}
 
-	// Re-setting the opening is rejected.
+	// Re-setting the opening is rejected with 409 (INV-010 / FIN-6): a tank
+	// may carry AT MOST ONE posted opening, enforced by the partial unique
+	// index uq_stock_mvt_one_opening (migration 0072). A second opening would
+	// otherwise double-count in reconciliation.
 	code, _ = h.invPostJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/opening-balance", admin,
 		map[string]any{"litres": 1000})
 	if code != http.StatusConflict {
 		t.Fatalf("re-set opening: status %d, want 409", code)
+	}
+	// And exactly one genuine opening row survives the rejected second attempt
+	// (the loser's INSERT must not have landed).
+	var openings int
+	if err := h.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM stock_movements
+		WHERE tenant_id = $1 AND tank_id = $2 AND movement_type = 'opening'
+		  AND status = 'posted'
+		  AND (source_ref_type IS NULL OR source_ref_type <> 'correction')
+	`, h.ids.tenantID, h.ids.tankAGO).Scan(&openings); err != nil {
+		t.Fatalf("count openings: %v", err)
+	}
+	if openings != 1 {
+		t.Fatalf("opening rows after rejected re-set = %d, want exactly 1", openings)
 	}
 
 	// from_dip: seed a first dip on the PMS tank, then open from it.
