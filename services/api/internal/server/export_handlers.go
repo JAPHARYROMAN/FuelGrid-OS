@@ -10,9 +10,99 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 
+	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
+
+// handleExportAuditLogs streams the tenant's audit trail for a date range as
+// CSV and — critically for compliance (AUDIT-EXPORT) — records the export
+// itself as an audit_logs entry with action 'export.generated', so the act of
+// exporting the audit trail is itself audited. Defaults to the last 30 days.
+func (s *Server) handleExportAuditLogs(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	ctx := r.Context()
+	from := parseDateParam(r, "from", time.Now().AddDate(0, -1, 0))
+	to := parseDateParam(r, "to", time.Now())
+	toEnd := to.Add(24*time.Hour - time.Second) // inclusive end-of-day
+
+	rows, qerr := s.deps.DB.Query(ctx, `
+		SELECT occurred_at, actor_id, action, entity_type, entity_id,
+		       COALESCE(reason, ''), COALESCE(host(ip), ''), COALESCE(request_id, '')
+		FROM audit_logs
+		WHERE tenant_id = $1 AND occurred_at >= $2 AND occurred_at <= $3
+		ORDER BY occurred_at
+	`, actor.TenantID, from, toEnd)
+	if qerr != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer rows.Close()
+
+	records := [][]string{{"occurred_at", "actor_id", "action", "entity_type", "entity_id", "reason", "ip", "request_id"}}
+	for rows.Next() {
+		var occurred time.Time
+		var actorID uuid.UUID
+		var action, etype, eid, reason, ip, reqID string
+		if err := rows.Scan(&occurred, &actorID, &action, &etype, &eid, &reason, &ip, &reqID); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		records = append(records, []string{occurred.Format(time.RFC3339), actorID.String(), action, etype, eid, reason, ip, reqID})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	var buf bytes.Buffer
+	cw := csv.NewWriter(&buf)
+	if err := cw.WriteAll(records); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	sum := sha256.Sum256(buf.Bytes())
+	checksum := hex.EncodeToString(sum[:])
+	rowCount := len(records) - 1
+	exportID := uuid.New()
+
+	// The export is itself an audited event (export.generated).
+	tx, terr := s.deps.DB.Begin(ctx)
+	if terr != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "export.generated", EventType: "AuditExportGenerated",
+		EntityType: "audit_export", EntityID: exportID.String(),
+		NewValue:  map[string]any{"from": from.Format(dateLayout), "to": to.Format(dateLayout), "row_count": rowCount, "checksum": checksum},
+		IP:        clientIP(r),
+		UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		s.logger.Error("audit export record", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"export_id": exportID, "export_type": "audit_logs", "format": "csv",
+		"from": from.Format(dateLayout), "to": to.Format(dateLayout),
+		"row_count": rowCount, "checksum": checksum, "csv": buf.String(),
+	})
+}
 
 // exportTypeMap maps the URL slug to the stored export_type and back.
 var exportTypeMap = map[string]string{
