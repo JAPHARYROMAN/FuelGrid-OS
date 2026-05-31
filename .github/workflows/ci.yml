@@ -94,6 +94,11 @@ jobs:
           version: latest
 
       - name: Test (with race detector)
+        # CONTRACT_STRICT flips the route↔OpenAPI contract test
+        # (services/api/internal/server) from skip to enforce: any
+        # registered route missing from docs/openapi.yaml fails CI.
+        env:
+          CONTRACT_STRICT: '1'
         run: go test -race -count=1 ./...
 
       - name: Build
