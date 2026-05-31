@@ -1043,3 +1043,27 @@ func TestPhase7_AuditLogImmutable(t *testing.T) {
 		t.Fatalf("after blocked writes: reason=%q, want \"original\"", reason)
 	}
 }
+
+// TestAuditExportRecordsEvent covers AUDIT-EXPORT: generating an audit-trail
+// export is itself recorded in the audit trail as action 'export.generated'.
+func TestAuditExportRecordsEvent(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	code, exp := h.invPostJSON(t, "/api/v1/audit-logs/export", admin, map[string]any{})
+	if code != http.StatusCreated || exp["export_type"] != "audit_logs" {
+		t.Fatalf("audit export: %d %v", code, exp)
+	}
+
+	var n int
+	if err := h.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_logs WHERE tenant_id = $1 AND action = 'export.generated'`,
+		h.ids.tenantID).Scan(&n); err != nil {
+		t.Fatalf("count export.generated: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("expected an export.generated audit row, got %d", n)
+	}
+}

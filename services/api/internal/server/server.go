@@ -259,6 +259,8 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 
 					r.With(s.requirePermission("audit.read", nil)).
 						Get("/audit-logs", s.handleListAuditLogs)
+					r.With(s.requirePermission("audit.read", nil)).
+						Post("/audit-logs/export", s.handleExportAuditLogs)
 
 					r.With(s.requirePermission("users.assign_roles", nil)).
 						Post("/admin/users/{userID}/roles", s.handleGrantRole)
