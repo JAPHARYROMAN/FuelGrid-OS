@@ -105,16 +105,24 @@ func (s *Server) handleListAuthorizations(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.fleet.ListAuthorizations(r.Context(), actor.TenantID, queryUUID(r, "customer_id"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListAuthorizationsPage(r.Context(), actor.TenantID, queryUUID(r, "customer_id"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, authorizationMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetAuthorization(w http.ResponseWriter, r *http.Request) {
@@ -229,12 +237,20 @@ func (s *Server) handleListFuelLimits(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.fleet.ListLimits(r.Context(), actor.TenantID, queryUUID(r, "customer_id"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListLimitsPage(r.Context(), actor.TenantID, queryUUID(r, "customer_id"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "count": len(rows)})
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 func (s *Server) handleCreateFuelLimit(w http.ResponseWriter, r *http.Request) {

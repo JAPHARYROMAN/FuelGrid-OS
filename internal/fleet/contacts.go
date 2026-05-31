@@ -59,6 +59,29 @@ func (r *Repo) ListContacts(ctx context.Context, tenantID, customerID uuid.UUID)
 	return out, rows.Err()
 }
 
+// ListContactsPage is the paginated variant of ListContacts (REL-REPO).
+func (r *Repo) ListContactsPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]Contact, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+contactColumns+` FROM customer_contacts
+		WHERE tenant_id = $1 AND customer_id = $2
+		ORDER BY name, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, customerID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Contact{}
+	for rows.Next() {
+		var c Contact
+		if err := scanContact(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) CreateContact(ctx context.Context, tx pgx.Tx, tenantID, customerID uuid.UUID, in ContactInput) (*Contact, error) {
 	var c Contact
 	if err := scanContact(tx.QueryRow(ctx, `

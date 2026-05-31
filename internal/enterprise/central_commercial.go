@@ -65,6 +65,25 @@ func (r *Repo) ListPriceRollouts(ctx context.Context, tenantID uuid.UUID) ([]Pri
 	return out, rows.Err()
 }
 
+// ListPriceRolloutsPage is the paginated variant of ListPriceRollouts
+// (REL-REPO). created_at is not unique, so id is appended as a tiebreaker.
+func (r *Repo) ListPriceRolloutsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]PriceRollout, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+rolloutColumns+` FROM central_price_rollouts WHERE tenant_id = $1 ORDER BY created_at DESC, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PriceRollout{}
+	for rows.Next() {
+		var p PriceRollout
+		if err := scanRollout(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) ApprovePriceRollout(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (*PriceRollout, error) {
 	var p PriceRollout
 	err := scanRollout(tx.QueryRow(ctx, `
@@ -184,6 +203,26 @@ func (r *Repo) ListPlans(ctx context.Context, tenantID uuid.UUID) ([]map[string]
 	return out, rows.Err()
 }
 
+// ListPlansPage is the paginated variant of ListPlans (REL-REPO). created_at is
+// not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListPlansPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	rows, err := r.pool.Query(ctx, `SELECT id, name, status FROM central_procurement_plans WHERE tenant_id = $1 ORDER BY created_at DESC, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var name, status string
+		if err := rows.Scan(&id, &name, &status); err != nil {
+			return nil, err
+		}
+		out = append(out, map[string]any{"id": id, "name": name, "status": status})
+	}
+	return out, rows.Err()
+}
+
 // ---- Stock transfers (Stage 9) ----
 
 type Transfer struct {
@@ -215,6 +254,25 @@ func (r *Repo) CreateTransfer(ctx context.Context, tx pgx.Tx, tenantID, fromTank
 
 func (r *Repo) ListTransfers(ctx context.Context, tenantID uuid.UUID) ([]Transfer, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+transferColumns+` FROM stock_transfer_orders WHERE tenant_id = $1 ORDER BY created_at DESC`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Transfer{}
+	for rows.Next() {
+		var t Transfer
+		if err := scanTransfer(rows, &t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListTransfersPage is the paginated variant of ListTransfers (REL-REPO).
+// created_at is not unique, so id is appended as a deterministic tiebreaker.
+func (r *Repo) ListTransfersPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Transfer, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+transferColumns+` FROM stock_transfer_orders WHERE tenant_id = $1 ORDER BY created_at DESC, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

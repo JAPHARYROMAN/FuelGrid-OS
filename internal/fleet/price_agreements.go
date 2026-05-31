@@ -115,6 +115,34 @@ func (r *Repo) ListPriceAgreements(ctx context.Context, tenantID, customerID uui
 	return out, rows.Err()
 }
 
+// ListPriceAgreementsPage is the paginated variant of ListPriceAgreements
+// (REL-REPO). created_at is not unique, so id is appended as a tiebreaker.
+func (r *Repo) ListPriceAgreementsPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]PriceAgreement, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+priceAgreementColumns+` FROM customer_price_agreements
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PriceAgreement{}
+	for rows.Next() {
+		var a PriceAgreement
+		if err := scanPriceAgreement(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // TransitionPriceAgreement moves an agreement through its lifecycle. Activating
 // is guarded by the partial unique indexes (one active per scope).
 func (r *Repo) TransitionPriceAgreement(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, to string, approverID *uuid.UUID) (*PriceAgreement, error) {

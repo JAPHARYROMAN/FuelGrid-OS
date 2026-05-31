@@ -73,6 +73,31 @@ func (r *Repo) ListScores(ctx context.Context, tenantID uuid.UUID, dimension str
 	return out, rows.Err()
 }
 
+// ListScoresPage is the paginated variant of ListScores (REL-REPO). score is not
+// unique, so (dimension, entity_id) is appended as a deterministic tiebreaker.
+// ListScores remains in use by Overview, so this is purely additive.
+func (r *Repo) ListScoresPage(ctx context.Context, tenantID uuid.UUID, dimension string, limit, offset int) ([]Score, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT dimension, entity_id, score, band, open_alerts FROM risk_scores
+		WHERE tenant_id = $1 AND ($2 = '' OR dimension = $2)
+		ORDER BY score DESC, dimension, entity_id
+		LIMIT $3 OFFSET $4
+	`, tenantID, dimension, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Score{}
+	for rows.Next() {
+		var s Score
+		if err := rows.Scan(&s.Dimension, &s.EntityID, &s.Score, &s.Band, &s.OpenAlerts); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // Overview is the risk dashboard aggregate.
 type Overview struct {
 	OpenBySeverity map[string]int

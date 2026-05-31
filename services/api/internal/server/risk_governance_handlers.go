@@ -101,12 +101,20 @@ func (s *Server) handleListSuppressions(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.risk.ListSuppressions(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.risk.ListSuppressionsPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "count": len(rows)})
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 func (s *Server) handlePauseAllRiskRules(w http.ResponseWriter, r *http.Request) {

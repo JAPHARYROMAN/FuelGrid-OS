@@ -48,12 +48,20 @@ func (s *Server) handleListSignals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.risk.ListSignals(r.Context(), actor.TenantID, r.URL.Query().Get("type"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.risk.ListSignalsPage(r.Context(), actor.TenantID, r.URL.Query().Get("type"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "count": len(rows)})
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 // ---- Rules (Stage 2) ----
@@ -106,12 +114,20 @@ func (s *Server) handleListRiskRules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.risk.ListRules(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.risk.ListRulesPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "count": len(rows)})
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 func (s *Server) handleSetRiskRuleStatus(w http.ResponseWriter, r *http.Request) {
@@ -194,16 +210,24 @@ func (s *Server) handleListRiskAlerts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.risk.ListAlerts(r.Context(), actor.TenantID, r.URL.Query().Get("status"), r.URL.Query().Get("type"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.risk.ListAlertsPage(r.Context(), actor.TenantID, r.URL.Query().Get("status"), r.URL.Query().Get("type"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, alertMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetRiskAlert(w http.ResponseWriter, r *http.Request) {

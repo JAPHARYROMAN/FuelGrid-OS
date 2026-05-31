@@ -118,16 +118,24 @@ func (s *Server) handleListStatements(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid customer id")
 		return
 	}
-	rows, err := s.fleet.ListStatements(r.Context(), actor.TenantID, customerID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListStatementsPage(r.Context(), actor.TenantID, customerID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, statementMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // ---- Credit alerts (Stage 13) ----
@@ -164,10 +172,18 @@ func (s *Server) handleListCreditAlerts(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.fleet.ListAlerts(r.Context(), actor.TenantID, r.URL.Query().Get("status"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListAlertsPage(r.Context(), actor.TenantID, r.URL.Query().Get("status"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -177,7 +193,7 @@ func (s *Server) handleListCreditAlerts(w http.ResponseWriter, r *http.Request) 
 			"severity": a.Severity, "status": a.Status, "detail": a.Detail,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleTransitionCreditAlert(to string) http.HandlerFunc {

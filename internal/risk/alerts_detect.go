@@ -211,6 +211,31 @@ func (r *Repo) ListAlerts(ctx context.Context, tenantID uuid.UUID, status, alert
 	return out, rows.Err()
 }
 
+// ListAlertsPage is the paginated variant of ListAlerts (REL-REPO). The score
+// and created_at ordering keys are not unique, so id is appended as a
+// deterministic tiebreaker for stable paging.
+func (r *Repo) ListAlertsPage(ctx context.Context, tenantID uuid.UUID, status, alertType string, limit, offset int) ([]Alert, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+alertColumns+` FROM risk_alerts
+		WHERE tenant_id = $1 AND ($2 = '' OR status = $2) AND ($3 = '' OR alert_type = $3)
+		ORDER BY score DESC, created_at DESC, id
+		LIMIT $4 OFFSET $5
+	`, tenantID, status, alertType, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Alert{}
+	for rows.Next() {
+		var a Alert
+		if err := scanAlert(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetAlert(ctx context.Context, tenantID, id uuid.UUID) (*Alert, error) {
 	var a Alert
 	err := scanAlert(r.pool.QueryRow(ctx, `SELECT `+alertColumns+` FROM risk_alerts WHERE tenant_id = $1 AND id = $2`, tenantID, id), &a)

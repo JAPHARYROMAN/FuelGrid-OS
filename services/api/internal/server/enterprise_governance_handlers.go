@@ -55,16 +55,24 @@ func (s *Server) handleListStationGroups(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.enterprise.ListGroups(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.enterprise.ListGroupsPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, map[string]any{"id": rows[i].ID, "name": rows[i].Name, "kind": rows[i].Kind, "status": rows[i].Status})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleAddGroupMember(w http.ResponseWriter, r *http.Request) {
@@ -209,12 +217,20 @@ func (s *Server) handleListApprovalPolicies(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.enterprise.ListPolicies(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.enterprise.ListPoliciesPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "count": len(rows)})
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 func approvalRequestMap(a *enterprise.ApprovalRequest) map[string]any {
@@ -267,16 +283,24 @@ func (s *Server) handleListApprovalRequests(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.enterprise.ListRequests(r.Context(), actor.TenantID, r.URL.Query().Get("status"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.enterprise.ListRequestsPage(r.Context(), actor.TenantID, r.URL.Query().Get("status"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, approvalRequestMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleDecideApproval(w http.ResponseWriter, r *http.Request) {

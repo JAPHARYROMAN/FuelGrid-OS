@@ -191,17 +191,25 @@ func (s *Server) handleListSuppliers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.procurement.ListSuppliers(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.procurement.ListSuppliersPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list suppliers", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]supplierDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toSupplierDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetSupplier(w http.ResponseWriter, r *http.Request) {
@@ -575,18 +583,26 @@ func (s *Server) handleListPurchaseOrders(w http.ResponseWriter, r *http.Request
 	if raw := r.URL.Query().Get("status"); raw != "" {
 		status = &raw
 	}
-	rows, err := s.procurement.ListPurchaseOrders(r.Context(), actor.TenantID, procurement.PurchaseOrderFilter{
+	limit, offset, pok := s.parsePage(w, r)
+	if !pok {
+		return
+	}
+	rows, err := s.procurement.ListPurchaseOrdersPage(r.Context(), actor.TenantID, procurement.PurchaseOrderFilter{
 		StationIDs: filter, SupplierID: supplierID, Status: status,
-	})
+	}, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]purchaseOrderDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toPurchaseOrderDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetPurchaseOrder(w http.ResponseWriter, r *http.Request) {

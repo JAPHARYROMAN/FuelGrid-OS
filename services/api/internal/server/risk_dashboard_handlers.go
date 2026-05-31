@@ -42,10 +42,18 @@ func (s *Server) handleListRiskScores(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.risk.ListScores(r.Context(), actor.TenantID, r.URL.Query().Get("dimension"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.risk.ListScoresPage(r.Context(), actor.TenantID, r.URL.Query().Get("dimension"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -54,7 +62,7 @@ func (s *Server) handleListRiskScores(w http.ResponseWriter, r *http.Request) {
 			"score": rows[i].Score, "band": rows[i].Band, "open_alerts": rows[i].OpenAlerts,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleRiskOverview(w http.ResponseWriter, r *http.Request) {

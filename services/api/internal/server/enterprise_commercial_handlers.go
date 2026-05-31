@@ -81,16 +81,24 @@ func (s *Server) handleListPriceRollouts(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.enterprise.ListPriceRollouts(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.enterprise.ListPriceRolloutsPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, rolloutMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleApprovePriceRollout(w http.ResponseWriter, r *http.Request) {
@@ -201,12 +209,20 @@ func (s *Server) handleListProcurementPlans(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.enterprise.ListPlans(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.enterprise.ListPlansPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": rows, "count": len(rows)})
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 func (s *Server) handleReleaseProcurementPlan(w http.ResponseWriter, r *http.Request) {
@@ -302,16 +318,24 @@ func (s *Server) handleListTransfers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.enterprise.ListTransfers(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.enterprise.ListTransfersPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, transferMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleApproveTransfer(w http.ResponseWriter, r *http.Request) {

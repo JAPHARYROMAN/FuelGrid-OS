@@ -94,6 +94,29 @@ func (r *Repo) ListStatements(ctx context.Context, tenantID, customerID uuid.UUI
 	return out, rows.Err()
 }
 
+// ListStatementsPage is the paginated variant of ListStatements (REL-REPO).
+func (r *Repo) ListStatementsPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]Statement, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+statementColumns+` FROM customer_statements
+		WHERE tenant_id = $1 AND customer_id = $2
+		ORDER BY period_end DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, customerID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Statement{}
+	for rows.Next() {
+		var s Statement
+		if err := scanStatement(rows, &s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // ---- Credit alerts (Stage 13) ----
 
 type CreditAlert struct {
@@ -158,6 +181,29 @@ func (r *Repo) ListAlerts(ctx context.Context, tenantID uuid.UUID, status string
 		SELECT id, customer_id, alert_type, severity, status, detail
 		FROM customer_credit_alerts WHERE tenant_id = $1 AND ($2 = '' OR status = $2) ORDER BY created_at DESC
 	`, tenantID, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CreditAlert{}
+	for rows.Next() {
+		var a CreditAlert
+		if err := rows.Scan(&a.ID, &a.CustomerID, &a.AlertType, &a.Severity, &a.Status, &a.Detail); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ListAlertsPage is the paginated variant of ListAlerts (REL-REPO).
+func (r *Repo) ListAlertsPage(ctx context.Context, tenantID uuid.UUID, status string, limit, offset int) ([]CreditAlert, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, customer_id, alert_type, severity, status, detail
+		FROM customer_credit_alerts WHERE tenant_id = $1 AND ($2 = '' OR status = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, status, limit, offset)
 	if err != nil {
 		return nil, err
 	}

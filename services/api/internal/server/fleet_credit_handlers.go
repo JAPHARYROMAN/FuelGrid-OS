@@ -73,10 +73,18 @@ func (s *Server) handleListCustomerContacts(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid customer id")
 		return
 	}
-	rows, err := s.fleet.ListContacts(r.Context(), actor.TenantID, customerID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListContactsPage(r.Context(), actor.TenantID, customerID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -86,7 +94,7 @@ func (s *Server) handleListCustomerContacts(w http.ResponseWriter, r *http.Reque
 			"statement_preference": c.StatementPreference, "notification_preference": c.NotificationPreference,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleCreateCustomerContact(w http.ResponseWriter, r *http.Request) {
@@ -351,16 +359,24 @@ func (s *Server) handleListPriceAgreements(w http.ResponseWriter, r *http.Reques
 			customerID = id
 		}
 	}
-	rows, err := s.fleet.ListPriceAgreements(r.Context(), actor.TenantID, customerID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.fleet.ListPriceAgreementsPage(r.Context(), actor.TenantID, customerID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, toPriceAgreementMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleCreatePriceAgreement(w http.ResponseWriter, r *http.Request) {

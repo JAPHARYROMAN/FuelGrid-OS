@@ -114,6 +114,33 @@ func (r *Repo) ListDrivers(ctx context.Context, tenantID, customerID uuid.UUID) 
 	return out, rows.Err()
 }
 
+// ListDriversPage is the paginated variant of ListDrivers (REL-REPO).
+func (r *Repo) ListDriversPage(ctx context.Context, tenantID, customerID uuid.UUID, limit, offset int) ([]Driver, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+driverColumns+` FROM customer_drivers
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY name, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Driver{}
+	for rows.Next() {
+		var d Driver
+		if err := scanDriver(rows, &d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) SetDriverStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) (*Driver, error) {
 	var d Driver
 	err := scanDriver(tx.QueryRow(ctx, `
