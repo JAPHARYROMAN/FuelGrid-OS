@@ -80,7 +80,7 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 		t.Fatalf("partial receipt flags = %v", receipt)
 	}
 	mv := receipt["movement"].(map[string]any)
-	if mv["movement_type"] != "delivery" || mv["litres"].(float64) != 9800 {
+	if mv["movement_type"] != "delivery" || mv["litres"].(string) != "9800.000" {
 		t.Fatalf("receipt movement = %v", mv)
 	}
 	del := receipt["delivery"].(map[string]any)

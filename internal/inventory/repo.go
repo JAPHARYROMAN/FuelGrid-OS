@@ -16,6 +16,8 @@ package inventory
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -84,8 +86,8 @@ type Movement struct {
 	MovementType       string
 	SourceRefType      *string
 	SourceRefID        *uuid.UUID
-	Litres             float64 // signed: +in / -out
-	BalanceAfter       float64
+	Litres             string // signed decimal: +in / -out (numeric(14,3) as text)
+	BalanceAfter       string // running ledger balance (numeric(14,3) as text)
 	SupplierID         *uuid.UUID
 	PurchaseOrderID    *uuid.UUID
 	LandedCostTotal    *string
@@ -105,7 +107,7 @@ type PostInput struct {
 	MovementType       string
 	SourceRefType      *string
 	SourceRefID        *uuid.UUID
-	Litres             float64 // signed: +in / -out
+	Litres             string // signed decimal: +in / -out, bound into a numeric column
 	SupplierID         *uuid.UUID
 	PurchaseOrderID    *uuid.UUID
 	LandedCostTotal    *string
@@ -121,7 +123,7 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
     id, seq, tenant_id, tank_id, movement_type, source_ref_type, source_ref_id,
-    litres, balance_after, supplier_id, purchase_order_id,
+    litres::text, balance_after::text, supplier_id, purchase_order_id,
     landed_cost_total::text, landed_cost_per_litre::text,
     recorded_by, recorded_at, supersedes_id, status, notes, created_at, updated_at
 `
@@ -165,9 +167,9 @@ func (r *Repo) PostMovement(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 		     litres, balance_after, supplier_id, purchase_order_id,
 		     landed_cost_total, landed_cost_per_litre,
 		     recorded_by, supersedes_id, notes)
-		VALUES ($1, $2, $3, $4, $5, $6,
+		VALUES ($1, $2, $3, $4, $5, $6::numeric,
 		    (SELECT COALESCE(SUM(litres), 0) FROM stock_movements
-		        WHERE tenant_id = $1 AND tank_id = $2) + $6,
+		        WHERE tenant_id = $1 AND tank_id = $2) + $6::numeric,
 		    $7, $8, $9::numeric, $10::numeric, $11, $12, $13)
 		RETURNING `+columns,
 		tenantID, in.TankID, in.MovementType, in.SourceRefType, in.SourceRefID,
@@ -181,10 +183,10 @@ func (r *Repo) PostMovement(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 
 // CurrentBalance returns the tank's book stock — the authoritative sum of
 // every movement on its ledger.
-func (r *Repo) CurrentBalance(ctx context.Context, tenantID, tankID uuid.UUID) (float64, error) {
-	var bal float64
+func (r *Repo) CurrentBalance(ctx context.Context, tenantID, tankID uuid.UUID) (string, error) {
+	var bal string
 	err := r.pool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(litres), 0)
+		SELECT COALESCE(SUM(litres), 0)::text
 		FROM stock_movements
 		WHERE tenant_id = $1 AND tank_id = $2
 	`, tenantID, tankID).Scan(&bal)
@@ -261,11 +263,30 @@ func (r *Repo) ReverseMovement(ctx context.Context, tx pgx.Tx, tenantID, movemen
 		MovementType:  orig.MovementType,
 		SourceRefType: &srcType,
 		SourceRefID:   &orig.ID,
-		Litres:        -orig.Litres,
+		Litres:        negateDecimal(orig.Litres),
 		SupersedesID:  &orig.ID,
 		RecordedBy:    recordedBy,
 		Notes:         notes,
 	})
+}
+
+// negateDecimal returns the arithmetic negation of a decimal string, preserving
+// the numeric(14,3) text form. A leading '-' is stripped; a non-negative value
+// gets one prepended. Zero in any spelling ("0", "0.000") negates to itself, so
+// the contra never carries a spurious "-0".
+func negateDecimal(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	if strings.TrimLeft(strings.TrimPrefix(s, "-"), "0.") == "" {
+		// All zeros (and the decimal point) — value is zero; keep it positive.
+		return strings.TrimPrefix(s, "-")
+	}
+	if strings.HasPrefix(s, "-") {
+		return s[1:]
+	}
+	return "-" + s
 }
 
 // OpeningInput is the data needed to seed a tank's opening balance.
@@ -346,9 +367,12 @@ func (r *Repo) SetOpeningBalance(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		TankID:        in.TankID,
 		MovementType:  TypeOpening,
 		SourceRefType: srcType,
-		Litres:        in.Litres,
-		RecordedBy:    in.RecordedBy,
-		Notes:         in.Notes,
+		// MD-1 boundary: OpeningInput.Litres is still an upstream float (a dip
+		// volume or a manual request value). Format it to the ledger's 3-decimal
+		// numeric text here; the float source is retyped in a later money-wave PR.
+		Litres:     strconv.FormatFloat(in.Litres, 'f', 3, 64),
+		RecordedBy: in.RecordedBy,
+		Notes:      in.Notes,
 	})
 	if isUniqueViolation(err) {
 		return nil, ErrOpeningExists

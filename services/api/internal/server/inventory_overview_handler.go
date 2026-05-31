@@ -51,10 +51,12 @@ func toRecentVarianceDTO(rr *reconciliation.RecentReconciliation) recentVariance
 	}
 }
 
-// inventoryTankDTO is one tank's at-a-glance inventory health.
+// inventoryTankDTO is one tank's at-a-glance inventory health. book_balance is
+// the ledger sum as an exact decimal string (numeric text); fill % and
+// days-of-stock are display-only floats derived from it.
 type inventoryTankDTO struct {
 	Tank               tankDTO             `json:"tank"`
-	BookBalance        float64             `json:"book_balance"`
+	BookBalance        string              `json:"book_balance"`
 	LatestPhysical     *float64            `json:"latest_physical,omitempty"`
 	LatestPhysicalAt   *string             `json:"latest_physical_at,omitempty"`
 	FillPercent        float64             `json:"fill_percent"`
@@ -129,12 +131,15 @@ func (s *Server) handleInventoryOverview(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
+		// book is an exact numeric text figure; parse to float for the
+		// display-only fill % and days-of-stock estimates only.
+		bookF := dispDecimal(book)
 		dto := inventoryTankDTO{Tank: toTankDTO(&tank), BookBalance: book, RecentVariances: []recentVarianceDTO{}}
 		if tank.CapacityLitres > 0 {
-			dto.FillPercent = book / tank.CapacityLitres * 100
+			dto.FillPercent = bookF / tank.CapacityLitres * 100
 		}
 		if dailySales > 0 {
-			d := book / dailySales
+			d := bookF / dailySales
 			dto.DaysOfStock = &d
 		}
 		if ld, ok := latest[tank.ID]; ok {
@@ -160,7 +165,7 @@ func (s *Server) handleInventoryOverview(w http.ResponseWriter, r *http.Request)
 // book/physical and the day's persisted reconciliation (nil if not yet run).
 type reconciliationTankDTO struct {
 	Tank           tankDTO            `json:"tank"`
-	BookBalance    float64            `json:"book_balance"`
+	BookBalance    string             `json:"book_balance"`
 	LatestPhysical *float64           `json:"latest_physical,omitempty"`
 	Reconciliation *reconciliationDTO `json:"reconciliation,omitempty"`
 }

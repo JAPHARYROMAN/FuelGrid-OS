@@ -23,8 +23,8 @@ type stockMovementDTO struct {
 	MovementType       string     `json:"movement_type"`
 	SourceRefType      *string    `json:"source_ref_type,omitempty"`
 	SourceRefID        *uuid.UUID `json:"source_ref_id,omitempty"`
-	Litres             float64    `json:"litres"`
-	BalanceAfter       float64    `json:"balance_after"`
+	Litres             string     `json:"litres"`
+	BalanceAfter       string     `json:"balance_after"`
 	SupplierID         *uuid.UUID `json:"supplier_id,omitempty"`
 	PurchaseOrderID    *uuid.UUID `json:"purchase_order_id,omitempty"`
 	LandedCostTotal    *string    `json:"landed_cost_total,omitempty"`

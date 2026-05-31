@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -450,7 +451,11 @@ func (s *Server) handleAdjustReconciliation(w http.ResponseWriter, r *http.Reque
 	reason := req.Reason
 	mv, err := s.inventory.PostMovement(ctx, tx, actor.TenantID, inventory.PostInput{
 		TankID: rec.TankID, MovementType: inventory.TypeAdjustment,
-		SourceRefType: &srcType, SourceRefID: &rec.ID, Litres: req.Litres,
+		SourceRefType: &srcType, SourceRefID: &rec.ID,
+		// MD-1 boundary: the adjustment litres still arrives as a JSON float in
+		// the request body. Format to 3-decimal numeric text; the request-side
+		// float is retyped in a later money-wave PR.
+		Litres:     strconv.FormatFloat(req.Litres, 'f', 3, 64),
 		RecordedBy: actor.UserID, Notes: &reason,
 	})
 	if err != nil {
