@@ -12,6 +12,35 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
+// MaxOutboxAttempts is the number of failed dispatch attempts a single
+// outbox row is allowed before it is dead-lettered. Once an event's
+// attempt_count reaches this value its failed_at is stamped and the
+// publisher stops retrying it, so one poison event can't monopolise the
+// drain loop. The value is deliberately a const: it's a correctness
+// guardrail, not a routine tuning knob.
+const MaxOutboxAttempts = 10
+
+// outboxFailure is the decision the publisher records for a row whose
+// dispatch failed: the new attempt_count, and whether that count has
+// exhausted the retry budget (dead-letter).
+type outboxFailure struct {
+	id           uuid.UUID
+	attemptCount int
+	deadLetter   bool
+}
+
+// classifyFailure computes the post-failure state for a row given the
+// attempt_count it carried into this tick. It's a pure function so the
+// retry/dead-letter decision can be unit-tested without a database.
+func classifyFailure(id uuid.UUID, priorAttempts int) outboxFailure {
+	next := priorAttempts + 1
+	return outboxFailure{
+		id:           id,
+		attemptCount: next,
+		deadLetter:   next >= MaxOutboxAttempts,
+	}
+}
+
 // PublisherConfig captures the tuning knobs for the outbox drain loop.
 // Defaults are tuned for development latency, not throughput; production
 // scale will likely want a longer interval and larger batches.
@@ -119,12 +148,15 @@ func (p *Publisher) processOnce(ctx context.Context) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Skip rows that have already been dead-lettered (failed_at set): they
+	// are unpublished but parked, so they no longer compete for the loop.
 	rows, err := tx.Query(ctx, `
 		SELECT id, tenant_id, event_type, event_version,
 		       aggregate_type, aggregate_id, actor_id,
-		       payload, metadata, occurred_at, correlation_id, causation_id
+		       payload, metadata, occurred_at, correlation_id, causation_id,
+		       attempt_count
 		FROM outbox_events
-		WHERE published_at IS NULL
+		WHERE published_at IS NULL AND failed_at IS NULL
 		ORDER BY occurred_at
 		LIMIT $1
 		FOR UPDATE SKIP LOCKED
@@ -134,20 +166,28 @@ func (p *Publisher) processOnce(ctx context.Context) {
 		return
 	}
 
-	var events []Event
+	var (
+		events   []Event
+		attempts []int
+	)
 	for rows.Next() {
-		var e Event
+		var (
+			e       Event
+			attempt int
+		)
 		if err := rows.Scan(
 			&e.ID, &e.TenantID, &e.Type, &e.Version,
 			&e.AggregateType, &e.AggregateID, &e.ActorID,
 			&e.Payload, &e.Metadata, &e.OccurredAt,
 			&e.CorrelationID, &e.CausationID,
+			&attempt,
 		); err != nil {
 			p.logger.Error("outbox: scan", "error", err)
 			rows.Close()
 			return
 		}
 		events = append(events, e)
+		attempts = append(attempts, attempt)
 	}
 	if err := rows.Err(); err != nil {
 		p.logger.Error("outbox: rows err", "error", err)
@@ -162,32 +202,69 @@ func (p *Publisher) processOnce(ctx context.Context) {
 		return
 	}
 
-	// Dispatch outside the row iteration. Failed dispatch leaves the
-	// row unpublished — next tick will retry. The outbox is the durable
-	// record; the bus is best-effort.
+	// Dispatch outside the row iteration. A successful publish marks the
+	// row published; a failed publish bumps attempt_count and, once the
+	// retry budget is exhausted, stamps failed_at (dead-letter) so the row
+	// stops being retried. The outbox is the durable record; the bus is
+	// best-effort.
 	dispatched := make([]uuid.UUID, 0, len(events))
+	failures := make([]outboxFailure, 0)
 	for i := range events {
 		if err := p.bus.Publish(ctx, events[i]); err != nil {
-			p.logger.Warn("outbox: publish failed; will retry",
-				"event_id", events[i].ID,
-				"event_type", events[i].Type,
-				"error", err,
-			)
+			f := classifyFailure(events[i].ID, attempts[i])
+			failures = append(failures, f)
+			if f.deadLetter {
+				p.logger.Error("outbox: publish failed; dead-lettering",
+					"event_id", events[i].ID,
+					"event_type", events[i].Type,
+					"attempt_count", f.attemptCount,
+					"max_attempts", MaxOutboxAttempts,
+					"error", err,
+				)
+			} else {
+				p.logger.Warn("outbox: publish failed; will retry",
+					"event_id", events[i].ID,
+					"event_type", events[i].Type,
+					"attempt_count", f.attemptCount,
+					"error", err,
+				)
+			}
 			continue
 		}
 		dispatched = append(dispatched, events[i].ID)
 	}
 
-	if len(dispatched) == 0 {
+	if len(dispatched) == 0 && len(failures) == 0 {
 		return
 	}
 
-	if _, err := tx.Exec(ctx,
-		`UPDATE outbox_events SET published_at = now() WHERE id = ANY($1)`,
-		dispatched,
-	); err != nil {
-		p.logger.Error("outbox: mark published", "error", err)
-		return
+	if len(dispatched) > 0 {
+		if _, err := tx.Exec(ctx,
+			`UPDATE outbox_events SET published_at = now() WHERE id = ANY($1)`,
+			dispatched,
+		); err != nil {
+			p.logger.Error("outbox: mark published", "error", err)
+			return
+		}
+	}
+
+	// Persist failure bookkeeping: every failed row gets its new
+	// attempt_count, and rows that exhausted the budget get failed_at set
+	// so the next poll skips them. We update per row because each carries a
+	// distinct attempt_count; batches are small (poison events are rare).
+	for _, f := range failures {
+		var failedAt *time.Time
+		if f.deadLetter {
+			now := time.Now()
+			failedAt = &now
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE outbox_events SET attempt_count = $2, failed_at = $3 WHERE id = $1`,
+			f.id, f.attemptCount, failedAt,
+		); err != nil {
+			p.logger.Error("outbox: record failure", "event_id", f.id, "error", err)
+			return
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -195,5 +272,8 @@ func (p *Publisher) processOnce(ctx context.Context) {
 		return
 	}
 
-	p.logger.Debug("outbox batch published", "count", len(dispatched))
+	p.logger.Debug("outbox batch processed",
+		"published", len(dispatched),
+		"failed", len(failures),
+	)
 }
