@@ -289,6 +289,9 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 		LastSeenAt:   s.now(),
 		ExpiresAt:    expiresAt,
 		MfaSatisfied: user.MfaEnabled,
+		// Stamp the user's current epoch so Resolve can authoritatively
+		// detect a later global revoke (SEC-1 / AUTH-04).
+		SessionEpoch: user.SessionEpoch,
 		RawToken:     raw,
 	}
 	if err := s.store.Put(ctx, raw, sess); err != nil {
@@ -385,6 +388,14 @@ func (s *Service) revokeAllUserSessions(ctx context.Context, tx pgx.Tx, userID u
 			s.logger.Warn("revoke session redis", "error", err, "session_id", row.ID)
 		}
 	}
+	// Bump the user's session epoch inside the caller's tx. This is the
+	// authoritative revocation (SEC-1 / AUTH-04): any session minted with the
+	// old epoch — including ones whose best-effort Redis delete above missed —
+	// fails the epoch check in Resolve. The durable RevokeAllForUser keeps the
+	// sessions table's audit trail accurate.
+	if err := s.users.BumpSessionEpoch(ctx, tx, userID); err != nil {
+		return err
+	}
 	return s.sessions.RevokeAllForUser(ctx, tx, userID, reason)
 }
 
@@ -410,8 +421,12 @@ func (s *Service) Refresh(ctx context.Context, rawToken string) (*session.Sessio
 }
 
 // Resolve looks up an active session by raw token. Used by the auth
-// middleware on every protected request. The hot path is a single Redis
-// GET; nothing in Postgres is touched.
+// middleware on every protected request. After the hot-path Redis GET it
+// makes one authoritative check in Postgres: the session's stamped
+// session_epoch against the user's current epoch. A global revoke (password
+// reset/change, "log out everywhere") bumps the user's epoch, so a stale
+// session whose Redis entry was never cleaned up still fails this check and
+// is treated as revoked (SEC-1 / AUTH-04).
 func (s *Service) Resolve(ctx context.Context, rawToken string) (*session.Session, error) {
 	sess, err := s.store.Get(ctx, rawToken)
 	if err != nil {
@@ -423,6 +438,23 @@ func (s *Service) Resolve(ctx context.Context, rawToken string) (*session.Sessio
 	if s.now().After(sess.ExpiresAt) {
 		_ = s.store.Delete(ctx, rawToken)
 		return nil, ErrSessionExpired
+	}
+	// Authoritative revocation check: the user's current epoch is the source
+	// of truth. If it has moved past what the session was minted with, the
+	// session has been globally revoked — drop the stale Redis entry and
+	// reject, even though Redis still held it.
+	epoch, err := s.users.CurrentSessionEpoch(ctx, s.pool, sess.UserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// User no longer exists: the session can't be valid.
+			_ = s.store.Delete(ctx, rawToken)
+			return nil, ErrSessionRevoked
+		}
+		return nil, err
+	}
+	if epoch != sess.SessionEpoch {
+		_ = s.store.Delete(ctx, rawToken)
+		return nil, ErrSessionRevoked
 	}
 	return sess, nil
 }
@@ -456,6 +488,12 @@ func (s *Service) ChangePassword(ctx context.Context, tenantID, userID uuid.UUID
 	}
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		if err := s.users.SetPassword(ctx, tx, userID, hash); err != nil {
+			return err
+		}
+		// A password change invalidates every existing session: bump the
+		// epoch (authoritative) and clear the live Redis entries + durable
+		// rows, mirroring the reset flow (SEC-1 / AUTH-04).
+		if err := s.revokeAllUserSessions(ctx, tx, userID, "password change"); err != nil {
 			return err
 		}
 		return s.auditAuth(ctx, tx, tenantID, userID,
