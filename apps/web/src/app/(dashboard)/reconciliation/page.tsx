@@ -18,9 +18,12 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres, formatMoney, parseDecimal } from '@/lib/money';
 
-function fmtLitres(n: number) {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+// Litre figures arrive as decimal strings (book_balance, reconciliation
+// totals) or display numbers (Math.abs of a parsed total); accept both.
+function fmtLitres(n: number | string) {
+  return formatLitres(n, { maximumFractionDigits: 1, fallback: '0' });
 }
 
 export default function ReconciliationPage() {
@@ -263,17 +266,17 @@ function ReconCard({
               <Row label="Sales" value={`−${fmtLitres(rec.sales_total)} L`} />
               <Row
                 label="Adjustments"
-                value={`${rec.adjustments_total >= 0 ? '+' : '−'}${fmtLitres(
-                  Math.abs(rec.adjustments_total),
+                value={`${parseDecimal(rec.adjustments_total) >= 0 ? '+' : '−'}${fmtLitres(
+                  Math.abs(parseDecimal(rec.adjustments_total)),
                 )} L`}
               />
               <Row label="Closing book" value={`${fmtLitres(rec.closing_book)} L`} />
               <Row label="Physical (dip)" value={`${fmtLitres(rec.closing_physical)} L`} />
               <Row
                 label="Variance"
-                value={`${rec.variance_litres >= 0 ? '+' : '−'}${fmtLitres(
-                  Math.abs(rec.variance_litres),
-                )} L (${rec.variance_percent.toFixed(2)}%)`}
+                value={`${parseDecimal(rec.variance_litres) >= 0 ? '+' : '−'}${fmtLitres(
+                  Math.abs(parseDecimal(rec.variance_litres)),
+                )} L (${formatMoney(rec.variance_percent)}%)`}
                 tone={rec.over_tolerance ? 'danger' : undefined}
               />
               <Row label="Tolerance" value={`±${rec.tolerance_percent}%`} />

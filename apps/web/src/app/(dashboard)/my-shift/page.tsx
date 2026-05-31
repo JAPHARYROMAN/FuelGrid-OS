@@ -19,11 +19,14 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatMoney, parseDecimal, sumMoney } from '@/lib/money';
 
 const QUERY_KEY = ['my-shift'];
 
-function fmtMoney(n: number) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Money figures arrive as exact decimal strings; the local "submitting"
+// preview sums the form inputs decimal-safely. formatMoney handles strings.
+function fmtMoney(n: number | string) {
+  return formatMoney(n, { fallback: '0.00' });
 }
 
 export default function MyShiftPage() {
@@ -50,7 +53,7 @@ export default function MyShiftPage() {
     }: {
       nozzleID: string;
       type: 'opening' | 'closing';
-      reading: number;
+      reading: string;
     }) => api.captureMeterReading(shiftID, { nozzle_id: nozzleID, reading_type: type, reading }),
     onSuccess: () => {
       setActionError(null);
@@ -67,7 +70,7 @@ export default function MyShiftPage() {
     }: {
       tankID: string;
       type: 'opening' | 'closing';
-      dipMM: number;
+      dipMM: string;
     }) => api.captureDipReading(shiftID, { tank_id: tankID, reading_type: type, dip_mm: dipMM }),
     onSuccess: () => {
       setActionError(null);
@@ -79,10 +82,10 @@ export default function MyShiftPage() {
   const submitCash = useMutation({
     mutationFn: () =>
       api.submitCash(shiftID, {
-        cash_amount: Number(cash.cash) || 0,
-        mobile_money_amount: Number(cash.mobile) || 0,
-        card_amount: Number(cash.card) || 0,
-        credit_amount: Number(cash.credit) || 0,
+        cash_amount: cash.cash || '0',
+        mobile_money_amount: cash.mobile || '0',
+        card_amount: cash.card || '0',
+        credit_amount: cash.credit || '0',
       }),
     onSuccess: () => {
       setActionError(null);
@@ -146,7 +149,7 @@ export default function MyShiftPage() {
               size="sm"
               disabled={!readingInputs[key] || capture.isPending}
               onClick={() =>
-                capture.mutate({ nozzleID: n.nozzle_id, type, reading: Number(readingInputs[key]) })
+                capture.mutate({ nozzleID: n.nozzle_id, type, reading: readingInputs[key] ?? '' })
               }
             >
               Save
@@ -192,7 +195,7 @@ export default function MyShiftPage() {
               size="sm"
               disabled={!dipInputs[key] || captureDip.isPending}
               onClick={() =>
-                captureDip.mutate({ tankID: t.tank_id, type, dipMM: Number(dipInputs[key]) })
+                captureDip.mutate({ tankID: t.tank_id, type, dipMM: dipInputs[key] ?? '' })
               }
             >
               Save
@@ -205,13 +208,13 @@ export default function MyShiftPage() {
     );
   }
 
-  const expected = data.expected_cash ?? 0;
-  const cashTotal =
-    (Number(cash.cash) || 0) +
-    (Number(cash.mobile) || 0) +
-    (Number(cash.card) || 0) +
-    (Number(cash.credit) || 0);
-  const variance = cashTotal - expected;
+  // expected_cash is a decimal string from the server; the local preview sums
+  // the four tender inputs decimal-safely (integer cents) and derives variance
+  // for display only.
+  const expected = data.expected_cash ?? '0';
+  const cashTotal = sumMoney([cash.cash, cash.mobile, cash.card, cash.credit]);
+  const variance = sumMoney([cashTotal, `-${parseDecimal(expected) || 0}`]);
+  const varianceNegative = parseDecimal(variance) < 0;
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4">
@@ -308,7 +311,7 @@ export default function MyShiftPage() {
                 <Row
                   label="Variance"
                   value={fmtMoney(data.cash_submission.variance)}
-                  tone={data.cash_submission.variance < 0 ? 'danger' : 'success'}
+                  tone={parseDecimal(data.cash_submission.variance) < 0 ? 'danger' : 'success'}
                 />
               </CardContent>
             </Card>
@@ -339,7 +342,7 @@ export default function MyShiftPage() {
                   <Row
                     label="Variance"
                     value={fmtMoney(variance)}
-                    tone={variance < 0 ? 'danger' : 'success'}
+                    tone={varianceNegative ? 'danger' : 'success'}
                   />
                 </div>
                 <Button

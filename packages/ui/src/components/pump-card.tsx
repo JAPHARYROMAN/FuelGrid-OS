@@ -3,6 +3,7 @@
 import * as React from 'react';
 
 import { cn } from '../lib/cn';
+import { formatMoney } from '../lib/money';
 
 export interface PumpCardNozzle {
   id: string;
@@ -10,7 +11,8 @@ export interface PumpCardNozzle {
   productName: string;
   productColor: string;
   tankCode: string;
-  price: number;
+  /** Unit price as an exact decimal STRING from the SDK (numeric(14,2) -> text). */
+  price: string;
 }
 
 export interface PumpCardProps {
@@ -101,7 +103,7 @@ export function PumpCard({ number, status, nozzles, onActivate, className }: Pum
                   <span>{n.productName}</span>
                   <span className="text-muted-foreground">← {n.tankCode}</span>
                 </div>
-                <span className="tabular-nums font-medium">{n.price.toFixed(2)}</span>
+                <span className="tabular-nums font-medium">{formatMoney(n.price)}</span>
               </div>
             ))
         )}

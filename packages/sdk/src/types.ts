@@ -81,10 +81,11 @@ export interface Product {
   name: string;
   category: string;
   unit: string;
-  default_price: number;
-  tax_rate: number;
-  density_kg_m3?: number;
-  loss_tolerance_percent: number;
+  /** Money/rate fields are exact decimal STRINGS from the Go DTO (numeric -> text). */
+  default_price: string;
+  tax_rate: string;
+  density_kg_m3?: string;
+  loss_tolerance_percent: string;
   color: string;
   status: string;
 }
@@ -108,9 +109,10 @@ export interface PurchaseOrderLine {
   tenant_id: string;
   purchase_order_id: string;
   product_id: string;
-  ordered_litres: number;
+  /** Litre fields are exact decimal STRINGS (numeric(14,3) -> text). */
+  ordered_litres: string;
   unit_price: string;
-  received_litres: number;
+  received_litres: string;
 }
 
 export interface PurchaseOrder {
@@ -166,8 +168,9 @@ export interface StockMovement {
   movement_type: string;
   source_ref_type?: string;
   source_ref_id?: string;
-  litres: number;
-  balance_after: number;
+  /** Ledger litres + running balance are exact decimal STRINGS (numeric(14,3) -> text). */
+  litres: string;
+  balance_after: string;
   supplier_id?: string;
   purchase_order_id?: string;
   landed_cost_total?: string;
@@ -260,10 +263,11 @@ export interface Tank {
   product_id: string;
   name: string;
   code: string;
-  capacity_litres: number;
-  safe_min_litres: number;
-  safe_max_litres: number;
-  dead_stock_litres: number;
+  /** Tank dimensions are exact decimal STRINGS (numeric(14,3) -> text). */
+  capacity_litres: string;
+  safe_min_litres: string;
+  safe_max_litres: string;
+  dead_stock_litres: string;
   has_water_sensor: boolean;
   has_temp_sensor: boolean;
   status: string;
@@ -298,7 +302,8 @@ export interface Nozzle {
   tank_id: string;
   product_id: string;
   number: number;
-  default_price: number;
+  /** Default price is an exact decimal STRING (numeric(14,2) -> text). */
+  default_price: string;
   meter_decimal_places: number;
   status: string;
 }
@@ -432,7 +437,8 @@ export interface MeterReading {
   shift_id: string;
   nozzle_id: string;
   reading_type: 'opening' | 'closing';
-  reading: number;
+  /** Meter reading is an exact decimal STRING (numeric(14,3) -> text). */
+  reading: string;
   recorded_by: string;
   recorded_at: string;
   supersedes_id?: string;
@@ -445,8 +451,9 @@ export interface DipReading {
   shift_id: string;
   tank_id: string;
   reading_type: 'opening' | 'closing';
-  dip_mm: number;
-  volume_litres: number;
+  /** dip_mm + volume_litres are exact decimal STRINGS (numeric(14,3) -> text). */
+  dip_mm: string;
+  volume_litres: string;
   water_mm?: number;
   temperature_c?: number;
   chart_id: string;
@@ -458,9 +465,10 @@ export interface DipReading {
 
 export interface MeterDispensed {
   nozzle_id: string;
-  opening: number;
-  closing: number;
-  litres_dispensed: number;
+  /** Readings + dispensed litres are exact decimal STRINGS (numeric(14,3) -> text). */
+  opening: string;
+  closing: string;
+  litres_dispensed: string;
 }
 
 export interface MeterReadingList {
@@ -471,23 +479,25 @@ export interface MeterReadingList {
 
 export interface ShiftCloseLine {
   nozzle_id: string;
-  opening_reading: number;
-  closing_reading: number;
-  litres_sold: number;
-  unit_price: number;
-  expected_value: number;
+  /** Readings/litres/price/value are exact decimal STRINGS from the DB. */
+  opening_reading: string;
+  closing_reading: string;
+  litres_sold: string;
+  unit_price: string;
+  expected_value: string;
 }
 
 export interface CashSubmission {
   id: string;
   shift_id: string;
-  expected_cash: number;
-  cash_amount: number;
-  mobile_money_amount: number;
-  card_amount: number;
-  credit_amount: number;
-  submitted_total: number;
-  variance: number;
+  /** Every tender/variance figure is an exact decimal STRING (numeric(14,2) -> text). */
+  expected_cash: string;
+  cash_amount: string;
+  mobile_money_amount: string;
+  card_amount: string;
+  credit_amount: string;
+  submitted_total: string;
+  variance: string;
   submitted_by: string;
   submitted_at: string;
   notes?: string;
@@ -496,7 +506,7 @@ export interface CashSubmission {
 export interface ShiftCloseSummary {
   shift: Shift;
   lines: ShiftCloseLine[];
-  expected_cash: number;
+  expected_cash: string;
   cash_submission: CashSubmission | null;
 }
 
@@ -541,7 +551,8 @@ export interface MyShift {
   shift: Shift | null;
   assigned_nozzles: MyShiftNozzle[];
   assigned_tanks: MyShiftTank[];
-  expected_cash?: number;
+  /** Expected cash is an exact decimal STRING (numeric(14,2) -> text). */
+  expected_cash?: string;
   cash_submission?: CashSubmission | null;
 }
 
@@ -554,8 +565,9 @@ export interface OperationsAttendant {
 export interface OperationsShift extends Shift {
   attendants: OperationsAttendant[];
   nozzle_assignments: NozzleAssignment[];
-  expected_cash: number;
-  litres_sold: number;
+  /** expected_cash + litres_sold are exact decimal STRINGS from the DB. */
+  expected_cash: string;
+  litres_sold: string;
   cash_submission?: CashSubmission | null;
   exceptions: ShiftException[];
   open_exception_count: number;
@@ -572,15 +584,16 @@ export interface Reconciliation {
   id?: string;
   tank_id: string;
   operating_day_id: string;
-  opening_book: number;
-  deliveries_total: number;
-  sales_total: number;
-  adjustments_total: number;
-  closing_book: number;
-  closing_physical: number;
-  variance_litres: number;
-  variance_percent: number;
-  tolerance_percent: number;
+  /** Every litre/percent figure is an exact decimal STRING from the DB. */
+  opening_book: string;
+  deliveries_total: string;
+  sales_total: string;
+  adjustments_total: string;
+  closing_book: string;
+  closing_physical: string;
+  variance_litres: string;
+  variance_percent: string;
+  tolerance_percent: string;
   over_tolerance: boolean;
   /** draft | exception | sealed (preview reports the would-be draft/exception). */
   status: string;
@@ -601,7 +614,8 @@ export interface RecentVariance {
 
 export interface InventoryOverviewTank {
   tank: Tank;
-  book_balance: number;
+  /** Ledger book balance is an exact decimal STRING; the rest are display floats. */
+  book_balance: string;
   latest_physical?: number;
   latest_physical_at?: string;
   fill_percent: number;
@@ -617,7 +631,8 @@ export interface InventoryOverview {
 
 export interface ReconciliationOverviewTank {
   tank: Tank;
-  book_balance: number;
+  /** Ledger book balance is an exact decimal STRING. */
+  book_balance: string;
   latest_physical?: number;
   reconciliation?: Reconciliation;
 }

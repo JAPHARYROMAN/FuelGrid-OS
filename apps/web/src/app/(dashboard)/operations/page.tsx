@@ -18,13 +18,15 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres, formatMoney, parseDecimal } from '@/lib/money';
 
-function fmtMoney(n: number) {
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Money/litre figures are exact decimal strings from the server.
+function fmtMoney(n: number | string) {
+  return formatMoney(n, { fallback: '0.00' });
 }
 
-function fmtLitres(n: number) {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 3 });
+function fmtLitres(n: number | string) {
+  return formatLitres(n, { maximumFractionDigits: 3, fallback: '0' });
 }
 
 function shiftTone(status: string): 'success' | 'neutral' | 'warning' {
@@ -295,7 +297,7 @@ function ShiftCard({
               <Row
                 label="Variance"
                 value={fmtMoney(cash.variance)}
-                tone={cash.variance < 0 ? 'danger' : 'success'}
+                tone={parseDecimal(cash.variance) < 0 ? 'danger' : 'success'}
               />
             </>
           ) : (

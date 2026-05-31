@@ -29,6 +29,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres } from '@/lib/money';
 
 interface FormState {
   product_id: string;
@@ -85,15 +86,17 @@ export default function TanksPage() {
     [products.data],
   );
 
+  // Litre capacities are sent as decimal STRINGS (the API accepts string or
+  // number and stores exact numeric); trim and default empties to "0".
   function buildPayload(input: FormState) {
     return {
       product_id: input.product_id,
       name: input.name.trim(),
       code: input.code.trim(),
-      capacity_litres: Number(input.capacity_litres) || 0,
-      safe_min_litres: Number(input.safe_min_litres) || 0,
-      safe_max_litres: Number(input.safe_max_litres) || 0,
-      dead_stock_litres: Number(input.dead_stock_litres) || 0,
+      capacity_litres: input.capacity_litres.trim() || '0',
+      safe_min_litres: input.safe_min_litres.trim() || '0',
+      safe_max_litres: input.safe_max_litres.trim() || '0',
+      dead_stock_litres: input.dead_stock_litres.trim() || '0',
       has_water_sensor: input.has_water_sensor,
       has_temp_sensor: input.has_temp_sensor,
     };
@@ -248,10 +251,10 @@ export default function TanksPage() {
                     </span>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {t.capacity_litres.toLocaleString()}
+                    {formatLitres(t.capacity_litres)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {t.safe_min_litres.toLocaleString()} – {t.safe_max_litres.toLocaleString()}
+                    {formatLitres(t.safe_min_litres)} – {formatLitres(t.safe_max_litres)}
                   </TableCell>
                   <TableCell>
                     <Badge tone={t.status === 'active' ? 'success' : 'warning'}>{t.status}</Badge>

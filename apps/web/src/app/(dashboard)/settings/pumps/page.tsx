@@ -26,6 +26,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatMoney } from '@/lib/money';
 
 interface PumpFormState {
   number: string;
@@ -143,7 +144,8 @@ export default function PumpsPage() {
         pump_id: input.pump_id,
         tank_id: input.tank_id,
         number: Number(input.number),
-        default_price: input.default_price ? Number(input.default_price) : undefined,
+        // default_price is a decimal STRING (the API accepts string or number).
+        default_price: input.default_price.trim() ? input.default_price.trim() : undefined,
         meter_decimal_places: input.meter_decimal_places
           ? Number(input.meter_decimal_places)
           : undefined,
@@ -360,7 +362,7 @@ export default function PumpsPage() {
                                 </div>
                                 <div className="flex items-center gap-4">
                                   <span className="tabular-nums text-sm">
-                                    {n.default_price.toFixed(2)}
+                                    {formatMoney(n.default_price)}
                                   </span>
                                   <Button
                                     variant="ghost"
