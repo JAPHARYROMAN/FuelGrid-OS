@@ -23,13 +23,19 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 
 	if s.deps.DB != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		if err := s.deps.DB.Ping(ctx); err != nil {
+		err := s.deps.DB.Ping(ctx)
+		cancel()
+		if err != nil {
 			checks["postgres"] = "unreachable: " + err.Error()
 			allOK = false
 		} else {
 			checks["postgres"] = "ok"
 		}
-		cancel()
+		// Keep the cached health flag (REL-5) consistent with this live ping so
+		// readyz and the cheap shedding path agree; the background checker keeps
+		// it fresh between readyz hits. Never flips to unhealthy when the checker
+		// hasn't started (default-healthy) — readyz only observes the real ping.
+		s.dbHealthy.Store(err == nil)
 	}
 
 	if s.deps.Redis != nil {
