@@ -8,12 +8,22 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
-// MovingAverageCost returns a tank's weighted-average landed cost per litre —
-// the cost basis Phase 6 values COGS and stock at. It averages the landed cost
-// of the tank's costed delivery (stock-in) movements (Phase-5 receipts).
+// WeightedAverageCost returns a tank's CUMULATIVE (lifetime) weighted-average
+// landed cost per litre — the cost basis Phase 6 values COGS and stock at. It
+// is the litre-weighted average of the landed cost of ALL the tank's posted,
+// non-superseded delivery (stock-in) movements over the tank's whole history
+// (Phase-5 receipts).
+//
+// IMPORTANT — this is NOT a perpetual ("moving") average: consumed (sold) stock
+// never lowers the basis, so the figure does not decrement as litres are sold.
+// It equals a true moving average only while landed cost per litre is constant
+// across a tank's deliveries; it drifts from it as cost rises or falls over the
+// tank's life. See docs/costing-policy.md for the exact policy, its limitation,
+// and when it is accurate.
+//
 // found is false when the tank has no costed deliveries. Returned as a decimal
 // string (numeric in the DB), never float.
-func (r *Repo) MovingAverageCost(ctx context.Context, q database.Querier, tenantID, tankID uuid.UUID) (cost string, found bool, err error) {
+func (r *Repo) WeightedAverageCost(ctx context.Context, q database.Querier, tenantID, tankID uuid.UUID) (cost string, found bool, err error) {
 	var v *string
 	if err = q.QueryRow(ctx, `
 		SELECT (SUM(litres * landed_cost_per_litre) / NULLIF(SUM(litres), 0))::text
@@ -30,9 +40,12 @@ func (r *Repo) MovingAverageCost(ctx context.Context, q database.Querier, tenant
 	return *v, true, nil
 }
 
-// AverageLandedCostForStationProduct returns the weighted-average landed cost
-// per litre across a station's tanks holding a product — the cost basis the
-// below-cost price guard checks a selling price against.
+// AverageLandedCostForStationProduct returns the CUMULATIVE (lifetime)
+// weighted-average landed cost per litre across a station's tanks holding a
+// product — the cost basis the below-cost price guard checks a selling price
+// against. Like WeightedAverageCost this is a lifetime average over posted,
+// non-superseded deliveries; it does not decrement as stock is sold. See
+// docs/costing-policy.md.
 func (r *Repo) AverageLandedCostForStationProduct(ctx context.Context, tenantID, stationID, productID uuid.UUID) (cost string, found bool, err error) {
 	var v *string
 	if err = r.pool.QueryRow(ctx, `
