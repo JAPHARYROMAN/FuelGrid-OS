@@ -191,6 +191,11 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Use(echoRequestID)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(s.captureErrors)
+	// Open one OTel server span per request (OBS-5). It sits just inside
+	// captureErrors and outside logRequests so the span (and its TraceID) is
+	// live when logRequests stamps correlation_id, letting logs and traces
+	// join on the same id. No-op when tracing is disabled (OtelExporter=none).
+	r.Use(s.traceRequests)
 	r.Use(s.logRequests)
 	r.Use(s.recordMetrics)
 	// Global concurrency guard (REL-4): shed load with 503 before doing real

@@ -9,6 +9,9 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
@@ -63,6 +66,39 @@ func echoRequestID(next http.Handler) http.Handler {
 	})
 }
 
+// traceRequests wraps every request in an OpenTelemetry server span using the
+// otelhttp instrumentation. The span carries standard http.server semantic
+// attributes and propagates inbound traceparent headers so the API joins an
+// existing distributed trace when one is present.
+//
+// The span is named by the chi route template (e.g. "GET /api/v1/stations/
+// {stationID}") rather than the raw URL, keeping span cardinality bounded the
+// same way recordMetrics bounds its Prometheus labels. Because otelhttp runs
+// before chi has matched a route, the template is unknown when the span is
+// created; the inner tagRoute step rewrites the span name and sets the
+// http.route attribute once routing has resolved.
+//
+// When tracing is disabled (OtelExporter=none) the global provider is the OTel
+// no-op tracer: spans are non-recording and carry an invalid SpanContext, so
+// this is a zero-config no-op and logRequests falls back to request_id.
+func (s *Server) traceRequests(next http.Handler) http.Handler {
+	tagRoute := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if span := trace.SpanFromContext(r.Context()); span.IsRecording() {
+			pattern := routePattern(r)
+			span.SetName(r.Method + " " + pattern)
+			span.SetAttributes(semconv.HTTPRoute(pattern))
+		}
+		next.ServeHTTP(w, r)
+	})
+	// otelhttp creates the span; the operation arg is only a placeholder
+	// because the span name formatter (and tagRoute) override it per request.
+	return otelhttp.NewHandler(tagRoute, "http.server",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			return r.Method + " " + r.URL.Path
+		}),
+	)
+}
+
 // logRequests emits one structured log line per HTTP request. Field
 // names follow the architecture doc §24.1 + the Stage-10 standardization:
 //
@@ -70,8 +106,10 @@ func echoRequestID(next http.Handler) http.Handler {
 //	method, path, status, bytes, latency_ms, remote, user_agent
 //
 // tenant_id and user_id are populated when the auth middleware has
-// already injected an actor. correlation_id mirrors request_id today;
-// when distributed tracing matures it will come from the trace context.
+// already injected an actor. correlation_id is the active trace's TraceID
+// when a recording span exists (set by traceRequests), so log lines and
+// distributed traces join on the same id; it falls back to request_id when
+// tracing is disabled or no span is in flight.
 func (s *Server) logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
@@ -81,9 +119,17 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 			reqID := chimiddleware.GetReqID(r.Context())
 			actor := identity.ActorFrom(r.Context())
 
+			// Join logs to the trace on the TraceID when a span is
+			// recording; otherwise mirror request_id (no-op tracer or no
+			// inbound trace) so the field is always populated.
+			correlationID := reqID
+			if sc := trace.SpanContextFromContext(r.Context()); sc.IsValid() {
+				correlationID = sc.TraceID().String()
+			}
+
 			attrs := []any{
 				"request_id", reqID,
-				"correlation_id", reqID,
+				"correlation_id", correlationID,
 				"service", "fuelgrid-api",
 				"operation", routePattern(r),
 				"method", r.Method,
