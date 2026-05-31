@@ -26,13 +26,11 @@ export default defineConfig({
     baseURL,
     trace: 'on-first-retry',
     ignoreHTTPSErrors: true,
-    // The production bundle ships a strict `script-src 'self'` CSP (see
-    // next.config.ts) with no nonce, which blocks Next's inline hydration
-    // bootstrap scripts in a headless browser, so the page never becomes
-    // interactive. bypassCSP disables CSP ENFORCEMENT IN THE TEST BROWSER
-    // ONLY — it does not touch the server headers or the shipped security
-    // posture — so the specs can drive the real, hydrated app.
-    bypassCSP: true,
+    // NB: CSP is ENFORCED in the test browser (no bypassCSP). The production
+    // bundle now ships a per-request nonce CSP (`script-src 'nonce-<n>'
+    // 'strict-dynamic'`, see src/middleware.ts) so Next's inline hydration
+    // bootstrap scripts are nonced and the app hydrates under the real policy.
+    // These specs are the proof that the nonce CSP lets the app hydrate.
   },
   projects: [
     {
