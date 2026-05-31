@@ -10,6 +10,7 @@ import { SdkError } from '@fuelgrid/sdk';
 import { Button } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { clearSentryUser } from '@/lib/sentry';
 import { useAuthStore } from '@/stores/auth-store';
 import { useTenantStore } from '@/stores/tenant-store';
 
@@ -44,6 +45,7 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
     }
     clearSession();
     resetTenantContext();
+    clearSentryUser();
     router.replace('/login');
   }
 

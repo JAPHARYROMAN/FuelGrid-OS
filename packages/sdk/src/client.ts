@@ -99,21 +99,38 @@ import type {
   UserSummary,
   Delivery,
 } from './types';
+import { loginResponseSchema, meSchema, mePermissionsSchema } from './schemas';
 
 /**
  * SdkError carries the HTTP status alongside the parsed API error body so
- * callers can branch on it without re-reading the response.
+ * callers can branch on it without re-reading the response. It also carries
+ * the server's X-Request-Id (when present) so a failed call can be correlated
+ * with server logs/traces — surfaced to observability as a tag (OBS-1).
  */
 export class SdkError extends Error {
   readonly status: number;
   readonly body: unknown;
+  /** The response's X-Request-Id header, when the server returned one. */
+  readonly requestId: string | null;
 
-  constructor(message: string, status: number, body: unknown) {
+  constructor(message: string, status: number, body: unknown, requestId: string | null = null) {
     super(message);
     this.name = 'SdkError';
     this.status = status;
     this.body = body;
+    this.requestId = requestId;
   }
+}
+
+/**
+ * A minimal structural schema interface, satisfied by a Zod schema's
+ * `.safeParse`. Declared here so the SDK transport can validate critical
+ * payloads without importing zod into the transport file's type surface.
+ */
+export interface ResponseSchema<T> {
+  safeParse(
+    data: unknown,
+  ): { success: true; data: T } | { success: false; error: { message: string } };
 }
 
 export interface ClientConfig {
@@ -122,6 +139,13 @@ export interface ClientConfig {
   getToken?: () => string | null;
   /** Optional fetch override (for tests, instrumentation, retries). */
   fetch?: typeof fetch;
+  /**
+   * Invoked once whenever any request receives a 401, before the SdkError is
+   * thrown. The web app injects this to clear the session and redirect to
+   * login — a transport-level logout backstop so an expired token anywhere in
+   * the app lands the user on /login rather than a broken screen (SEC-3).
+   */
+  onUnauthorized?: () => void;
 }
 
 interface RequestOptions {
@@ -132,16 +156,25 @@ interface RequestOptions {
   /** Extra headers merged last — used to pass a non-session bearer. */
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /**
+   * Optional runtime schema. When set, a 2xx body is parsed with it and a
+   * mismatch throws an SdkError (status 0). Used ONLY for a curated set of
+   * critical/auth responses (see requestValidated); most calls keep the plain
+   * typed cast to avoid an over-strict schema breaking the running app.
+   */
+  schema?: ResponseSchema<unknown>;
 }
 
 export class Client {
   private readonly baseURL: string;
   private readonly getToken: () => string | null;
   private readonly fetchImpl: typeof fetch;
+  private readonly onUnauthorized?: () => void;
 
   constructor(cfg: ClientConfig) {
     this.baseURL = cfg.baseURL.replace(/\/$/, '');
     this.getToken = cfg.getToken ?? (() => null);
+    this.onUnauthorized = cfg.onUnauthorized;
     // The global `fetch` must be invoked with `this` bound to the global
     // object. Storing it on an instance field and calling it as
     // `this.fetchImpl(...)` would set `this` to the Client, which Chrome
@@ -202,6 +235,10 @@ export class Client {
       throw new SdkError(`network request failed: ${detail}`, 0, null);
     }
 
+    // The server stamps every response with X-Request-Id; carry it on any
+    // SdkError so a failure can be correlated to server logs/traces (OBS-1).
+    const requestId = res.headers.get('X-Request-Id');
+
     if (res.status === 204) {
       return undefined as T;
     }
@@ -213,19 +250,55 @@ export class Client {
       if (err instanceof DOMException && err.name === 'AbortError') {
         throw err;
       }
-      throw new SdkError('failed to read the response body', 0, null);
+      throw new SdkError('failed to read the response body', 0, null, requestId);
     }
     const parsed = text ? safeParse(text) : null;
 
     if (!res.ok) {
+      // A 401 means the session is gone or invalid. Notify the app (logout +
+      // redirect) before surfacing the error, so an expired token anywhere
+      // lands the user on /login rather than a broken screen (SEC-3).
+      if (res.status === 401) {
+        this.onUnauthorized?.();
+      }
       const message =
         (parsed && typeof parsed === 'object' && 'error' in parsed
           ? String((parsed as { error: unknown }).error)
           : `HTTP ${res.status}`) ?? `HTTP ${res.status}`;
-      throw new SdkError(message, res.status, parsed);
+      throw new SdkError(message, res.status, parsed, requestId);
+    }
+
+    // Scoped runtime validation: only when an explicit schema was passed
+    // (the curated critical/auth calls). A mismatch is a contract break —
+    // throw an SdkError so it surfaces through the same path as a 5xx.
+    if (opts.schema) {
+      const result = opts.schema.safeParse(parsed);
+      if (!result.success) {
+        throw new SdkError(
+          `response failed schema validation: ${result.error.message}`,
+          0,
+          parsed,
+          requestId,
+        );
+      }
+      return result.data as T;
     }
 
     return parsed as T;
+  }
+
+  /**
+   * Like request, but validates the 2xx body against a runtime schema. Use
+   * ONLY for the curated critical/auth responses (see schemas.ts) — there is
+   * no e2e contract test yet, so blanket validation would risk breaking the
+   * running app on any drift the hand-maintained types missed.
+   */
+  requestValidated<T>(
+    schema: ResponseSchema<T>,
+    path: string,
+    opts: RequestOptions = {},
+  ): Promise<T> {
+    return this.request<T>(path, { ...opts, schema });
   }
 
   // ----------- Platform (operator/IaC, not user sessions) -----------
@@ -259,7 +332,8 @@ export class Client {
   // ----------- Auth -----------
 
   login(req: LoginRequest, signal?: AbortSignal): Promise<LoginResponse> {
-    return this.request<LoginResponse>('/api/v1/auth/login', {
+    // Critical/auth response — runtime-validated (SDK-01).
+    return this.requestValidated<LoginResponse>(loginResponseSchema, '/api/v1/auth/login', {
       method: 'POST',
       body: req,
       unauthenticated: true,
@@ -302,11 +376,15 @@ export class Client {
   // ----------- Me -----------
 
   me(signal?: AbortSignal): Promise<Me> {
-    return this.request<Me>('/api/v1/me', { signal });
+    // Critical/auth response — runtime-validated (SDK-01).
+    return this.requestValidated<Me>(meSchema, '/api/v1/me', { signal });
   }
 
   mePermissions(signal?: AbortSignal): Promise<MePermissions> {
-    return this.request<MePermissions>('/api/v1/me/permissions', { signal });
+    // Critical/auth response — runtime-validated (SDK-01).
+    return this.requestValidated<MePermissions>(mePermissionsSchema, '/api/v1/me/permissions', {
+      signal,
+    });
   }
 
   /** The actor's own current shift + assigned nozzles (attendant console). */

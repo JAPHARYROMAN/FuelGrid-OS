@@ -7,7 +7,23 @@ import type { NextConfig } from 'next';
  */
 const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL ?? '';
 
-const connectSrc = ["'self'", apiOrigin].filter(Boolean).join(' ');
+/**
+ * When Sentry is configured, its browser SDK POSTs events to the ingest host
+ * encoded in the DSN (e.g. https://<key>@o123.ingest.sentry.io/456). Add only
+ * that origin to connect-src — conditionally, so CSP is unchanged (and not
+ * weakened) when no DSN is set. A malformed DSN simply contributes nothing.
+ */
+function sentryConnectSrc(): string {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
+  if (!dsn) return '';
+  try {
+    return new URL(dsn).origin;
+  } catch {
+    return '';
+  }
+}
+
+const connectSrc = ["'self'", apiOrigin, sentryConnectSrc()].filter(Boolean).join(' ');
 
 /**
  * Strict Content-Security-Policy plus hardening headers applied to every

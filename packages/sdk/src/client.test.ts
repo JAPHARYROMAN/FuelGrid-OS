@@ -127,6 +127,90 @@ describe('Client.request', () => {
   });
 });
 
+describe('Client 401 handling + error context (SEC-3, SDK-03/04)', () => {
+  it('invokes onUnauthorized before throwing on a 401', async () => {
+    const onUnauthorized = vi.fn();
+    const f = jsonFetch(401, { error: 'token expired' });
+    const client = new Client({
+      baseURL: 'http://api.test',
+      fetch: f as unknown as typeof fetch,
+      onUnauthorized,
+    });
+    await expect(client.request('/api/v1/me')).rejects.toMatchObject({
+      name: 'SdkError',
+      status: 401,
+    });
+    expect(onUnauthorized).toHaveBeenCalledOnce();
+  });
+
+  it('does not invoke onUnauthorized for non-401 errors', async () => {
+    const onUnauthorized = vi.fn();
+    const f = jsonFetch(403, { error: 'forbidden' });
+    const client = new Client({
+      baseURL: 'http://api.test',
+      fetch: f as unknown as typeof fetch,
+      onUnauthorized,
+    });
+    await expect(client.request('/api/v1/me')).rejects.toMatchObject({ status: 403 });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('carries the X-Request-Id header on the SdkError for correlation', async () => {
+    const f = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'boom' }), {
+          status: 500,
+          headers: { 'X-Request-Id': 'req-abc-123' },
+        }),
+      ),
+    );
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    try {
+      await client.request('/api/v1/thing');
+      expect.unreachable('expected the request to reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(SdkError);
+      expect((err as SdkError).requestId).toBe('req-abc-123');
+    }
+  });
+
+  it('leaves requestId null when the server sent no X-Request-Id', async () => {
+    const f = jsonFetch(500, { error: 'boom' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.request('/api/v1/thing')).rejects.toMatchObject({ requestId: null });
+  });
+
+  it('returns null for an empty 200 body without throwing', async () => {
+    const f = jsonFetch(200); // no body
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.request('/api/v1/thing')).resolves.toBeNull();
+  });
+});
+
+describe('Client scoped runtime validation (SDK-01)', () => {
+  it('passes a valid critical (login) payload through unchanged', async () => {
+    const f = jsonFetch(200, { token: 'tok', expires_at: '2026-01-01T00:00:00Z' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(
+      client.login({ tenant_slug: 'demo', email: 'a@b.c', password: 'pw' }),
+    ).resolves.toEqual({ token: 'tok', expires_at: '2026-01-01T00:00:00Z' });
+  });
+
+  it('rejects a malformed critical (/me) payload with an SdkError', async () => {
+    // user_id missing — the meSchema requires it.
+    const f = jsonFetch(200, { tenant_id: 't1', session_id: 's1', mfa_satisfied: true });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.me()).rejects.toMatchObject({ name: 'SdkError', status: 0 });
+  });
+
+  it('validates only opted-in calls — a plain request is not schema-checked', async () => {
+    // A shape that would fail meSchema, but listStations does not validate.
+    const f = jsonFetch(200, { anything: 'goes' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.request('/api/v1/stations')).resolves.toEqual({ anything: 'goes' });
+  });
+});
+
 describe('Client.request transport errors (SDK-03)', () => {
   it('wraps a network failure as an SdkError with status 0, not a raw TypeError', async () => {
     const f = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));

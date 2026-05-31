@@ -1,5 +1,12 @@
 export { Client, SdkError } from './client';
-export type { ClientConfig } from './client';
+export type { ClientConfig, ResponseSchema } from './client';
+export {
+  loginResponseSchema,
+  meSchema,
+  mePermissionsSchema,
+  permissionItemSchema,
+  pagedEnvelopeSchema,
+} from './schemas';
 export type {
   Account,
   AccountingExport,
