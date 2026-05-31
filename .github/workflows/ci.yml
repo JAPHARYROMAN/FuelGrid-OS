@@ -144,7 +144,7 @@ jobs:
 
       - name: Roll back to zero
         env:
-          MIGRATE_CONFIRM: "1"
+          MIGRATE_CONFIRM: '1'
         run: go run ./services/api/cmd/migrate down-all
 
       - name: Re-apply migrations
