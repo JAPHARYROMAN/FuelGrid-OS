@@ -120,7 +120,10 @@ func (s *Server) handleReceiveDelivery(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		dipMismatch = math.Abs(variance) > req.VolumeLitres*prod.LossTolerancePercent/100
+		// MD boundary: delivery volume input is still a float (inventory wave
+		// owns that). Parse the product's exact-decimal loss tolerance for this
+		// advisory dip-mismatch check only.
+		dipMismatch = math.Abs(variance) > req.VolumeLitres*dispDecimal(prod.LossTolerancePercent)/100
 	}
 
 	tx, err := s.deps.DB.Begin(ctx)

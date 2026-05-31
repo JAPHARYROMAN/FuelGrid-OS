@@ -14,16 +14,18 @@ import (
 )
 
 type Tank struct {
-	ID               uuid.UUID
-	TenantID         uuid.UUID
-	StationID        uuid.UUID
-	ProductID        uuid.UUID
-	Name             string
-	Code             string
-	CapacityLitres   float64
-	SafeMinLitres    float64
-	SafeMaxLitres    float64
-	DeadStockLitres  float64
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	StationID uuid.UUID
+	ProductID uuid.UUID
+	Name      string
+	Code      string
+	// Litre limits are exact decimal STRINGS (numeric(14,3) read ::text);
+	// arithmetic is done in SQL, never Go float64.
+	CapacityLitres   string
+	SafeMinLitres    string
+	SafeMaxLitres    string
+	DeadStockLitres  string
 	HasWaterSensor   bool
 	HasTempSensor    bool
 	Status           string
@@ -38,10 +40,10 @@ type CreateInput struct {
 	ProductID        uuid.UUID
 	Name             string
 	Code             string
-	CapacityLitres   float64
-	SafeMinLitres    float64
-	SafeMaxLitres    float64
-	DeadStockLitres  float64
+	CapacityLitres   string // numeric(14,3), bound $N::numeric
+	SafeMinLitres    string // numeric(14,3)
+	SafeMaxLitres    string // numeric(14,3)
+	DeadStockLitres  string // numeric(14,3)
 	HasWaterSensor   bool
 	HasTempSensor    bool
 	InstallationDate *time.Time
@@ -51,10 +53,10 @@ type UpdateInput struct {
 	ProductID        *uuid.UUID
 	Name             *string
 	Code             *string
-	CapacityLitres   *float64
-	SafeMinLitres    *float64
-	SafeMaxLitres    *float64
-	DeadStockLitres  *float64
+	CapacityLitres   *string // numeric(14,3)
+	SafeMinLitres    *string // numeric(14,3)
+	SafeMaxLitres    *string // numeric(14,3)
+	DeadStockLitres  *string // numeric(14,3)
 	HasWaterSensor   *bool
 	HasTempSensor    *bool
 	Status           *string
@@ -68,7 +70,7 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
     id, tenant_id, station_id, product_id, name, code,
-    capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres,
+    capacity_litres::text, safe_min_litres::text, safe_max_litres::text, dead_stock_litres::text,
     has_water_sensor, has_temp_sensor, status,
     installation_date, decommission_date, created_at, updated_at
 `
@@ -127,7 +129,7 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cre
 		    (tenant_id, station_id, product_id, name, code,
 		     capacity_litres, safe_min_litres, safe_max_litres, dead_stock_litres,
 		     has_water_sensor, has_temp_sensor, installation_date)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, $8::numeric, $9::numeric, $10, $11, $12)
 		RETURNING `+columns,
 		tenantID, in.StationID, in.ProductID, in.Name, in.Code,
 		in.CapacityLitres, in.SafeMinLitres, in.SafeMaxLitres, in.DeadStockLitres,
@@ -145,10 +147,10 @@ func (r *Repo) Update(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in
 		SET product_id        = COALESCE($3,  product_id),
 		    name              = COALESCE($4,  name),
 		    code              = COALESCE($5,  code),
-		    capacity_litres   = COALESCE($6,  capacity_litres),
-		    safe_min_litres   = COALESCE($7,  safe_min_litres),
-		    safe_max_litres   = COALESCE($8,  safe_max_litres),
-		    dead_stock_litres = COALESCE($9,  dead_stock_litres),
+		    capacity_litres   = COALESCE($6::numeric,  capacity_litres),
+		    safe_min_litres   = COALESCE($7::numeric,  safe_min_litres),
+		    safe_max_litres   = COALESCE($8::numeric,  safe_max_litres),
+		    dead_stock_litres = COALESCE($9::numeric,  dead_stock_litres),
 		    has_water_sensor  = COALESCE($10, has_water_sensor),
 		    has_temp_sensor   = COALESCE($11, has_temp_sensor),
 		    status            = COALESCE($12, status),

@@ -17,12 +17,13 @@ import (
 )
 
 type meterReadingDTO struct {
-	ID           uuid.UUID  `json:"id"`
-	TenantID     uuid.UUID  `json:"tenant_id"`
-	ShiftID      uuid.UUID  `json:"shift_id"`
-	NozzleID     uuid.UUID  `json:"nozzle_id"`
-	ReadingType  string     `json:"reading_type"`
-	Reading      float64    `json:"reading"`
+	ID          uuid.UUID `json:"id"`
+	TenantID    uuid.UUID `json:"tenant_id"`
+	ShiftID     uuid.UUID `json:"shift_id"`
+	NozzleID    uuid.UUID `json:"nozzle_id"`
+	ReadingType string    `json:"reading_type"`
+	// Reading is an exact decimal STRING (numeric(14,3)).
+	Reading      string     `json:"reading"`
 	RecordedBy   uuid.UUID  `json:"recorded_by"`
 	RecordedAt   string     `json:"recorded_at"`
 	SupersedesID *uuid.UUID `json:"supersedes_id,omitempty"`
@@ -39,12 +40,13 @@ func toMeterReadingDTO(m *readings.MeterReading) meterReadingDTO {
 }
 
 // dispensedDTO is the per-nozzle litres figure for nozzles that have both an
-// active opening and closing reading.
+// active opening and closing reading. Opening/closing/litres are exact decimal
+// strings; litres_dispensed is computed in SQL numeric (OPS-001).
 type dispensedDTO struct {
 	NozzleID        uuid.UUID `json:"nozzle_id"`
-	Opening         float64   `json:"opening"`
-	Closing         float64   `json:"closing"`
-	LitresDispensed float64   `json:"litres_dispensed"`
+	Opening         string    `json:"opening"`
+	Closing         string    `json:"closing"`
+	LitresDispensed string    `json:"litres_dispensed"`
 }
 
 func (s *Server) handleListMeterReadings(w http.ResponseWriter, r *http.Request) {
@@ -80,36 +82,24 @@ func (s *Server) handleListMeterReadings(w http.ResponseWriter, r *http.Request)
 	}
 
 	items := make([]meterReadingDTO, 0, len(rows))
-	type pair struct{ opening, closing *float64 }
-	byNozzle := map[uuid.UUID]*pair{}
 	for i := range rows {
 		items = append(items, toMeterReadingDTO(&rows[i]))
-		p := byNozzle[rows[i].NozzleID]
-		if p == nil {
-			p = &pair{}
-			byNozzle[rows[i].NozzleID] = p
-		}
-		v := rows[i].Reading
-		if rows[i].ReadingType == "opening" {
-			p.opening = &v
-		} else {
-			p.closing = &v
-		}
 	}
 
-	dispensed := make([]dispensedDTO, 0, len(byNozzle))
-	for nozzleID, p := range byNozzle {
-		if p.opening == nil || p.closing == nil {
-			continue
-		}
-		litres, err := readings.LitresDispensed(*p.opening, *p.closing)
-		if err != nil {
-			// A rolled-back meter shouldn't 500 the whole list; surface the
-			// pair without a computed figure by skipping it.
-			continue
-		}
+	// Litres dispensed (closing - opening) is computed in SQL numeric per
+	// nozzle, never in Go float (OPS-001). Rolled-back meters are excluded by
+	// the query, so a bad pair simply doesn't appear.
+	disp, err := s.readings.DispensedForShift(ctx, actor.TenantID, id)
+	if err != nil {
+		s.logger.Error("dispensed for shift", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	dispensed := make([]dispensedDTO, 0, len(disp))
+	for i := range disp {
 		dispensed = append(dispensed, dispensedDTO{
-			NozzleID: nozzleID, Opening: *p.opening, Closing: *p.closing, LitresDispensed: litres,
+			NozzleID: disp[i].NozzleID, Opening: disp[i].Opening,
+			Closing: disp[i].Closing, LitresDispensed: disp[i].LitresDispensed,
 		})
 	}
 
@@ -119,9 +109,9 @@ func (s *Server) handleListMeterReadings(w http.ResponseWriter, r *http.Request)
 }
 
 type captureMeterReadingRequest struct {
-	NozzleID    uuid.UUID `json:"nozzle_id"`
-	ReadingType string    `json:"reading_type"`
-	Reading     float64   `json:"reading"`
+	NozzleID    uuid.UUID    `json:"nozzle_id"`
+	ReadingType string       `json:"reading_type"`
+	Reading     decimalInput `json:"reading"`
 }
 
 func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +129,8 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "nozzle_id and reading_type (opening|closing) are required")
 		return
 	}
-	if req.Reading < 0 {
-		writeError(w, http.StatusBadRequest, "reading must be non-negative")
+	if !req.Reading.Valid() {
+		writeError(w, http.StatusBadRequest, "reading must be a non-negative decimal")
 		return
 	}
 
@@ -169,7 +159,10 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 	if !s.requireNozzleAssigned(w, ctx, actor, shift.ID, req.NozzleID, override) {
 		return
 	}
-	if err := readings.ValidateScale(req.Reading, nozzle.MeterDecimalPlaces); err != nil {
+	// MD: the reading is stored as an exact decimal string. ValidateScale is a
+	// precision check against the nozzle's meter decimal places; it parses the
+	// decimal for that comparison only (the stored value stays the string).
+	if err := readings.ValidateScale(dispDecimal(req.Reading.String()), nozzle.MeterDecimalPlaces); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "reading has more decimals than the nozzle's meter precision")
 		return
 	}
@@ -183,7 +176,7 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 
 	reading, err := s.readings.Capture(ctx, tx, actor.TenantID, readings.CaptureInput{
 		ShiftID: shift.ID, NozzleID: req.NozzleID, ReadingType: req.ReadingType,
-		Reading: req.Reading, RecordedBy: actor.UserID,
+		Reading: req.Reading.String(), RecordedBy: actor.UserID,
 	})
 	if isUniqueViolation(err) {
 		writeError(w, http.StatusConflict, "a "+req.ReadingType+" reading already exists for this nozzle; correct it instead")
@@ -215,7 +208,7 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 }
 
 type correctMeterReadingRequest struct {
-	Reading float64 `json:"reading"`
+	Reading decimalInput `json:"reading"`
 }
 
 func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Request) {
@@ -234,8 +227,8 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.Reading < 0 {
-		writeError(w, http.StatusBadRequest, "reading must be non-negative")
+	if !req.Reading.Valid() {
+		writeError(w, http.StatusBadRequest, "reading must be a non-negative decimal")
 		return
 	}
 
@@ -274,7 +267,7 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := readings.ValidateScale(req.Reading, nozzle.MeterDecimalPlaces); err != nil {
+	if err := readings.ValidateScale(dispDecimal(req.Reading.String()), nozzle.MeterDecimalPlaces); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "reading has more decimals than the nozzle's meter precision")
 		return
 	}
@@ -296,7 +289,7 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 	}
 	fresh, err := s.readings.Capture(ctx, tx, actor.TenantID, readings.CaptureInput{
 		ShiftID: shift.ID, NozzleID: old.NozzleID, ReadingType: old.ReadingType,
-		Reading: req.Reading, RecordedBy: actor.UserID, SupersedesID: &old.ID,
+		Reading: req.Reading.String(), RecordedBy: actor.UserID, SupersedesID: &old.ID,
 	})
 	if err != nil {
 		s.logger.Error("correct meter reading", "error", err)

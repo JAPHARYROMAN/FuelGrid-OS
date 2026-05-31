@@ -135,8 +135,11 @@ func (s *Server) handleInventoryOverview(w http.ResponseWriter, r *http.Request)
 		// display-only fill % and days-of-stock estimates only.
 		bookF := dispDecimal(book)
 		dto := inventoryTankDTO{Tank: toTankDTO(&tank), BookBalance: book, RecentVariances: []recentVarianceDTO{}}
-		if tank.CapacityLitres > 0 {
-			dto.FillPercent = bookF / tank.CapacityLitres * 100
+		// capacity_litres is an exact-decimal string; parse for the
+		// display-only fill % (same boundary as bookF above).
+		capF := dispDecimal(tank.CapacityLitres)
+		if capF > 0 {
+			dto.FillPercent = bookF / capF * 100
 		}
 		if dailySales > 0 {
 			d := bookF / dailySales

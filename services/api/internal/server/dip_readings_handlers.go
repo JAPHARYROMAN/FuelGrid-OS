@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,13 +19,14 @@ import (
 )
 
 type dipReadingDTO struct {
-	ID           uuid.UUID  `json:"id"`
-	TenantID     uuid.UUID  `json:"tenant_id"`
-	ShiftID      uuid.UUID  `json:"shift_id"`
-	TankID       uuid.UUID  `json:"tank_id"`
-	ReadingType  string     `json:"reading_type"`
-	DipMM        float64    `json:"dip_mm"`
-	VolumeLitres float64    `json:"volume_litres"`
+	ID          uuid.UUID `json:"id"`
+	TenantID    uuid.UUID `json:"tenant_id"`
+	ShiftID     uuid.UUID `json:"shift_id"`
+	TankID      uuid.UUID `json:"tank_id"`
+	ReadingType string    `json:"reading_type"`
+	// DipMM and VolumeLitres are exact decimal STRINGS (both numeric(14,3)).
+	DipMM        string     `json:"dip_mm"`
+	VolumeLitres string     `json:"volume_litres"`
 	WaterMM      *float64   `json:"water_mm,omitempty"`
 	TemperatureC *float64   `json:"temperature_c,omitempty"`
 	ChartID      uuid.UUID  `json:"chart_id"`
@@ -82,33 +84,39 @@ func (s *Server) handleListDipReadings(w http.ResponseWriter, r *http.Request) {
 }
 
 type captureDipRequest struct {
-	TankID       uuid.UUID `json:"tank_id"`
-	ReadingType  string    `json:"reading_type"`
-	DipMM        float64   `json:"dip_mm"`
-	WaterMM      *float64  `json:"water_mm,omitempty"`
-	TemperatureC *float64  `json:"temperature_c,omitempty"`
+	TankID       uuid.UUID    `json:"tank_id"`
+	ReadingType  string       `json:"reading_type"`
+	DipMM        decimalInput `json:"dip_mm"`
+	WaterMM      *float64     `json:"water_mm,omitempty"`
+	TemperatureC *float64     `json:"temperature_c,omitempty"`
 }
 
 // resolveDipVolume looks the dip up against the tank's active chart, mapping
 // the calibration errors to HTTP responses. Returns ok=false after writing.
-func (s *Server) resolveDipVolume(w http.ResponseWriter, r *http.Request, actor identity.Actor, tankID uuid.UUID, dipMM float64) (volume float64, chartID uuid.UUID, ok bool) {
-	volume, chartID, err := s.calibration.Lookup(r.Context(), actor.TenantID, tankID, dipMM)
+//
+// MD boundary: the calibration chart (and its linear interpolation) is float
+// math owned by the calibration domain in a later wave. dipMM is parsed from
+// its exact-decimal string for the lookup, and the resolved volume is formatted
+// back to the dip table's numeric(14,3) text form so the stored figure stays an
+// exact decimal string.
+func (s *Server) resolveDipVolume(w http.ResponseWriter, r *http.Request, actor identity.Actor, tankID uuid.UUID, dipMM string) (volume string, chartID uuid.UUID, ok bool) {
+	vol, chartID, err := s.calibration.Lookup(r.Context(), actor.TenantID, tankID, dispDecimal(dipMM))
 	switch {
 	case errors.Is(err, calibration.ErrNoActiveChart):
 		writeError(w, http.StatusConflict, "tank has no active calibration chart")
-		return 0, uuid.Nil, false
+		return "", uuid.Nil, false
 	case errors.Is(err, calibration.ErrOutOfRange):
 		writeError(w, http.StatusUnprocessableEntity, "dip is outside the chart's range")
-		return 0, uuid.Nil, false
+		return "", uuid.Nil, false
 	case errors.Is(err, calibration.ErrEmptyChart):
 		writeError(w, http.StatusUnprocessableEntity, "the active chart has no entries")
-		return 0, uuid.Nil, false
+		return "", uuid.Nil, false
 	case err != nil:
 		s.logger.Error("dip lookup", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
-		return 0, uuid.Nil, false
+		return "", uuid.Nil, false
 	}
-	return volume, chartID, true
+	return strconv.FormatFloat(vol, 'f', 3, 64), chartID, true
 }
 
 func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request) {
@@ -126,8 +134,8 @@ func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "tank_id and reading_type (opening|closing) are required")
 		return
 	}
-	if req.DipMM < 0 {
-		writeError(w, http.StatusBadRequest, "dip_mm must be non-negative")
+	if !req.DipMM.Valid() {
+		writeError(w, http.StatusBadRequest, "dip_mm must be a non-negative decimal")
 		return
 	}
 
@@ -157,7 +165,7 @@ func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	volume, chartID, ok := s.resolveDipVolume(w, r, actor, req.TankID, req.DipMM)
+	volume, chartID, ok := s.resolveDipVolume(w, r, actor, req.TankID, req.DipMM.String())
 	if !ok {
 		return
 	}
@@ -171,7 +179,7 @@ func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request)
 
 	dip, err := s.readings.CaptureDip(ctx, tx, actor.TenantID, readings.CaptureDipInput{
 		ShiftID: shift.ID, TankID: req.TankID, ReadingType: req.ReadingType,
-		DipMM: req.DipMM, VolumeLitres: volume, WaterMM: req.WaterMM,
+		DipMM: req.DipMM.String(), VolumeLitres: volume, WaterMM: req.WaterMM,
 		TemperatureC: req.TemperatureC, ChartID: chartID, RecordedBy: actor.UserID,
 	})
 	if isUniqueViolation(err) {
@@ -204,9 +212,9 @@ func (s *Server) handleCaptureDipReading(w http.ResponseWriter, r *http.Request)
 }
 
 type correctDipRequest struct {
-	DipMM        float64  `json:"dip_mm"`
-	WaterMM      *float64 `json:"water_mm,omitempty"`
-	TemperatureC *float64 `json:"temperature_c,omitempty"`
+	DipMM        decimalInput `json:"dip_mm"`
+	WaterMM      *float64     `json:"water_mm,omitempty"`
+	TemperatureC *float64     `json:"temperature_c,omitempty"`
 }
 
 func (s *Server) handleCorrectDipReading(w http.ResponseWriter, r *http.Request) {
@@ -225,8 +233,8 @@ func (s *Server) handleCorrectDipReading(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.DipMM < 0 {
-		writeError(w, http.StatusBadRequest, "dip_mm must be non-negative")
+	if !req.DipMM.Valid() {
+		writeError(w, http.StatusBadRequest, "dip_mm must be a non-negative decimal")
 		return
 	}
 
@@ -258,7 +266,7 @@ func (s *Server) handleCorrectDipReading(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	volume, chartID, ok := s.resolveDipVolume(w, r, actor, old.TankID, req.DipMM)
+	volume, chartID, ok := s.resolveDipVolume(w, r, actor, old.TankID, req.DipMM.String())
 	if !ok {
 		return
 	}
@@ -280,7 +288,7 @@ func (s *Server) handleCorrectDipReading(w http.ResponseWriter, r *http.Request)
 	}
 	fresh, err := s.readings.CaptureDip(ctx, tx, actor.TenantID, readings.CaptureDipInput{
 		ShiftID: shift.ID, TankID: old.TankID, ReadingType: old.ReadingType,
-		DipMM: req.DipMM, VolumeLitres: volume, WaterMM: req.WaterMM,
+		DipMM: req.DipMM.String(), VolumeLitres: volume, WaterMM: req.WaterMM,
 		TemperatureC: req.TemperatureC, ChartID: chartID, RecordedBy: actor.UserID,
 		SupersedesID: &old.ID,
 	})

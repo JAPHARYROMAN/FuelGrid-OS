@@ -50,9 +50,10 @@ type purchaseOrderLineDTO struct {
 	TenantID        uuid.UUID `json:"tenant_id"`
 	PurchaseOrderID uuid.UUID `json:"purchase_order_id"`
 	ProductID       uuid.UUID `json:"product_id"`
-	OrderedLitres   float64   `json:"ordered_litres"`
-	UnitPrice       string    `json:"unit_price"`
-	ReceivedLitres  float64   `json:"received_litres"`
+	// Ordered/received litres are exact decimal STRINGS (numeric(14,3)).
+	OrderedLitres  string `json:"ordered_litres"`
+	UnitPrice      string `json:"unit_price"`
+	ReceivedLitres string `json:"received_litres"`
 }
 
 type purchaseOrderDTO struct {
@@ -446,19 +447,22 @@ func (s *Server) handleDeactivateSupplier(w http.ResponseWriter, r *http.Request
 }
 
 type poLineRequest struct {
-	ProductID     uuid.UUID `json:"product_id"`
-	OrderedLitres float64   `json:"ordered_litres"`
-	UnitPrice     string    `json:"unit_price"`
+	ProductID     uuid.UUID    `json:"product_id"`
+	OrderedLitres decimalInput `json:"ordered_litres"`
+	UnitPrice     string       `json:"unit_price"`
 }
 
 func poLineInputs(lines []poLineRequest) ([]procurement.PurchaseOrderLineInput, bool) {
 	out := make([]procurement.PurchaseOrderLineInput, 0, len(lines))
 	for _, ln := range lines {
-		if ln.ProductID == uuid.Nil || ln.OrderedLitres <= 0 || !validDecimal(ln.UnitPrice) {
+		// ordered_litres is an exact decimal string; require a positive value.
+		// The DB CHECK (ordered_litres > 0) is authoritative.
+		if ln.ProductID == uuid.Nil || !ln.OrderedLitres.Valid() ||
+			dispDecimal(ln.OrderedLitres.String()) <= 0 || !validDecimal(ln.UnitPrice) {
 			return nil, false
 		}
 		out = append(out, procurement.PurchaseOrderLineInput{
-			ProductID: ln.ProductID, OrderedLitres: ln.OrderedLitres, UnitPrice: strings.TrimSpace(ln.UnitPrice),
+			ProductID: ln.ProductID, OrderedLitres: ln.OrderedLitres.String(), UnitPrice: strings.TrimSpace(ln.UnitPrice),
 		})
 	}
 	return out, true
@@ -778,7 +782,10 @@ func (s *Server) handleReceivePurchaseOrderReceipt(w http.ResponseWriter, r *htt
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		dipMismatch = abs(variance) > req.VolumeLitres*prod.LossTolerancePercent/100
+		// MD boundary: receipt volume input is still a float (inventory wave owns
+		// that). Parse the product's exact-decimal loss tolerance for this
+		// advisory dip-mismatch check only.
+		dipMismatch = abs(variance) > req.VolumeLitres*dispDecimal(prod.LossTolerancePercent)/100
 	}
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {

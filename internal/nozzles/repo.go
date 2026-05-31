@@ -17,14 +17,16 @@ import (
 )
 
 type Nozzle struct {
-	ID                 uuid.UUID
-	TenantID           uuid.UUID
-	StationID          uuid.UUID
-	PumpID             uuid.UUID
-	TankID             uuid.UUID
-	ProductID          uuid.UUID
-	Number             int
-	DefaultPrice       float64
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	StationID uuid.UUID
+	PumpID    uuid.UUID
+	TankID    uuid.UUID
+	ProductID uuid.UUID
+	Number    int
+	// DefaultPrice is an exact decimal STRING (default_price numeric(14,2) read
+	// ::text); never a Go float64.
+	DefaultPrice       string
 	MeterDecimalPlaces int
 	Status             string
 	CreatedAt          time.Time
@@ -37,7 +39,7 @@ type CreateInput struct {
 	TankID             uuid.UUID
 	ProductID          uuid.UUID
 	Number             int
-	DefaultPrice       float64
+	DefaultPrice       string // numeric(14,2), bound $N::numeric
 	MeterDecimalPlaces int
 }
 
@@ -49,7 +51,7 @@ type UpdateInput struct {
 	StationID          *uuid.UUID
 	ProductID          *uuid.UUID
 	Number             *int
-	DefaultPrice       *float64
+	DefaultPrice       *string // numeric(14,2)
 	MeterDecimalPlaces *int
 	Status             *string
 }
@@ -60,7 +62,7 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
     id, tenant_id, station_id, pump_id, tank_id, product_id, number,
-    default_price, meter_decimal_places, status, created_at, updated_at
+    default_price::text, meter_decimal_places, status, created_at, updated_at
 `
 
 func scan(row pgx.Row, n *Nozzle) error {
@@ -117,7 +119,7 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cre
 		INSERT INTO nozzles
 		    (tenant_id, station_id, pump_id, tank_id, product_id, number,
 		     default_price, meter_decimal_places)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8)
 		RETURNING `+columns,
 		tenantID, in.StationID, in.PumpID, in.TankID, in.ProductID, in.Number,
 		in.DefaultPrice, in.MeterDecimalPlaces,
@@ -135,7 +137,7 @@ func (r *Repo) Update(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in
 		    station_id           = COALESCE($4, station_id),
 		    product_id           = COALESCE($5, product_id),
 		    number               = COALESCE($6, number),
-		    default_price        = COALESCE($7, default_price),
+		    default_price        = COALESCE($7::numeric, default_price),
 		    meter_decimal_places = COALESCE($8, meter_decimal_places),
 		    status               = COALESCE($9, status)
 		WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'

@@ -16,16 +16,17 @@ import (
 )
 
 type nozzleDTO struct {
-	ID                 uuid.UUID `json:"id"`
-	TenantID           uuid.UUID `json:"tenant_id"`
-	StationID          uuid.UUID `json:"station_id"`
-	PumpID             uuid.UUID `json:"pump_id"`
-	TankID             uuid.UUID `json:"tank_id"`
-	ProductID          uuid.UUID `json:"product_id"`
-	Number             int       `json:"number"`
-	DefaultPrice       float64   `json:"default_price"`
-	MeterDecimalPlaces int       `json:"meter_decimal_places"`
-	Status             string    `json:"status"`
+	ID        uuid.UUID `json:"id"`
+	TenantID  uuid.UUID `json:"tenant_id"`
+	StationID uuid.UUID `json:"station_id"`
+	PumpID    uuid.UUID `json:"pump_id"`
+	TankID    uuid.UUID `json:"tank_id"`
+	ProductID uuid.UUID `json:"product_id"`
+	Number    int       `json:"number"`
+	// DefaultPrice is an exact decimal STRING (numeric(14,2)).
+	DefaultPrice       string `json:"default_price"`
+	MeterDecimalPlaces int    `json:"meter_decimal_places"`
+	Status             string `json:"status"`
 }
 
 func toNozzleDTO(n *nozzles.Nozzle) nozzleDTO {
@@ -70,11 +71,11 @@ func (s *Server) handleListNozzles(w http.ResponseWriter, r *http.Request) {
 }
 
 type createNozzleRequest struct {
-	PumpID             uuid.UUID `json:"pump_id"`
-	TankID             uuid.UUID `json:"tank_id"`
-	Number             int       `json:"number"`
-	DefaultPrice       *float64  `json:"default_price,omitempty"`
-	MeterDecimalPlaces *int      `json:"meter_decimal_places,omitempty"`
+	PumpID             uuid.UUID    `json:"pump_id"`
+	TankID             uuid.UUID    `json:"tank_id"`
+	Number             int          `json:"number"`
+	DefaultPrice       decimalInput `json:"default_price,omitempty"`
+	MeterDecimalPlaces *int         `json:"meter_decimal_places,omitempty"`
 }
 
 func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +91,10 @@ func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PumpID == uuid.Nil || req.TankID == uuid.Nil || req.Number <= 0 {
 		writeError(w, http.StatusBadRequest, "pump_id, tank_id, and a positive number are required")
+		return
+	}
+	if req.DefaultPrice.Set() && !req.DefaultPrice.Valid() {
+		writeError(w, http.StatusBadRequest, "default_price must be a non-negative decimal")
 		return
 	}
 	meterDP := 2
@@ -134,10 +139,11 @@ func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Default price falls back to the product's default.
-	price := 0.0
-	if req.DefaultPrice != nil {
-		price = *req.DefaultPrice
+	// Default price (exact decimal string) falls back to the product's default,
+	// then to "0". No float ever touches the price.
+	price := "0"
+	if req.DefaultPrice.Set() {
+		price = req.DefaultPrice.String()
 	} else if product, err := s.products.Get(ctx, actor.TenantID, tank.ProductID); err == nil {
 		price = product.DefaultPrice
 	}
@@ -184,11 +190,11 @@ func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateNozzleRequest struct {
-	TankID             *uuid.UUID `json:"tank_id,omitempty"`
-	Number             *int       `json:"number,omitempty"`
-	DefaultPrice       *float64   `json:"default_price,omitempty"`
-	MeterDecimalPlaces *int       `json:"meter_decimal_places,omitempty"`
-	Status             *string    `json:"status,omitempty"`
+	TankID             *uuid.UUID   `json:"tank_id,omitempty"`
+	Number             *int         `json:"number,omitempty"`
+	DefaultPrice       decimalInput `json:"default_price,omitempty"`
+	MeterDecimalPlaces *int         `json:"meter_decimal_places,omitempty"`
+	Status             *string      `json:"status,omitempty"`
 }
 
 func (s *Server) handleUpdateNozzle(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +221,10 @@ func (s *Server) handleUpdateNozzle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "meter_decimal_places must be between 0 and 4")
 		return
 	}
+	if req.DefaultPrice.Set() && !req.DefaultPrice.Valid() {
+		writeError(w, http.StatusBadRequest, "default_price must be a non-negative decimal")
+		return
+	}
 
 	ctx := r.Context()
 	before, err := s.nozzles.Get(ctx, actor.TenantID, id)
@@ -232,7 +242,7 @@ func (s *Server) handleUpdateNozzle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := nozzles.UpdateInput{
-		Number: req.Number, DefaultPrice: req.DefaultPrice,
+		Number: req.Number, DefaultPrice: req.DefaultPrice.Ptr(),
 		MeterDecimalPlaces: req.MeterDecimalPlaces, Status: req.Status,
 	}
 

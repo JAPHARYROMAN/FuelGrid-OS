@@ -12,13 +12,16 @@ import (
 // DipReading is one captured opening/closing tank dip. The litre volume and
 // the chart that resolved it are snapshotted at capture time.
 type DipReading struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	ShiftID      uuid.UUID
-	TankID       uuid.UUID
-	ReadingType  string
-	DipMM        float64
-	VolumeLitres float64
+	ID          uuid.UUID
+	TenantID    uuid.UUID
+	ShiftID     uuid.UUID
+	TankID      uuid.UUID
+	ReadingType string
+	// DipMM and VolumeLitres are exact decimal STRINGS (both numeric(14,3) read
+	// ::text); never Go float64. water_mm/temperature_c stay float pointers
+	// (sensor metadata, not ledger figures).
+	DipMM        string
+	VolumeLitres string
 	WaterMM      *float64
 	TemperatureC *float64
 	ChartID      uuid.UUID
@@ -34,8 +37,8 @@ type CaptureDipInput struct {
 	ShiftID      uuid.UUID
 	TankID       uuid.UUID
 	ReadingType  string
-	DipMM        float64
-	VolumeLitres float64
+	DipMM        string // numeric(14,3), bound $N::numeric
+	VolumeLitres string // numeric(14,3), bound $N::numeric
 	WaterMM      *float64
 	TemperatureC *float64
 	ChartID      uuid.UUID
@@ -46,7 +49,7 @@ type CaptureDipInput struct {
 var ErrDipNotFound = errors.New("readings: dip reading not found")
 
 const dipColumns = `
-    id, tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres,
+    id, tenant_id, shift_id, tank_id, reading_type, dip_mm::text, volume_litres::text,
     water_mm, temperature_c, chart_id, recorded_by, recorded_at,
     supersedes_id, status, created_at, updated_at
 `
@@ -114,7 +117,7 @@ func (r *Repo) CaptureDip(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in
 		INSERT INTO tank_dip_readings
 		    (tenant_id, shift_id, tank_id, reading_type, dip_mm, volume_litres,
 		     water_mm, temperature_c, chart_id, recorded_by, supersedes_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5::numeric, $6::numeric, $7, $8, $9, $10, $11)
 		RETURNING `+dipColumns,
 		tenantID, in.ShiftID, in.TankID, in.ReadingType, in.DipMM, in.VolumeLitres,
 		in.WaterMM, in.TemperatureC, in.ChartID, in.RecordedBy, in.SupersedesID,
@@ -160,7 +163,7 @@ func (r *Repo) ClosingDipForTankDay(ctx context.Context, tenantID, tankID, opera
 
 // prefixedDipColumns is dipColumns qualified to the d alias for joins.
 const prefixedDipColumns = `
-    d.id, d.tenant_id, d.shift_id, d.tank_id, d.reading_type, d.dip_mm, d.volume_litres,
+    d.id, d.tenant_id, d.shift_id, d.tank_id, d.reading_type, d.dip_mm::text, d.volume_litres::text,
     d.water_mm, d.temperature_c, d.chart_id, d.recorded_by, d.recorded_at,
     d.supersedes_id, d.status, d.created_at, d.updated_at
 `

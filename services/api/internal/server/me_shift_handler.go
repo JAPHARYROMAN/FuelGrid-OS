@@ -84,7 +84,9 @@ func (s *Server) handleMyActiveShift(w http.ResponseWriter, r *http.Request) {
 			e = &ends{}
 			byNozzle[meterRows[i].NozzleID] = e
 		}
-		v := meterRows[i].Reading
+		// MD boundary: the attendant /me/shift view exposes readings as JSON
+		// numbers; parse the exact-decimal string for that display only.
+		v := dispDecimal(meterRows[i].Reading)
 		if meterRows[i].ReadingType == "opening" {
 			e.opening = &v
 		} else {
@@ -139,13 +141,19 @@ func (s *Server) handleMyActiveShift(w http.ResponseWriter, r *http.Request) {
 		seenTank[d.TankID] = true
 		td := myTankDTO{TankID: d.TankID, TankCode: d.TankCode, ProductColor: d.ProductColor}
 		if e := dipByTank[d.TankID]; e != nil {
+			// MD boundary: the attendant /me/shift view exposes dips as JSON
+			// numbers; parse the exact-decimal strings for that display only.
 			if e.opening != nil {
-				td.OpeningDipMM = &e.opening.DipMM
-				td.OpeningVolume = &e.opening.VolumeLitres
+				od := dispDecimal(e.opening.DipMM)
+				ov := dispDecimal(e.opening.VolumeLitres)
+				td.OpeningDipMM = &od
+				td.OpeningVolume = &ov
 			}
 			if e.closing != nil {
-				td.ClosingDipMM = &e.closing.DipMM
-				td.ClosingVolume = &e.closing.VolumeLitres
+				cd := dispDecimal(e.closing.DipMM)
+				cv := dispDecimal(e.closing.VolumeLitres)
+				td.ClosingDipMM = &cd
+				td.ClosingVolume = &cv
 			}
 		}
 		tanks = append(tanks, td)

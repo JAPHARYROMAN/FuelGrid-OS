@@ -240,7 +240,10 @@ func (s *Server) handleUploadCalibrationChart(w http.ResponseWriter, r *http.Req
 	// tolerance absorbs rounding / ullage). entries is sorted ascending, so
 	// the last row carries the max volume.
 	maxVolume := entries[len(entries)-1].VolumeLitres
-	if maxVolume > tank.CapacityLitres*chartCapacityTolerance {
+	// MD boundary: calibration chart entries are floats (calibration domain owns
+	// them, a later wave). Parse the tank's exact-decimal capacity for this
+	// chart-vs-capacity sanity check only.
+	if maxVolume > dispDecimal(tank.CapacityLitres)*chartCapacityTolerance {
 		writeError(w, http.StatusUnprocessableEntity, "chart maximum volume exceeds the tank's capacity")
 		return
 	}
