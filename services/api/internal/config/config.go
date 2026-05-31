@@ -112,6 +112,20 @@ func (c Config) validate() error {
 			return fmt.Errorf("config: API_CORS_ALLOWED_ORIGINS entry %q must be an explicit https:// origin outside development", o)
 		}
 	}
+	// Outside development the API must run RLS-enforced: request-scoped queries
+	// go through the non-owner fuelgrid_app pool (DATABASE_APP_URL) so Postgres
+	// row-level security isolates each tenant. Running on the table-owner pool
+	// (DATABASE_URL) bypasses RLS entirely (INFRA-01/AUTH-25), so refuse to
+	// start that way. Only enforced when a database is configured at all (a
+	// thin smoke deployment with no DATABASE_URL is exempt).
+	if c.DatabaseURL != "" {
+		switch c.DatabaseAppURL {
+		case "":
+			return fmt.Errorf("config: DATABASE_APP_URL is required outside development — point it at the non-owner fuelgrid_app role so Postgres RLS enforces tenant isolation; the API must not run request queries on the table-owner pool")
+		case c.DatabaseURL:
+			return fmt.Errorf("config: DATABASE_APP_URL must use the non-owner fuelgrid_app role, distinct from DATABASE_URL (the table owner)")
+		}
+	}
 	return nil
 }
 
