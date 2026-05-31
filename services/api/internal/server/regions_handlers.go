@@ -46,17 +46,25 @@ func (s *Server) handleListRegions(w http.ResponseWriter, r *http.Request) {
 		}
 		companyID = &id
 	}
-	rows, err := s.regions.List(r.Context(), actor.TenantID, companyID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.regions.ListPage(r.Context(), actor.TenantID, companyID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list regions", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]regionDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toRegionDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type createRegionRequest struct {

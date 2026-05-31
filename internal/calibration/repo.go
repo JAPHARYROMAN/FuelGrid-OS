@@ -71,6 +71,33 @@ func (r *Repo) ListCharts(ctx context.Context, tenantID, tankID uuid.UUID) ([]Ch
 	return out, rows.Err()
 }
 
+// ListChartsPage mirrors ListCharts with limit/offset paging and a stable
+// (effective_from DESC, id) ordering. Callers fetch limit+1 to detect a further
+// page.
+func (r *Repo) ListChartsPage(ctx context.Context, tenantID, tankID uuid.UUID, limit, offset int) ([]Chart, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+chartColumns+`
+		FROM tank_calibration_charts c
+		WHERE c.tenant_id = $1 AND c.tank_id = $2
+		ORDER BY c.effective_from DESC, c.id
+		LIMIT $3 OFFSET $4
+	`, tenantID, tankID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Chart
+	for rows.Next() {
+		var c Chart
+		if err := scanChart(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // ActiveChart returns the tank's current active chart, or pgx.ErrNoRows.
 func (r *Repo) ActiveChart(ctx context.Context, tenantID, tankID uuid.UUID) (*Chart, error) {
 	var c Chart

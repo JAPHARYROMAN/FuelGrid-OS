@@ -100,6 +100,32 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID) ([]Product, error) 
 	return out, rows.Err()
 }
 
+// ListPage mirrors List with limit/offset paging and a stable (name, id)
+// ordering. Callers fetch limit+1 to detect a further page.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Product, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM products
+		WHERE tenant_id = $1 AND status <> 'deleted'
+		ORDER BY name, id
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Product
+	for rows.Next() {
+		var p Product
+		if err := scan(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Product, error) {
 	var p Product
 	if err := scan(r.pool.QueryRow(ctx, `

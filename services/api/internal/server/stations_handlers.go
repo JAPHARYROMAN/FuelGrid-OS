@@ -66,17 +66,25 @@ func (s *Server) handleListStations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.stations.List(r.Context(), actor.TenantID, regionID, filter)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.stations.ListPage(r.Context(), actor.TenantID, regionID, filter, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list stations", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]stationDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toStationDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // handleGetStation replaces the Stage-5 inline handler. Same contract.

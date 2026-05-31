@@ -67,17 +67,25 @@ func (s *Server) handleListIncidents(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("severity"); v != "" {
 		f.Severity = &v
 	}
-	rows, err := s.incidents.List(r.Context(), actor.TenantID, f)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.incidents.ListPage(r.Context(), actor.TenantID, f, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list incidents", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]incidentDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toIncidentDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type createIncidentRequest struct {

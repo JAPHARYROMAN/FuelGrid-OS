@@ -99,17 +99,25 @@ func (s *Server) handleListPumps(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.pumps.List(r.Context(), actor.TenantID, filter)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.pumps.ListPage(r.Context(), actor.TenantID, filter, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list pumps", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]pumpDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toPumpDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetPump(w http.ResponseWriter, r *http.Request) {
@@ -441,17 +449,25 @@ func (s *Server) handleListPumpCalibrations(w http.ResponseWriter, r *http.Reque
 	if !s.authorizeStation(w, r, actor, "station.read", pump.StationID) {
 		return
 	}
-	rows, err := s.pumps.ListCalibrations(r.Context(), actor.TenantID, id)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.pumps.ListCalibrationsPage(r.Context(), actor.TenantID, id, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list pump calibrations", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]pumpCalibrationDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toPumpCalibrationDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type createPumpCalibrationRequest struct {

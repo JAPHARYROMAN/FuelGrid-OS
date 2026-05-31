@@ -95,6 +95,36 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, f ListFilter) ([]In
 	return out, rows.Err()
 }
 
+// ListPage mirrors List (same filter) with limit/offset paging and a stable
+// (opened_at DESC, id) ordering. Callers fetch limit+1 to detect a further
+// page.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, f ListFilter, limit, offset int) ([]Incident, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM incidents
+		WHERE tenant_id = $1
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
+		  AND ($3::text IS NULL OR status = $3)
+		  AND ($4::text IS NULL OR severity = $4)
+		ORDER BY opened_at DESC, id
+		LIMIT $5 OFFSET $6
+	`, tenantID, database.UUIDStrings(f.StationIDs), f.Status, f.Severity, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Incident
+	for rows.Next() {
+		var i Incident
+		if err := scan(rows, &i); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
 // ListActiveForStation returns a station's unresolved incidents (anything
 // not yet resolved or closed), newest first — the set the station dashboard
 // surfaces.
