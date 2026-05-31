@@ -69,6 +69,48 @@ Today's CI ([.github/workflows/ci.yml](../.github/workflows/ci.yml)):
 
 Stage-10 addition: **on push to `main`**, the image is also tagged with the commit SHA. Pushing to a registry is added with the first deploy.
 
+## Continuous Deployment (CICD-4 / OPS-5)
+
+The CD pipeline lives in [.github/workflows/deploy.yml](../.github/workflows/deploy.yml). It is a **separate** workflow from CI and runs on push to `main` and on `v*` tags, single-flight per ref (`concurrency: deploy-<ref>`, `cancel-in-progress: false` so a migration is never interrupted mid-flight).
+
+It is intentionally a **safe no-op until the deployment secrets are configured** — the workflow is lint-valid and runnable today; the migrate and smoke jobs skip cleanly when their secrets are absent.
+
+### Jobs
+
+1. **build-push** — builds `services/api/Dockerfile` and **pushes to GHCR** at `ghcr.io/<owner>/<repo>-api` (lowercased), via `docker/build-push-action`. Tags:
+   - `sha-<full-sha>` — immutable handle for every build.
+   - `latest` — only on `main` branch pushes.
+   - `<tag>` — the git tag name on `v*` tag pushes (e.g. `v1.2.3`).
+
+   GHCR auth is automatic: `docker/login-action` uses the built-in `GITHUB_TOKEN` with `packages: write` permission — **no manually-created registry secret is needed**.
+
+2. **migrate** — runs `go run ./services/api/cmd/migrate up` (the project's golang-migrate v4 wrapper) against `${{ secrets.DATABASE_URL }}`. Guarded: if `DATABASE_URL` is unset the job no-ops (emits a `::notice::` and skips). `up` is idempotent (`ErrNoChange` → success).
+
+3. **smoke** — curls the deployed `/readyz` (`${{ secrets.DEPLOY_HEALTH_URL }}`) and **fails the deploy unless it returns `200` with `{"status":"ready"}`** (i.e. postgres + redis checks pass). Polls up to 30× with 5s backoff. Guarded the same way: if `DEPLOY_HEALTH_URL` is unset the gate no-ops.
+
+All three jobs use `environment: production`, so GitHub Environment protection rules (required reviewers, wait timers, branch restrictions) apply when configured in repo settings.
+
+### Required secrets / configuration
+
+| Name | Where | Purpose | Behavior if unset |
+|---|---|---|---|
+| `GITHUB_TOKEN` | automatic (no setup) | Push the image to GHCR | Always present |
+| `DATABASE_URL` | repo/environment secret | Target DB for `migrate up` (e.g. `postgres://...?sslmode=require`) | migrate job no-ops |
+| `DEPLOY_HEALTH_URL` | repo/environment secret | Full URL of the deployed `/readyz` (e.g. `https://api.example.com/readyz`) | smoke gate no-ops |
+
+Add the secrets under **Settings → Secrets and variables → Actions** (or scope them to the `production` Environment). Until both are set the pipeline still builds and publishes the image but does not touch a database or assert on a live endpoint.
+
+### Deploy flow
+
+```
+push to main / v* tag
+  → build-push  (image → GHCR: :sha-…, :latest | :<tag>)
+  → migrate     (golang-migrate up @ DATABASE_URL; gated)
+  → smoke       (curl /readyz @ DEPLOY_HEALTH_URL must be 200; gated)
+```
+
+The actual rollout (pulling the new GHCR image onto the runtime, e.g. `flyctl deploy --image …`) is wired between the `migrate` and `smoke` jobs when the runtime target is provisioned; the migrate-then-smoke ordering already encodes the online-migration discipline (schema first, health-assert last).
+
 ## Environment variables in production
 
 Every value in [.env.example](../.env.example) is set via Fly secrets:
@@ -131,8 +173,8 @@ Once applied, `main` cannot be pushed to directly; PRs must pass all four checks
 ## Defer list
 
 - Actual `fly.toml` files for api + web.
-- `.github/workflows/deploy.yml` calling `flyctl deploy`.
-- Pushing images to GHCR / Fly's registry.
+- The `flyctl deploy --image ghcr.io/...` rollout step (the CD pipeline already builds + pushes the image and runs migrations; only the runtime rollout is deferred).
+- Configuring the `DATABASE_URL` / `DEPLOY_HEALTH_URL` secrets (the pipeline no-ops cleanly until they exist).
 - Replication / read-replica config on Fly Postgres.
 
 These land alongside the first real customer onboarding, not in Phase 1.
