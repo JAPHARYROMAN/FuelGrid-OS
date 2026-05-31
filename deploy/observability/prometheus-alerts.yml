@@ -31,11 +31,11 @@ groups:
           severity: critical
           service: api
         annotations:
-          summary: "API 5xx error ratio above 2% (current: {{ $value | humanizePercentage }})"
+          summary: 'API 5xx error ratio above 2% (current: {{ $value | humanizePercentage }})'
           description: >
             More than 2% of HTTP responses are 5xx over the last 5 minutes.
             This burns the availability error budget. See runbook.
-          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/api-5xx.md"
+          runbook_url: 'https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/api-5xx.md'
 
       - alert: ApiReadinessFailing
         # The /readyz probe returns 503 when a backing dep (Postgres/Redis)
@@ -50,12 +50,12 @@ groups:
           severity: critical
           service: api
         annotations:
-          summary: "API readiness probe failing or target down"
+          summary: 'API readiness probe failing or target down'
           description: >
             The API is either unreachable to the scraper (up == 0) or its
             /readyz probe is returning 503, meaning a backing dependency
             (Postgres or Redis) is unhealthy.
-          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/db-unavailable.md"
+          runbook_url: 'https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/db-unavailable.md'
 
   - name: fuelgrid-api-latency
     rules:
@@ -72,12 +72,12 @@ groups:
           severity: warning
           service: api
         annotations:
-          summary: "API p99 latency above 750ms (current: {{ $value | humanizeDuration }})"
+          summary: 'API p99 latency above 750ms (current: {{ $value | humanizeDuration }})'
           description: >
             The 99th percentile request latency has exceeded the 750ms SLO
             objective for 10 minutes. Investigate slow downstream calls,
             DB pool contention, or saturation.
-          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/api-5xx.md"
+          runbook_url: 'https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/api-5xx.md'
 
   - name: fuelgrid-database
     rules:
@@ -95,12 +95,12 @@ groups:
           severity: warning
           service: api
         annotations:
-          summary: "DB connection pool above 90% saturation"
+          summary: 'DB connection pool above 90% saturation'
           description: >
             Acquired connections are above 90% of the configured pool max
             for 5 minutes. New requests will block on connection acquisition,
             inflating latency. Investigate slow queries or undersized pool.
-          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/db-unavailable.md"
+          runbook_url: 'https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/db-unavailable.md'
 
   - name: fuelgrid-outbox
     rules:
@@ -114,11 +114,11 @@ groups:
           severity: warning
           service: outbox
         annotations:
-          summary: "Outbox backlog above 500 unpublished events"
+          summary: 'Outbox backlog above 500 unpublished events'
           description: >
             More than 500 outbox events have not been published for 10
             minutes. Downstream consumers are not receiving domain events.
-          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/outbox-stuck.md"
+          runbook_url: 'https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/outbox-stuck.md'
 
       - alert: OutboxPublisherStalled
         expr: |
@@ -128,9 +128,9 @@ groups:
           severity: critical
           service: outbox
         annotations:
-          summary: "Oldest unpublished outbox event older than 5 minutes"
+          summary: 'Oldest unpublished outbox event older than 5 minutes'
           description: >
             The oldest unpublished outbox row is more than 300s old, meaning
             the publisher loop has effectively stalled rather than merely
             falling behind on volume.
-          runbook_url: "https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/outbox-stuck.md"
+          runbook_url: 'https://github.com/japharyroman/fuelgrid-os/blob/main/docs/runbooks/outbox-stuck.md'
