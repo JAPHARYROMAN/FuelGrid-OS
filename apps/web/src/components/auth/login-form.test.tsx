@@ -31,15 +31,17 @@ describe('LoginForm', () => {
   beforeEach(() => {
     replace.mockClear();
     login.mockReset();
-    useAuthStore.setState({ token: null, expiresAt: null });
+    useAuthStore.setState({ authed: false, expiresAt: null });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('submits credentials, stores the session, and redirects on success', async () => {
-    login.mockResolvedValue({ token: 'tok-abc', expires_at: '2030-01-01T00:00:00Z' });
+  it('submits credentials, records the session hint, and redirects on success', async () => {
+    // The BFF strips the token from the login response — the client only sees
+    // { mfa_required, expires_at }. Success is "not mfa_required".
+    login.mockResolvedValue({ mfa_required: false, expires_at: '2030-01-01T00:00:00Z' });
     const user = userEvent.setup();
 
     render(<LoginForm />);
@@ -55,7 +57,8 @@ describe('LoginForm', () => {
         }),
       );
     });
-    expect(useAuthStore.getState().token).toBe('tok-abc');
+    expect(useAuthStore.getState().authed).toBe(true);
+    expect(useAuthStore.getState().expiresAt).toBe('2030-01-01T00:00:00Z');
     expect(replace).toHaveBeenCalledWith('/command-center');
   });
 
@@ -69,7 +72,7 @@ describe('LoginForm', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Invalid tenant, email, or password.');
-    expect(useAuthStore.getState().token).toBeNull();
+    expect(useAuthStore.getState().authed).toBe(false);
     expect(replace).not.toHaveBeenCalled();
   });
 });

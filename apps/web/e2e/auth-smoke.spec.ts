@@ -1,23 +1,27 @@
 import { test, expect, type Page } from '@playwright/test';
 
 /**
- * Auth flow e2e smoke (QA-7 / CICD-3).
+ * Auth flow e2e smoke (QA-7 / CICD-3) — httpOnly-cookie BFF (WEB-001 / Wave-10).
  *
- * The BACKEND IS NEVER REAL: every `/api/**` call is intercepted with
- * Playwright route mocking, so this runs in CI with no Postgres/Redis/API.
- * It exercises the three load-bearing auth transitions end-to-end through the
- * real Next.js production bundle:
+ * The BACKEND IS NEVER REAL. The browser now talks to the same-origin BFF proxy
+ * (`/api/bff/**`) instead of the Go API directly, so the mocks intercept those
+ * proxy URLs. The proxy normally forwards server-side and moves the token into
+ * an httpOnly cookie; here the mock short-circuits that by returning the
+ * already-stripped body PLUS a `Set-Cookie: fg_session=...; HttpOnly` header,
+ * exactly as the real proxy would. The three load-bearing transitions:
  *
  *   1. unauthenticated visit to a protected route -> redirect to /login
- *   2. successful login (mock 200 + token, then mock /me) -> command center
+ *      (Next middleware reads the httpOnly `fg_session` cookie, absent -> bounce)
+ *   2. successful login (mock 200 + Set-Cookie, then mock /me) -> command center
  *   3. a 401 on a protected fetch -> session-expiry redirect back to /login
+ *      (the BFF clears the cookie on 401; the SDK backstop clears the client
+ *       hint + redirects)
  *
- * The session contract under test (see stores/auth-store.ts + middleware.ts):
- *   - login success sets the non-httpOnly `fg_authed=1` presence cookie that
- *     the Next middleware reads to server-side gate protected routes, and the
- *     token in localStorage that the SDK client attaches to API calls;
- *   - any 401 from the SDK transport clears that session and bounces to
- *     /login (the SEC-3 logout backstop in lib/api.ts).
+ * The session contract under test:
+ *   - the token lives ONLY in the httpOnly `fg_session` cookie — never in
+ *     localStorage and never in a client-readable cookie;
+ *   - the non-sensitive `authed` hint in localStorage drives the client guards;
+ *   - any 401 from the SDK transport clears the session and bounces to /login.
  */
 
 const LOGIN = {
@@ -26,7 +30,7 @@ const LOGIN = {
   password: 'fuelgrid-demo-password-1234',
 };
 
-const TOKEN = 'e2e-mock-session-token';
+const SESSION = 'e2e-mock-session-token';
 
 /** A /me body that satisfies the SDK's runtime meSchema (SDK-01). */
 const ME_BODY = {
@@ -36,15 +40,22 @@ const ME_BODY = {
   mfa_satisfied: true,
 };
 
-/** Mock the login endpoint to return a 200 with a token (no MFA). */
+/**
+ * Mock the BFF login endpoint. The real proxy strips the token from the body
+ * and sets it in an httpOnly cookie; we reproduce both: the body carries no
+ * token, and a Set-Cookie plants `fg_session` as HttpOnly so the Next
+ * middleware (which runs server-side) gates protected routes on it.
+ */
 async function mockLoginSuccess(page: Page) {
-  await page.route('**/api/v1/auth/login', async (route) => {
+  await page.route('**/api/bff/api/v1/auth/login', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      headers: { 'X-Request-Id': 'e2e-login' },
+      headers: {
+        'X-Request-Id': 'e2e-login',
+        'Set-Cookie': `fg_session=${SESSION}; Path=/; HttpOnly; SameSite=Lax`,
+      },
       body: JSON.stringify({
-        token: TOKEN,
         expires_at: '2099-01-01T00:00:00Z',
         mfa_required: false,
       }),
@@ -62,7 +73,7 @@ async function submitLogin(page: Page) {
 
 test.describe('auth smoke', () => {
   test('unauthenticated visit to a protected route redirects to /login', async ({ page }) => {
-    // No fg_authed cookie -> Next middleware should server-side redirect.
+    // No fg_session cookie -> Next middleware should server-side redirect.
     await page.goto('/command-center');
 
     await expect(page).toHaveURL(/\/login(\?|$)/);
@@ -74,8 +85,8 @@ test.describe('auth smoke', () => {
 
   test('successful login lands on the command center', async ({ page }) => {
     await mockLoginSuccess(page);
-    // The command center fetches /me on mount; return a schema-valid body.
-    await page.route('**/api/v1/me', async (route) => {
+    // The command center fetches /me on mount via the BFF; return a valid body.
+    await page.route('**/api/bff/api/v1/me', async (route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -93,9 +104,21 @@ test.describe('auth smoke', () => {
     // /me resolved -> the Session card renders the mocked identity.
     await expect(page.getByText(ME_BODY.user_id)).toBeVisible();
 
-    // The presence cookie the middleware relies on was set by login.
+    // The session token lives in an httpOnly cookie — present, and NOT
+    // exposed to client JS.
     const cookies = await page.context().cookies();
-    expect(cookies.find((c) => c.name === 'fg_authed')?.value).toBe('1');
+    const session = cookies.find((c) => c.name === 'fg_session');
+    expect(session?.value).toBe(SESSION);
+    expect(session?.httpOnly).toBe(true);
+    // It must never be readable from document.cookie.
+    const readable = await page.evaluate(() => document.cookie);
+    expect(readable).not.toContain('fg_session');
+    // And the legacy localStorage token must be gone entirely.
+    const lsToken = await page.evaluate(() => {
+      const raw = window.localStorage.getItem('fuelgrid.auth');
+      return raw ?? '';
+    });
+    expect(lsToken).not.toContain(SESSION);
   });
 
   test('a 401 on a protected fetch forces redirect back to /login (session expiry)', async ({
@@ -105,7 +128,7 @@ test.describe('auth smoke', () => {
 
     // First /me succeeds so login lands on the command center...
     let meCalls = 0;
-    await page.route('**/api/v1/me', async (route) => {
+    await page.route('**/api/bff/api/v1/me', async (route) => {
       meCalls += 1;
       if (meCalls === 1) {
         await route.fulfill({
@@ -115,11 +138,13 @@ test.describe('auth smoke', () => {
         });
         return;
       }
-      // ...then the session "expires": a later /me returns 401, which the SDK
-      // transport turns into a logout + redirect to /login (SEC-3).
+      // ...then the session "expires": a later /me returns 401. The real BFF
+      // also clears the cookie on a 401; reproduce that with an expiring
+      // Set-Cookie so the middleware no longer sees a session.
       await route.fulfill({
         status: 401,
         contentType: 'application/json',
+        headers: { 'Set-Cookie': 'fg_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' },
         body: JSON.stringify({ error: 'unauthorized' }),
       });
     });
@@ -128,16 +153,15 @@ test.describe('auth smoke', () => {
     await submitLogin(page);
     await expect(page).toHaveURL(/\/command-center(\?|$)/);
 
-    // Force a re-fetch of /me (now 401). React Query refetches on window focus;
-    // a navigation back into the route re-runs the query.
+    // Force a re-fetch of /me (now 401): a reload re-runs the query.
     await page.evaluate(() => window.location.reload());
 
     // The 401 backstop clears the session and bounces to /login.
     await expect(page).toHaveURL(/\/login(\?|$)/);
     await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
 
-    // Session was cleared: the presence cookie is gone.
+    // Session was cleared: the httpOnly cookie is gone.
     const cookies = await page.context().cookies();
-    expect(cookies.find((c) => c.name === 'fg_authed')?.value).not.toBe('1');
+    expect(cookies.find((c) => c.name === 'fg_session')?.value).toBeFalsy();
   });
 });

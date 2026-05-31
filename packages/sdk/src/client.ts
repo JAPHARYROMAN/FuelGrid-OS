@@ -221,7 +221,12 @@ export class Client {
         headers,
         body,
         signal: opts.signal,
-        credentials: 'omit',
+        // same-origin so the httpOnly session cookie travels to a same-origin
+        // BFF proxy (WEB-001): the web app points the base URL at /api/bff and
+        // the proxy reads the cookie server-side. For a cross-origin base URL
+        // this behaves like 'omit' (no credentials sent), preserving the prior
+        // header-only contract for any direct-to-API consumer.
+        credentials: 'same-origin',
       });
     } catch (err) {
       // A deliberate cancellation propagates unchanged so callers (and React
