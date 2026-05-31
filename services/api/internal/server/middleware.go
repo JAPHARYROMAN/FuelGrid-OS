@@ -6,11 +6,50 @@ import (
 	"strings"
 	"time"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 )
+
+// captureErrors reports server faults to Sentry with request context. It sits
+// immediately inside Recoverer (registered right after it): on a panic it
+// captures the exception to Sentry, flushes, then re-panics so Recoverer still
+// turns it into a clean 500; on a normal 5xx response it captures a message.
+// Every event is tagged with the request id and matched route for correlation.
+// A blank Sentry DSN leaves CurrentHub clientless, so capture is a safe no-op —
+// no guard or config flag needed (OBS-3). 4xx and below are never captured.
+func (s *Server) captureErrors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hub := sentry.CurrentHub().Clone()
+		reqID := chimiddleware.GetReqID(r.Context())
+		hub.ConfigureScope(func(scope *sentry.Scope) {
+			scope.SetTag("request_id", reqID)
+			scope.SetTag("http.method", r.Method)
+			scope.SetContext("request", map[string]any{"method": r.Method, "path": r.URL.Path})
+		})
+
+		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		defer func() {
+			if rec := recover(); rec != nil {
+				hub.ConfigureScope(func(scope *sentry.Scope) { scope.SetTag("http.route", routePattern(r)) })
+				hub.RecoverWithContext(r.Context(), rec)
+				hub.Flush(2 * time.Second)
+				panic(rec) // let Recoverer produce the 500 response
+			}
+			if ww.Status() >= 500 {
+				hub.WithScope(func(scope *sentry.Scope) {
+					scope.SetLevel(sentry.LevelError)
+					scope.SetTag("http.route", routePattern(r))
+					scope.SetTag("http.status", strconv.Itoa(ww.Status()))
+					hub.CaptureMessage("HTTP " + strconv.Itoa(ww.Status()) + " " + r.Method + " " + routePattern(r))
+				})
+			}
+		}()
+		next.ServeHTTP(ww, r)
+	})
+}
 
 // echoRequestID copies the chi-generated request ID into the X-Request-Id
 // response header so clients can quote it in bug reports and we can grep
