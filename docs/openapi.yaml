@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: FuelGrid OS API
-  version: 0.1.0
+  version: 0.9.0
   description: |
     Hand-maintained spec for the FuelGrid OS API surface. Kept in
     lockstep with the Go handlers by review until Stage 11+ wires
@@ -54,6 +54,44 @@ tags:
     description: Per-shift meter + tank-dip readings (append-only)
   - name: Operations
     description: Attendant console + supervisor operations dashboard
+  - name: Inventory
+    description: Tank ledgers, book balances, deliveries, stock transfers
+  - name: Reconciliation
+    description: Tank + cash reconciliation, adjustments, sealing
+  - name: Revenue
+    description: Revenue days, sales, payments, payment reconciliation
+  - name: Procurement
+    description: Purchase orders, receipts, suppliers, discrepancies
+  - name: Finance
+    description: Chart of accounts, journals, periods, financial reports
+  - name: Expenses
+    description: Expense categories + the expense approval lifecycle
+  - name: Petty Cash
+    description: Petty-cash floats, transactions, reconciliation
+  - name: Banking
+    description: Bank accounts, deposits, statement import + matching
+  - name: Payables
+    description: Supplier invoices + payments, AP aging, payables import
+  - name: Receivables
+    description: Customer invoices, payments, statements, AR aging
+  - name: Customers
+    description: Commercial customers, contacts, credit profiles + holds
+  - name: Credit
+    description: Customer credit positions + credit-alert lifecycle
+  - name: Pricing
+    description: Station price boards, customer + central price agreements
+  - name: Fleet
+    description: Fleet vehicles, drivers, credentials, fuel authorizations
+  - name: Risk
+    description: Risk engine — signals, scores, rules, alerts, governance
+  - name: Investigations
+    description: Investigation case files, actions, comments, linked alerts
+  - name: Approvals
+    description: Approval policies + the approval-request decision flow
+  - name: Enterprise
+    description: Multi-station enterprise overview, groups, scope grants
+  - name: Calibrated Volume
+    description: Tank calibrated-volume + dip-to-volume lookups
 
 security:
   - bearerAuth: []
@@ -1246,12 +1284,2059 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Station not found }
 
+  # ---------------------------------------------------------------------------
+  # Finance — chart of accounts, journals, accounting periods, reports
+  # ---------------------------------------------------------------------------
+  /api/v1/accounts:
+    get:
+      tags: [Finance]
+      summary: List chart-of-accounts entries
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Finance]
+      summary: Create a ledger account
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/accounts/seed-defaults:
+    post:
+      tags: [Finance]
+      summary: Seed the default chart of accounts for the tenant
+      responses:
+        '200': { description: Seeded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/accounts/{id}:
+    patch:
+      tags: [Finance]
+      summary: Update a ledger account
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/accounting-periods:
+    get:
+      tags: [Finance]
+      summary: List accounting periods
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Finance]
+      summary: Open a new accounting period
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/accounting-periods/{id}/start-close:
+    post:
+      tags: [Finance]
+      summary: Begin closing an accounting period
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Closing started, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/accounting-periods/{id}/close:
+    post:
+      tags: [Finance]
+      summary: Close an accounting period
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Closed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/accounting-periods/{id}/lock:
+    post:
+      tags: [Finance]
+      summary: Lock a closed accounting period
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Locked, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/accounting-periods/{id}/reopen:
+    post:
+      tags: [Finance]
+      summary: Reopen a closed accounting period
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Reopened, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+
+  /api/v1/journal-entries:
+    get:
+      tags: [Finance]
+      summary: List journal entries
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Finance]
+      summary: Post a manual journal entry
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Posted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/journal-entries/{id}:
+    get:
+      tags: [Finance]
+      summary: Get a journal entry with its lines
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/journal-entries/{id}/reverse:
+    post:
+      tags: [Finance]
+      summary: Reverse a posted journal entry
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Reversed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already reversed }
+
+  /api/v1/finance/overview:
+    get:
+      tags: [Finance]
+      summary: Finance dashboard overview
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/close-checklist:
+    get:
+      tags: [Finance]
+      summary: Period-close readiness checklist
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/exports:
+    get:
+      tags: [Finance]
+      summary: List generated finance exports
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/exports/{type}:
+    post:
+      tags: [Finance]
+      summary: Generate a finance export of the given type
+      parameters: [{ in: path, name: type, required: true, schema: { type: string } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '202': { description: Export requested, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/reports/trial-balance:
+    get:
+      tags: [Finance]
+      summary: Trial-balance report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/reports/balance-sheet:
+    get:
+      tags: [Finance]
+      summary: Balance-sheet report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/reports/profit-loss:
+    get:
+      tags: [Finance]
+      summary: Profit-and-loss report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/finance/reports/general-ledger:
+    get:
+      tags: [Finance]
+      summary: General-ledger report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/audit-logs/export:
+    post:
+      tags: [Audit]
+      summary: Export audit logs (async job)
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '202': { description: Export requested, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Expenses
+  # ---------------------------------------------------------------------------
+  /api/v1/expense-categories:
+    get:
+      tags: [Expenses]
+      summary: List expense categories
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Expenses]
+      summary: Create an expense category
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/expenses:
+    get:
+      tags: [Expenses]
+      summary: List expenses
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Expenses]
+      summary: Record an expense (draft)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/expenses/{id}:
+    get:
+      tags: [Expenses]
+      summary: Get an expense
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/expenses/{id}/submit:
+    post:
+      tags: [Expenses]
+      summary: Submit an expense for approval
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/expenses/{id}/approve:
+    post:
+      tags: [Expenses]
+      summary: Approve a submitted expense
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/expenses/{id}/post:
+    post:
+      tags: [Expenses]
+      summary: Post an approved expense to the ledger
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Posted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+
+  # ---------------------------------------------------------------------------
+  # Petty cash
+  # ---------------------------------------------------------------------------
+  /api/v1/petty-cash-floats:
+    get:
+      tags: [Petty Cash]
+      summary: List petty-cash floats
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Petty Cash]
+      summary: Open a petty-cash float
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/petty-cash-floats/{id}:
+    get:
+      tags: [Petty Cash]
+      summary: Get a petty-cash float
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/petty-cash-floats/{id}/transactions:
+    get:
+      tags: [Petty Cash]
+      summary: List a float's transactions
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Petty Cash]
+      summary: Record a petty-cash transaction
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/petty-cash-floats/{id}/reconcile:
+    post:
+      tags: [Petty Cash]
+      summary: Reconcile a petty-cash float
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Reconciled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Banking
+  # ---------------------------------------------------------------------------
+  /api/v1/bank-accounts:
+    get:
+      tags: [Banking]
+      summary: List bank accounts
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Banking]
+      summary: Create a bank account
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/bank-deposits:
+    get:
+      tags: [Banking]
+      summary: List bank deposits
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Banking]
+      summary: Create a bank deposit
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/bank-deposits/{id}/prepare:
+    post:
+      tags: [Banking]
+      summary: Prepare a bank deposit for lodgement
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Prepared, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/bank-deposits/{id}/confirm:
+    post:
+      tags: [Banking]
+      summary: Confirm a bank deposit cleared
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Confirmed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/bank-statements/import:
+    post:
+      tags: [Banking]
+      summary: Import a bank statement
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Imported, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/bank-statement-lines:
+    get:
+      tags: [Banking]
+      summary: List bank-statement lines
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/bank-statement-lines/{id}/match:
+    post:
+      tags: [Banking]
+      summary: Match a statement line to a deposit/payment
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Matched, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/bank-statement-lines/{id}/unmatch:
+    post:
+      tags: [Banking]
+      summary: Remove a statement-line match
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Unmatched, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/bank-statement-lines/{id}/bank-fee:
+    post:
+      tags: [Banking]
+      summary: Classify a statement line as a bank fee
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Classified, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Payables — supplier invoices + payments
+  # ---------------------------------------------------------------------------
+  /api/v1/payables:
+    get:
+      tags: [Payables]
+      summary: List payables
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/payables/import:
+    post:
+      tags: [Payables]
+      summary: Import payables in bulk
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Imported, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/ap-aging:
+    get:
+      tags: [Payables]
+      summary: Accounts-payable aging report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/supplier-invoices:
+    post:
+      tags: [Payables]
+      summary: Create a supplier invoice
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/supplier-invoices/{id}:
+    get:
+      tags: [Payables]
+      summary: Get a supplier invoice
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/supplier-invoices/{id}/approve:
+    post:
+      tags: [Payables]
+      summary: Approve a supplier invoice
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/supplier-payments:
+    get:
+      tags: [Payables]
+      summary: List supplier payments
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Payables]
+      summary: Record a supplier payment
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Suppliers
+  # ---------------------------------------------------------------------------
+  /api/v1/suppliers:
+    get:
+      tags: [Procurement]
+      summary: List suppliers
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Procurement]
+      summary: Create a supplier
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/suppliers/{id}:
+    get:
+      tags: [Procurement]
+      summary: Get a supplier
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Procurement]
+      summary: Update a supplier
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Procurement]
+      summary: Delete a supplier
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Procurement — purchase orders + discrepancies
+  # ---------------------------------------------------------------------------
+  /api/v1/purchase-orders:
+    get:
+      tags: [Procurement]
+      summary: List purchase orders
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Procurement]
+      summary: Create a purchase order
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/purchase-orders/{id}:
+    get:
+      tags: [Procurement]
+      summary: Get a purchase order
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Procurement]
+      summary: Update a purchase order
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/purchase-orders/{id}/status:
+    post:
+      tags: [Procurement]
+      summary: Transition a purchase order's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/purchase-orders/{id}/receipts:
+    post:
+      tags: [Procurement]
+      summary: Record a goods receipt against a purchase order
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/procurement-discrepancies/{id}/status:
+    patch:
+      tags: [Procurement]
+      summary: Update a procurement discrepancy's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Inventory — tank ledgers, deliveries, stock transfers
+  # ---------------------------------------------------------------------------
+  /api/v1/deliveries/{id}:
+    get:
+      tags: [Inventory]
+      summary: Get a fuel delivery
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/deliveries:
+    get:
+      tags: [Inventory]
+      summary: List a station's deliveries
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/inventory-overview:
+    get:
+      tags: [Inventory]
+      summary: Station inventory overview
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/inventory-valuation:
+    get:
+      tags: [Inventory]
+      summary: Station inventory valuation
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tanks/{id}/deliveries:
+    get:
+      tags: [Inventory]
+      summary: List a tank's deliveries
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Inventory]
+      summary: Record a delivery into a tank
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tanks/{id}/ledger:
+    get:
+      tags: [Inventory]
+      summary: Tank movement ledger
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tanks/{id}/book-balance:
+    get:
+      tags: [Inventory]
+      summary: Tank book balance (litres, decimal string)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tanks/{id}/opening-balance:
+    post:
+      tags: [Inventory]
+      summary: Set a tank's opening balance
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Set, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stock-transfers:
+    get:
+      tags: [Inventory]
+      summary: List stock transfers
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Inventory]
+      summary: Create a stock transfer
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/stock-transfers/{id}/approve:
+    post:
+      tags: [Inventory]
+      summary: Approve a stock transfer
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/stock-transfers/{id}/receive:
+    post:
+      tags: [Inventory]
+      summary: Receive a stock transfer
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Received, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+
+  # ---------------------------------------------------------------------------
+  # Reconciliation — tank + cash
+  # ---------------------------------------------------------------------------
+  /api/v1/tanks/{id}/reconciliation:
+    get:
+      tags: [Reconciliation]
+      summary: Tank reconciliation result
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tanks/{id}/reconciliation-preview:
+    get:
+      tags: [Reconciliation]
+      summary: Preview a tank reconciliation before sealing
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/tanks/{id}/reconciliations:
+    post:
+      tags: [Reconciliation]
+      summary: Create a tank reconciliation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reconciliations:
+    get:
+      tags: [Reconciliation]
+      summary: List a station's reconciliations
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reconciliation-overview:
+    get:
+      tags: [Reconciliation]
+      summary: Station reconciliation overview
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reconciliations/{id}/adjustments:
+    post:
+      tags: [Reconciliation]
+      summary: Record an adjustment on a reconciliation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reconciliations/{id}/seal:
+    post:
+      tags: [Reconciliation]
+      summary: Seal a reconciliation (immutable)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Sealed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already sealed }
+  /api/v1/cash-reconciliations/{id}:
+    get:
+      tags: [Reconciliation]
+      summary: Get a cash reconciliation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/cash-reconciliations/{id}/submit:
+    post:
+      tags: [Reconciliation]
+      summary: Submit a cash reconciliation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/cash-reconciliations/{id}/approve:
+    post:
+      tags: [Reconciliation]
+      summary: Approve a cash reconciliation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/stations/{stationID}/cash-reconciliations:
+    get:
+      tags: [Reconciliation]
+      summary: List a station's cash reconciliations
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Reconciliation]
+      summary: Create a station cash reconciliation
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Revenue — revenue days, sales, payments
+  # ---------------------------------------------------------------------------
+  /api/v1/stations/{stationID}/revenue-days:
+    post:
+      tags: [Revenue]
+      summary: Open a station revenue day
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/revenue-days/{id}/lock:
+    post:
+      tags: [Revenue]
+      summary: Lock a revenue day
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Locked, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/stations/{stationID}/revenue-overview:
+    get:
+      tags: [Revenue]
+      summary: Station revenue overview
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/sales:
+    get:
+      tags: [Revenue]
+      summary: List a station's sales
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/shifts/{id}/sales:
+    get:
+      tags: [Revenue]
+      summary: List a shift's sales
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/shifts/{id}/payments:
+    get:
+      tags: [Revenue]
+      summary: List a shift's payments
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Revenue]
+      summary: Record a shift payment
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/shifts/{id}/payment-reconciliation:
+    get:
+      tags: [Revenue]
+      summary: Shift payment reconciliation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Pricing — station price boards + agreements
+  # ---------------------------------------------------------------------------
+  /api/v1/stations/{stationID}/prices:
+    post:
+      tags: [Pricing]
+      summary: Set a station's product prices (decimal-string rates)
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/price-board:
+    get:
+      tags: [Pricing]
+      summary: Station current price board
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/price-history:
+    get:
+      tags: [Pricing]
+      summary: Station price history
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customer-price-agreements:
+    get:
+      tags: [Pricing]
+      summary: List customer price agreements
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Pricing]
+      summary: Create a customer price agreement
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customer-price-agreements/{id}/approve:
+    post:
+      tags: [Pricing]
+      summary: Approve a customer price agreement
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/customer-price-agreements/{id}/activate:
+    post:
+      tags: [Pricing]
+      summary: Activate a customer price agreement
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Activated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/customer-price-agreements/{id}/cancel:
+    post:
+      tags: [Pricing]
+      summary: Cancel a customer price agreement
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/central-price-rollouts:
+    get:
+      tags: [Pricing]
+      summary: List central price rollouts
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Pricing]
+      summary: Create a central price rollout
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/central-price-rollouts/{id}/approve:
+    post:
+      tags: [Pricing]
+      summary: Approve a central price rollout
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/central-price-rollouts/{id}/activate:
+    post:
+      tags: [Pricing]
+      summary: Activate a central price rollout
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Activated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/central-procurement-plans:
+    get:
+      tags: [Procurement]
+      summary: List central procurement plans
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Procurement]
+      summary: Create a central procurement plan
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/central-procurement-plans/{id}/release:
+    post:
+      tags: [Procurement]
+      summary: Release a central procurement plan to stations
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Released, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/stations/{stationID}/procurement-overview:
+    get:
+      tags: [Procurement]
+      summary: Station procurement overview
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Customers
+  # ---------------------------------------------------------------------------
+  /api/v1/customers:
+    get:
+      tags: [Customers]
+      summary: List customers
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Customers]
+      summary: Create a customer
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customers/{id}:
+    patch:
+      tags: [Customers]
+      summary: Update a customer
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/status:
+    post:
+      tags: [Customers]
+      summary: Change a customer's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/contacts:
+    get:
+      tags: [Customers]
+      summary: List a customer's contacts
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Customers]
+      summary: Add a customer contact
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/contacts/{contactID}:
+    delete:
+      tags: [Customers]
+      summary: Delete a customer contact
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: contactID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/credit-profile:
+    get:
+      tags: [Credit]
+      summary: Get a customer's credit profile
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Credit]
+      summary: Set a customer's credit profile (limits as decimal strings)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/credit-position:
+    get:
+      tags: [Credit]
+      summary: Get a customer's live credit position
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/credit-hold:
+    post:
+      tags: [Credit]
+      summary: Place or release a customer credit hold
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/payments:
+    post:
+      tags: [Receivables]
+      summary: Record a payment from a customer
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/statement:
+    get:
+      tags: [Receivables]
+      summary: Get a customer's account statement (computed)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customers/{id}/statements:
+    get:
+      tags: [Receivables]
+      summary: List a customer's issued statements
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Receivables]
+      summary: Generate a customer statement
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Generated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Receivables — customer invoices, payments, statements
+  # ---------------------------------------------------------------------------
+  /api/v1/customer-invoices:
+    get:
+      tags: [Receivables]
+      summary: List customer invoices
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Receivables]
+      summary: Create a customer invoice
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customer-invoices/{id}:
+    get:
+      tags: [Receivables]
+      summary: Get a customer invoice
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/customer-invoices/{id}/issue:
+    post:
+      tags: [Receivables]
+      summary: Issue a draft customer invoice
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Issued, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/customer-invoices-aging:
+    get:
+      tags: [Receivables]
+      summary: Customer-invoice aging report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customer-payments:
+    get:
+      tags: [Receivables]
+      summary: List customer payments
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Receivables]
+      summary: Record a customer payment
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customer-statements/{id}/issue:
+    post:
+      tags: [Receivables]
+      summary: Issue a generated customer statement
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Issued, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/ar-aging:
+    get:
+      tags: [Receivables]
+      summary: Accounts-receivable aging report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Credit — credit-alert lifecycle
+  # ---------------------------------------------------------------------------
+  /api/v1/credit-alerts:
+    get:
+      tags: [Credit]
+      summary: List credit alerts
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/credit-alerts/scan:
+    post:
+      tags: [Credit]
+      summary: Scan customers and raise credit alerts
+      responses:
+        '200': { description: Scan complete, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/credit-alerts/{id}/acknowledge:
+    post:
+      tags: [Credit]
+      summary: Acknowledge a credit alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/credit-alerts/{id}/dismiss:
+    post:
+      tags: [Credit]
+      summary: Dismiss a credit alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Dismissed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/credit-alerts/{id}/resolve:
+    post:
+      tags: [Credit]
+      summary: Resolve a credit alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Resolved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Fleet
+  # ---------------------------------------------------------------------------
+  /api/v1/fleet/vehicles:
+    get:
+      tags: [Fleet]
+      summary: List fleet vehicles
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Fleet]
+      summary: Register a fleet vehicle
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/fleet/vehicles/{id}/odometer:
+    get:
+      tags: [Fleet]
+      summary: Get a vehicle's odometer history
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Fleet]
+      summary: Record a vehicle odometer reading
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/fleet/vehicles/{id}/status:
+    post:
+      tags: [Fleet]
+      summary: Change a vehicle's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/fleet/drivers:
+    get:
+      tags: [Fleet]
+      summary: List fleet drivers
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Fleet]
+      summary: Register a fleet driver
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/fleet/drivers/{id}/status:
+    post:
+      tags: [Fleet]
+      summary: Change a driver's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/fleet/drivers/{id}/reset-pin:
+    post:
+      tags: [Fleet]
+      summary: Reset a driver's PIN
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Reset, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/fleet/credentials:
+    get:
+      tags: [Fleet]
+      summary: List fleet fuel credentials
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Fleet]
+      summary: Issue a fleet fuel credential
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/fleet/credentials/validate:
+    post:
+      tags: [Fleet]
+      summary: Validate a fleet credential at the pump
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Validation result, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/fleet/credentials/{id}/status:
+    post:
+      tags: [Fleet]
+      summary: Change a fleet credential's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/fleet/consumption:
+    get:
+      tags: [Fleet]
+      summary: Fleet fuel-consumption report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/fuel-authorizations:
+    get:
+      tags: [Fleet]
+      summary: List fuel authorizations
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Fleet]
+      summary: Create a fuel authorization
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/fuel-authorizations/{id}:
+    get:
+      tags: [Fleet]
+      summary: Get a fuel authorization
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/fuel-authorizations/{id}/fulfill:
+    post:
+      tags: [Fleet]
+      summary: Fulfil a fuel authorization (dispense)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Fulfilled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/fuel-authorizations/{id}/cancel:
+    post:
+      tags: [Fleet]
+      summary: Cancel a fuel authorization
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/fuel-authorizations/{id}/void:
+    post:
+      tags: [Fleet]
+      summary: Void a fuel authorization
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Voided, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/fuel-limits:
+    get:
+      tags: [Fleet]
+      summary: List fuel limits
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Fleet]
+      summary: Create a fuel limit
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Risk engine
+  # ---------------------------------------------------------------------------
+  /api/v1/risk/overview:
+    get:
+      tags: [Risk]
+      summary: Risk dashboard overview
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/governance:
+    get:
+      tags: [Risk]
+      summary: Risk governance summary
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/signals:
+    get:
+      tags: [Risk]
+      summary: List risk signals
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/signals/backfill:
+    post:
+      tags: [Risk]
+      summary: Backfill historical risk signals
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '202': { description: Backfill requested, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/scores:
+    get:
+      tags: [Risk]
+      summary: List risk scores
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/scores/recompute:
+    post:
+      tags: [Risk]
+      summary: Recompute risk scores
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '202': { description: Recompute requested, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/rules:
+    get:
+      tags: [Risk]
+      summary: List risk rules
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Risk]
+      summary: Create a risk rule
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/rules/{id}/status:
+    post:
+      tags: [Risk]
+      summary: Change a risk rule's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/rules/{id}/tune:
+    post:
+      tags: [Risk]
+      summary: Tune a risk rule's thresholds
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Tuned, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/alerts:
+    get:
+      tags: [Risk]
+      summary: List risk alerts
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/alerts/{id}:
+    get:
+      tags: [Risk]
+      summary: Get a risk alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/alerts/{id}/acknowledge:
+    post:
+      tags: [Risk]
+      summary: Acknowledge a risk alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/alerts/{id}/investigate:
+    post:
+      tags: [Risk]
+      summary: Open an investigation from a risk alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Investigating, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/alerts/{id}/escalate:
+    post:
+      tags: [Risk]
+      summary: Escalate a risk alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Escalated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/alerts/{id}/dismiss:
+    post:
+      tags: [Risk]
+      summary: Dismiss a risk alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Dismissed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/alerts/{id}/resolve:
+    post:
+      tags: [Risk]
+      summary: Resolve a risk alert
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Resolved, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/risk/suppressions:
+    get:
+      tags: [Risk]
+      summary: List alert suppressions
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Risk]
+      summary: Create an alert suppression
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/detect:
+    post:
+      tags: [Risk]
+      summary: Run the risk detection engine on demand
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Detection complete, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/risk/engine/pause:
+    post:
+      tags: [Risk]
+      summary: Pause or resume the risk engine
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Investigations
+  # ---------------------------------------------------------------------------
+  /api/v1/investigations:
+    get:
+      tags: [Investigations]
+      summary: List investigations
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Investigations]
+      summary: Open an investigation
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/investigations/{id}:
+    get:
+      tags: [Investigations]
+      summary: Get an investigation case file
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/investigations/{id}/status:
+    post:
+      tags: [Investigations]
+      summary: Change an investigation's status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/investigations/{id}/comments:
+    post:
+      tags: [Investigations]
+      summary: Add a comment to an investigation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Added, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/investigations/{id}/alerts:
+    post:
+      tags: [Investigations]
+      summary: Link a risk alert to an investigation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Linked, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/investigations/{id}/actions:
+    post:
+      tags: [Investigations]
+      summary: Add a remediation action to an investigation
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Added, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/investigations/{id}/actions/{actionID}/status:
+    post:
+      tags: [Investigations]
+      summary: Update an investigation action's status
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: actionID, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Approvals
+  # ---------------------------------------------------------------------------
+  /api/v1/approval-policies:
+    get:
+      tags: [Approvals]
+      summary: List approval policies
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Approvals]
+      summary: Create an approval policy
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/approval-requests:
+    get:
+      tags: [Approvals]
+      summary: List approval requests
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Approvals]
+      summary: Raise an approval request
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/approval-requests/{id}/decide:
+    post:
+      tags: [Approvals]
+      summary: Approve or reject an approval request
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Decided, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already decided }
+
+  # ---------------------------------------------------------------------------
+  # Enterprise — multi-station overview, groups, scope grants
+  # ---------------------------------------------------------------------------
+  /api/v1/enterprise/overview:
+    get:
+      tags: [Enterprise]
+      summary: Enterprise-wide overview
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/exceptions:
+    get:
+      tags: [Enterprise]
+      summary: Enterprise-wide open exceptions
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/finance/consolidated:
+    get:
+      tags: [Enterprise]
+      summary: Consolidated enterprise finance view
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/reports/station-kpis:
+    get:
+      tags: [Enterprise]
+      summary: Per-station KPI report
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/station-ranking:
+    get:
+      tags: [Enterprise]
+      summary: Station performance ranking
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/regions/{id}:
+    get:
+      tags: [Enterprise]
+      summary: Enterprise region detail
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/enterprise/users/{id}/effective-stations:
+    get:
+      tags: [Enterprise]
+      summary: A user's effective station scope
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/enterprise/station-groups:
+    get:
+      tags: [Enterprise]
+      summary: List station groups
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Enterprise]
+      summary: Create a station group
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/station-groups/{id}/members:
+    post:
+      tags: [Enterprise]
+      summary: Add members to a station group
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/enterprise/scope-grants:
+    post:
+      tags: [Enterprise]
+      summary: Grant a user enterprise scope
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Granted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/enterprise/projections/rebuild:
+    post:
+      tags: [Enterprise]
+      summary: Rebuild enterprise read-model projections
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '202': { description: Rebuild requested, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: opaque
+
+  parameters:
+    LimitParam:
+      in: query
+      name: limit
+      required: false
+      description: Maximum number of items to return (page size).
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    OffsetParam:
+      in: query
+      name: offset
+      required: false
+      description: Number of items to skip before collecting the page.
+      schema: { type: integer, minimum: 0, default: 0 }
 
   responses:
     BadRequest:
@@ -1276,6 +3361,22 @@ components:
       properties:
         error:  { type: string }
         status: { type: integer }
+    # Generic JSON object for endpoints whose payload is documented for
+    # coverage but whose field-level shape is intentionally left open.
+    Object:
+      type: object
+      additionalProperties: true
+    # Standard paginated list envelope returned by the paginated list
+    # endpoints: {items, count, limit, offset, has_more}. Monetary, litre,
+    # and rate values inside items are decimal strings (type: string).
+    Paged:
+      type: object
+      properties:
+        items:    { type: array, items: { $ref: '#/components/schemas/Object' } }
+        count:    { type: integer, description: Total matching rows (not just this page) }
+        limit:    { type: integer }
+        offset:   { type: integer }
+        has_more: { type: boolean }
     StatusResponse:
       type: object
       properties: { status: { type: string } }
