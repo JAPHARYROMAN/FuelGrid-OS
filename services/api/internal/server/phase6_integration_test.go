@@ -133,6 +133,111 @@ func TestPhase6_RevenueFlow(t *testing.T) {
 	}
 }
 
+// TestPhase6_TaxInclusiveSplitNonZeroRate proves REV-03: the tax-inclusive
+// net/tax/gross decomposition in the real sale-recognition SQL is correct at a
+// NON-ZERO product tax rate. The existing phase6 flow only ever recognizes at
+// tax_rate=0 (net==gross), and phase7 INSERTs pre-computed tax by hand, so the
+// split formula itself was never exercised by the recognition path.
+//
+// The recognition SQL (internal/revenue/repo.go) treats the resolved selling
+// price as tax-inclusive and computes, per line:
+//
+//	gross = ROUND(litres * unit_price, 2)
+//	tax   = ROUND(gross * tax_rate / (100 + tax_rate), 2)   -- from the rounded gross
+//	net   = gross - tax
+//
+// so net + tax == gross EXACTLY by construction. Postgres ROUND(numeric, 2)
+// rounds half away from zero.
+//
+// We pick litres=123.45, unit_price=2950.50, tax_rate=18 to exercise BOTH ROUND
+// steps (not just trivial clean arithmetic):
+//
+//	raw gross = 123.45 * 2950.50 = 364239.225        -> ROUND -> 364239.23
+//	raw tax   = 364239.23 * 18 / 118 = 55561.91644.. -> ROUND -> 55561.92
+//	net       = 364239.23 - 55561.92                 =          308677.31
+//
+// Both halves round (the gross half-cent rounds up; the tax rounds down), and
+// net+tax == gross to the cent.
+func TestPhase6_TaxInclusiveSplitNonZeroRate(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+
+	// Give the nozzle's product a non-zero, tax-inclusive rate of 18%. The
+	// recognition SQL reads tax_rate off products (joined via the nozzle), and
+	// after the Wave-4 money retype it is a numeric carried as a decimal string.
+	if _, err := h.pool.Exec(ctx, `UPDATE products SET tax_rate = 18 WHERE tenant_id=$1 AND id=$2`,
+		h.ids.tenantID, h.ids.pmsProduct); err != nil {
+		t.Fatalf("set tax_rate: %v", err)
+	}
+
+	// Resolve a tax-inclusive selling price of 2,950.50. The recognition path
+	// values metered litres at the price resolved from price_changes (NOT the
+	// close-line price), so set it through the pricing endpoint.
+	station := "/api/v1/stations/" + h.ids.station1.String()
+	if code, _ := h.invPostJSON(t, station+"/prices", admin,
+		map[string]any{"product_id": h.ids.pmsProduct.String(), "unit_price": "2950.50"}); code != http.StatusCreated {
+		t.Fatalf("set price: %d", code)
+	}
+
+	// Closed shift sold 123.45 L; approving runs the real recognition path.
+	_, shift := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-02", 123.45)
+	if code, raw := h.do(t, http.MethodPatch, "/api/v1/shifts/"+shift.String()+"/status", admin,
+		bytes.NewReader([]byte(`{"status":"approved"}`)), "application/json"); code != http.StatusOK {
+		t.Fatalf("approve: %d %s", code, raw)
+	}
+
+	// Assert the exact decimal decomposition on the recognized sale.
+	const (
+		wantGross = "364239.23"
+		wantTax   = "55561.92"
+		wantNet   = "308677.31"
+		wantRate  = "18.00"
+	)
+	code, body := h.getJSON(t, "/api/v1/shifts/"+shift.String()+"/sales", admin)
+	items := body["items"].([]any)
+	if code != http.StatusOK || len(items) != 1 {
+		t.Fatalf("sales: status %d count %d", code, len(items))
+	}
+	sale := items[0].(map[string]any)
+	if sale["tax_rate"] != wantRate {
+		t.Fatalf("tax_rate = %v, want %s", sale["tax_rate"], wantRate)
+	}
+	if sale["gross_amount"] != wantGross {
+		t.Fatalf("gross_amount = %v, want %s", sale["gross_amount"], wantGross)
+	}
+	if sale["tax_amount"] != wantTax {
+		t.Fatalf("tax_amount = %v, want %s", sale["tax_amount"], wantTax)
+	}
+	if sale["net_amount"] != wantNet {
+		t.Fatalf("net_amount = %v, want %s", sale["net_amount"], wantNet)
+	}
+
+	// The split must reconcile to the cent on the stored row itself: the SQL
+	// derives net as gross - tax, so net + tax must equal gross EXACTLY.
+	var dbGross, dbTax, dbNet, sumNetTax string
+	if err := h.pool.QueryRow(ctx, `
+		SELECT gross_amount::text, tax_amount::text, net_amount::text, (net_amount + tax_amount)::text
+		FROM sales WHERE tenant_id=$1 AND shift_id=$2
+	`, h.ids.tenantID, shift).Scan(&dbGross, &dbTax, &dbNet, &sumNetTax); err != nil {
+		t.Fatalf("fetch stored split: %v", err)
+	}
+	if dbGross != wantGross || dbTax != wantTax || dbNet != wantNet {
+		t.Fatalf("stored split gross/tax/net = %s / %s / %s, want %s / %s / %s",
+			dbGross, dbTax, dbNet, wantGross, wantTax, wantNet)
+	}
+	if sumNetTax != wantGross {
+		t.Fatalf("net + tax = %s, want %s (must equal gross exactly)", sumNetTax, wantGross)
+	}
+}
+
 // TestPhase6_CreditTenderPostsToGL proves PAY-003: a credit tender posts to the
 // general ledger (DR accounts_receivable / CR sales_clearing) in the same tx as
 // the operational AR entry, so the operational and GL receivables reconcile —
