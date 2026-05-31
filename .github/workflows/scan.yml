@@ -1,0 +1,151 @@
+name: Security Scan
+
+# Supply-chain & vulnerability scanning. Standalone from ci.yml so the
+# security surface (Trivy fs + image scans, SBOM) evolves independently of
+# the build/test pipeline and reports into GitHub code-scanning.
+#
+# Trivy runs from its official GHCR image (ghcr.io/aquasecurity/trivy) via
+# plain `docker run` rather than aquasecurity/trivy-action. The action's
+# binary-bootstrap path (it sparse-checks-out trivy's contrib dir and runs
+# install.sh to download the release binary, and pulls a separately-tagged
+# setup-trivy) proved brittle — a removed setup-trivy tag and a failing
+# install.sh both broke "Set up job"/install. Pinning the container image is
+# hermetic and has no such moving parts.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly catch — newly disclosed CVEs land against already-merged code,
+    # so re-scan main every Monday 06:00 UTC even with no new commits.
+    - cron: '0 6 * * 1'
+
+# Least privilege: read the repo, write SARIF to the security tab. Nothing else.
+permissions:
+  contents: read
+  security-events: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Pin the Trivy version (image tag == CLI version) so scans are reproducible.
+  TRIVY_IMAGE: ghcr.io/aquasecurity/trivy:0.65.0
+
+jobs:
+  filesystem:
+    name: Trivy — filesystem (vuln + misconfig + secret)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Full-visibility pass: every severity, SARIF only. This is what shows
+      # up in the Security tab; exit-code 0 so the code-scanning record is
+      # always complete regardless of findings.
+      - name: Trivy filesystem scan (SARIF report)
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            "$TRIVY_IMAGE" fs \
+              --scanners vuln,misconfig,secret \
+              --format sarif --output trivy-fs.sarif \
+              --no-progress --exit-code 0 .
+
+      - name: Upload filesystem SARIF to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        # Always upload, even if a later gate step fails, so the Security tab
+        # reflects the run. Non-fatal: repos without GitHub code-scanning/GHAS
+        # enabled reject the upload, and that must not fail the security gate
+        # (the fixable-CRITICAL/HIGH gate steps below are the real protection).
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      # Gate pass: fail the build only on CRITICAL/HIGH vulns that have a fix
+      # available. ignore-unfixed keeps un-actionable noise from blocking PRs.
+      - name: Trivy filesystem gate (fixable CRITICAL/HIGH)
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            "$TRIVY_IMAGE" fs \
+              --scanners vuln \
+              --severity CRITICAL,HIGH --ignore-unfixed \
+              --no-progress --exit-code 1 .
+
+  image:
+    name: Trivy — API image + SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build the same image ci.yml ships (services/api/Dockerfile), loaded
+      # into the local daemon so Trivy and the SBOM step can scan it by tag.
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/api/Dockerfile
+          push: false
+          load: true
+          tags: fuelgrid-api:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.sha }}
+            COMMIT=${{ github.sha }}
+
+      # Full-visibility image scan -> SARIF for the Security tab. Trivy runs in
+      # a container with the host docker socket mounted so it can read the
+      # locally-built fuelgrid-api:scan image from the daemon.
+      - name: Trivy image scan (SARIF report)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/work" -w /work \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln,secret \
+              --format sarif --output trivy-image.sarif \
+              --no-progress --exit-code 0 fuelgrid-api:scan
+
+      - name: Upload image SARIF to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      # Gate pass: same fixable CRITICAL/HIGH policy as the filesystem job.
+      - name: Trivy image gate (fixable CRITICAL/HIGH)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            "$TRIVY_IMAGE" image \
+              --scanners vuln \
+              --severity CRITICAL,HIGH --ignore-unfixed \
+              --no-progress --exit-code 1 fuelgrid-api:scan
+
+      # CycloneDX SBOM of the built image, archived as a build artifact for
+      # supply-chain provenance / downstream license + component audits.
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD:/work" -w /work \
+            "$TRIVY_IMAGE" image \
+              --format cyclonedx --output fuelgrid-api.cdx.json \
+              --no-progress fuelgrid-api:scan
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sbom-fuelgrid-api-cyclonedx
+          path: fuelgrid-api.cdx.json
+          if-no-files-found: error
