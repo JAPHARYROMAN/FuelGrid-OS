@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,22 +16,25 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
-	"github.com/japharyroman/fuelgrid-os/internal/readings"
 )
 
 // cashVarianceThreshold is the absolute shortage/excess (in the tenant's
-// money units) that auto-raises a cash_variance exception at submission.
-// A per-station configurable threshold is future work; this is a sane
-// fixed default.
-const cashVarianceThreshold = 1000.0
+// money units) that auto-raises a cash_variance exception at submission, as an
+// exact decimal string — the |variance| > threshold compare is done in SQL
+// numeric, never Go float. A per-station configurable threshold is future
+// work; this is a sane fixed default.
+const cashVarianceThreshold = "1000.00"
 
+// closeLineDTO mirrors a shift close line; every money/litre field is the exact
+// decimal string from the DB (litres numeric(14,3) -> "x.xxx"; price/value
+// numeric(14,2) -> "x.xx") — no Go float (MD-5/OPS-001).
 type closeLineDTO struct {
 	NozzleID       uuid.UUID `json:"nozzle_id"`
-	OpeningReading float64   `json:"opening_reading"`
-	ClosingReading float64   `json:"closing_reading"`
-	LitresSold     float64   `json:"litres_sold"`
-	UnitPrice      float64   `json:"unit_price"`
-	ExpectedValue  float64   `json:"expected_value"`
+	OpeningReading string    `json:"opening_reading"`
+	ClosingReading string    `json:"closing_reading"`
+	LitresSold     string    `json:"litres_sold"`
+	UnitPrice      string    `json:"unit_price"`
+	ExpectedValue  string    `json:"expected_value"`
 }
 
 func toCloseLineDTO(l *operations.CloseLine) closeLineDTO {
@@ -41,16 +44,18 @@ func toCloseLineDTO(l *operations.CloseLine) closeLineDTO {
 	}
 }
 
+// cashSubmissionDTO mirrors a cash submission; every money field is the exact
+// decimal string (numeric(14,2) -> "x.xx") from the DB — no Go float (MD-5).
 type cashSubmissionDTO struct {
 	ID                uuid.UUID `json:"id"`
 	ShiftID           uuid.UUID `json:"shift_id"`
-	ExpectedCash      float64   `json:"expected_cash"`
-	CashAmount        float64   `json:"cash_amount"`
-	MobileMoneyAmount float64   `json:"mobile_money_amount"`
-	CardAmount        float64   `json:"card_amount"`
-	CreditAmount      float64   `json:"credit_amount"`
-	SubmittedTotal    float64   `json:"submitted_total"`
-	Variance          float64   `json:"variance"`
+	ExpectedCash      string    `json:"expected_cash"`
+	CashAmount        string    `json:"cash_amount"`
+	MobileMoneyAmount string    `json:"mobile_money_amount"`
+	CardAmount        string    `json:"card_amount"`
+	CreditAmount      string    `json:"credit_amount"`
+	SubmittedTotal    string    `json:"submitted_total"`
+	Variance          string    `json:"variance"`
 	SubmittedBy       uuid.UUID `json:"submitted_by"`
 	SubmittedAt       string    `json:"submitted_at"`
 	Notes             *string   `json:"notes,omitempty"`
@@ -64,14 +69,6 @@ func toCashSubmissionDTO(c *operations.CashSubmission) cashSubmissionDTO {
 		SubmittedTotal: c.SubmittedTotal, Variance: c.Variance,
 		SubmittedBy: c.SubmittedBy, SubmittedAt: c.SubmittedAt.Format(time.RFC3339), Notes: c.Notes,
 	}
-}
-
-func sumExpected(lines []operations.CloseLine) float64 {
-	var total float64
-	for i := range lines {
-		total += lines[i].ExpectedValue
-	}
-	return total
 }
 
 // handleCloseShift validates that every assigned nozzle has an
@@ -113,9 +110,10 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Index meter readings (nozzle -> opening/closing) and tanks with a
-	// closing dip.
-	type ends struct{ opening, closing *float64 }
+	// Index meter readings (nozzle -> opening/closing) as exact decimal strings;
+	// all close-line litres/value arithmetic happens in SQL numeric, never Go
+	// float (MD-5/OPS-001).
+	type ends struct{ opening, closing *string }
 	meterByNozzle := map[uuid.UUID]*ends{}
 	for i := range meterRows {
 		e := meterByNozzle[meterRows[i].NozzleID]
@@ -123,10 +121,7 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 			e = &ends{}
 			meterByNozzle[meterRows[i].NozzleID] = e
 		}
-		// MD boundary (W5-MD-SHIFT owns shift-close expected_value/variance):
-		// readings are exact-decimal strings; parse to float here for the
-		// close-line math until that wave retypes CloseLine.
-		v := dispDecimal(meterRows[i].Reading)
+		v := meterRows[i].Reading
 		if meterRows[i].ReadingType == "opening" {
 			e.opening = &v
 		} else {
@@ -139,9 +134,20 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 			closingDipTanks[dipRows[i].TankID] = true
 		}
 	}
+	// Meter rollbacks (closing < opening) are detected in SQL numeric, not by
+	// parsing the readings to float.
+	rollbackList, err := s.readings.RollbackNozzlesForShift(ctx, actor.TenantID, shift.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	rolledBack := make(map[uuid.UUID]bool, len(rollbackList))
+	for _, id := range rollbackList {
+		rolledBack[id] = true
+	}
 
 	var (
-		lines           []operations.CloseLine
+		lineInputs      []operations.CloseLineInput
 		missingMeter    []uuid.UUID
 		rollbackNozzles []uuid.UUID
 		missingDip      []uuid.UUID
@@ -166,20 +172,16 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 			missingMeter = append(missingMeter, nozzleID)
 			continue
 		}
-		litres, err := readings.LitresDispensed(*e.opening, *e.closing)
-		if err != nil {
+		if rolledBack[nozzleID] {
 			rollbackNozzles = append(rollbackNozzles, nozzleID)
 			continue
 		}
-		// MD boundary (W5-MD-SHIFT owns expected_value/variance): the nozzle's
-		// default price is an exact-decimal string; parse to float for the
-		// close-line snapshot until CloseLine is retyped in that wave.
-		unitPrice := dispDecimal(nozzle.DefaultPrice)
-		lines = append(lines, operations.CloseLine{
+		// Readings and the nozzle's default price stay exact decimal strings;
+		// litres_sold and expected_value are computed in SQL on insert.
+		lineInputs = append(lineInputs, operations.CloseLineInput{
 			ShiftID: shift.ID, NozzleID: nozzleID,
 			OpeningReading: *e.opening, ClosingReading: *e.closing,
-			LitresSold: litres, UnitPrice: unitPrice,
-			ExpectedValue: litres * unitPrice,
+			UnitPrice: nozzle.DefaultPrice,
 		})
 	}
 
@@ -219,12 +221,15 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := range lines {
-		if err := s.operations.InsertCloseLine(ctx, tx, actor.TenantID, lines[i]); err != nil {
+	lines := make([]operations.CloseLine, 0, len(lineInputs))
+	for i := range lineInputs {
+		line, err := s.operations.InsertCloseLine(ctx, tx, actor.TenantID, lineInputs[i])
+		if err != nil {
 			s.logger.Error("close shift: line", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		lines = append(lines, *line)
 	}
 	closed, err := s.operations.CloseShift(ctx, tx, actor.TenantID, shift.ID, actor.UserID)
 	if err != nil {
@@ -233,7 +238,14 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expected := sumExpected(lines)
+	// Total expected cash is SUM(expected_value) computed in SQL numeric. Sum
+	// inside the tx so the just-inserted (uncommitted) lines are visible.
+	expected, err := s.operations.SumExpectedForShift(ctx, tx, actor.TenantID, shift.ID)
+	if err != nil {
+		s.logger.Error("close shift: expected", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "shift.closed", EventType: "ShiftClosed",
@@ -294,9 +306,14 @@ func (s *Server) handleCloseSummary(w http.ResponseWriter, r *http.Request) {
 	for i := range lines {
 		lineDTOs = append(lineDTOs, toCloseLineDTO(&lines[i]))
 	}
+	expected, err := s.operations.SumExpectedForShift(ctx, s.operations.Pool(), actor.TenantID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
 	body := map[string]any{
-		"shift": toShiftDTO(shift), "lines": lineDTOs, "expected_cash": sumExpected(lines),
+		"shift": toShiftDTO(shift), "lines": lineDTOs, "expected_cash": expected,
 		"cash_submission": nil,
 	}
 	cash, err := s.operations.GetCashSubmission(ctx, actor.TenantID, id)
@@ -309,12 +326,26 @@ func (s *Server) handleCloseSummary(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, body)
 }
 
+// cashSubmissionRequest carries the tender breakdown as exact decimal strings
+// (numeric(14,2)); submitted_total and variance are computed in SQL. Omitted
+// tenders default to "0" so a single-tender submission stays terse.
 type cashSubmissionRequest struct {
-	CashAmount        float64 `json:"cash_amount"`
-	MobileMoneyAmount float64 `json:"mobile_money_amount"`
-	CardAmount        float64 `json:"card_amount"`
-	CreditAmount      float64 `json:"credit_amount"`
+	CashAmount        string  `json:"cash_amount"`
+	MobileMoneyAmount string  `json:"mobile_money_amount"`
+	CardAmount        string  `json:"card_amount"`
+	CreditAmount      string  `json:"credit_amount"`
 	Notes             *string `json:"notes,omitempty"`
+}
+
+// tenderOrZero defaults an omitted tender to "0" and validates the rest is a
+// non-negative decimal (the leading-sign-free decimalPattern already rejects
+// negatives). Returns the trimmed value and whether it is acceptable.
+func tenderOrZero(v string) (string, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "0", true
+	}
+	return v, validDecimal(v)
 }
 
 func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
@@ -328,8 +359,12 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.CashAmount < 0 || req.MobileMoneyAmount < 0 || req.CardAmount < 0 || req.CreditAmount < 0 {
-		writeError(w, http.StatusBadRequest, "tender amounts must be non-negative")
+	cashAmt, ok1 := tenderOrZero(req.CashAmount)
+	mmAmt, ok2 := tenderOrZero(req.MobileMoneyAmount)
+	cardAmt, ok3 := tenderOrZero(req.CardAmount)
+	creditAmt, ok4 := tenderOrZero(req.CreditAmount)
+	if !ok1 || !ok2 || !ok3 || !ok4 {
+		writeError(w, http.StatusBadRequest, "tender amounts must be non-negative decimals")
 		return
 	}
 
@@ -345,13 +380,13 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	lines, err := s.operations.ListCloseLines(ctx, actor.TenantID, shift.ID)
+	// Expected cash is SUM(expected_value) of the (already committed) close
+	// lines, computed in SQL numeric.
+	expected, err := s.operations.SumExpectedForShift(ctx, s.operations.Pool(), actor.TenantID, shift.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	expected := sumExpected(lines)
-	total := req.CashAmount + req.MobileMoneyAmount + req.CardAmount + req.CreditAmount
 
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
@@ -374,11 +409,12 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// submitted_total (sum of tenders) and variance (total - expected) are
+	// computed in SQL numeric inside the insert; no Go float money.
 	sub, err := s.operations.InsertCashSubmission(ctx, tx, actor.TenantID, operations.CashSubmissionInput{
 		ShiftID: shift.ID, ExpectedCash: expected,
-		CashAmount: req.CashAmount, MobileMoneyAmount: req.MobileMoneyAmount,
-		CardAmount: req.CardAmount, CreditAmount: req.CreditAmount,
-		SubmittedTotal: total, Variance: total - expected,
+		CashAmount: cashAmt, MobileMoneyAmount: mmAmt,
+		CardAmount: cardAmt, CreditAmount: creditAmt,
 		SubmittedBy: actor.UserID, Notes: req.Notes,
 	})
 	if isUniqueViolation(err) {
@@ -405,11 +441,18 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A cash variance over the threshold auto-raises an exception that will
-	// block approval until a supervisor resolves it.
-	if math.Abs(sub.Variance) > cashVarianceThreshold {
+	// block approval until a supervisor resolves it. The |variance| > threshold
+	// compare is done in SQL numeric so it fires on the exact decimal figure.
+	over, err := s.operations.VarianceExceeds(ctx, sub.Variance, cashVarianceThreshold)
+	if err != nil {
+		s.logger.Error("submit cash: variance threshold", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if over {
 		exc, err := s.operations.RaiseException(ctx, tx, actor.TenantID, shift.ID,
 			"cash_variance", "high",
-			fmt.Sprintf("cash variance %.2f exceeds threshold %.2f", sub.Variance, cashVarianceThreshold))
+			fmt.Sprintf("cash variance %s exceeds threshold %s", sub.Variance, cashVarianceThreshold))
 		if err != nil {
 			s.logger.Error("submit cash: raise exception", "error", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
