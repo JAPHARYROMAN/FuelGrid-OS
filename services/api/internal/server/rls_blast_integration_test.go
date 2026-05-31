@@ -182,10 +182,12 @@ func seedBlast(t *testing.T, ctx context.Context, owner *database.Pool, tenant u
 	               VALUES ($1, '2099-02-01', '2099-02-28') RETURNING id`, tenant)
 	q(&bt.journal, `INSERT INTO journal_entries (tenant_id, period_id, entry_date, source_type, posted_by)
 	                VALUES ($1, $2, '2099-02-10', 'adjustment', $3) RETURNING id`, tenant, bt.period, bt.user)
-	// One journal line keeps the entry realistic (and exercises journal_lines RLS
-	// indirectly via the seed); not asserted directly.
+	// A balanced pair of journal lines keeps the entry realistic (and exercises
+	// journal_lines RLS indirectly via the seed); not asserted directly. The
+	// entry must balance (sum debits == sum credits) or the books-balance CHECK
+	// rejects it, so we post an offsetting debit/credit against the same account.
 	if _, err := owner.Exec(ctx, `INSERT INTO journal_lines (tenant_id, journal_entry_id, account_id, debit, credit)
-	                              VALUES ($1, $2, $3, 100, 0)`, tenant, bt.journal, bt.account); err != nil {
+	                              VALUES ($1, $2, $3, 100, 0), ($1, $2, $3, 0, 100)`, tenant, bt.journal, bt.account); err != nil {
 		t.Fatalf("seed %s journal_line: %v", tag, err)
 	}
 	q(&bt.movement, `INSERT INTO stock_movements (tenant_id, tank_id, movement_type, litres, balance_after, recorded_by)
