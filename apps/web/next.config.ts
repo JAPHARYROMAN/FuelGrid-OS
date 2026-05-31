@@ -97,7 +97,10 @@ function maybeWithSentry(config: NextConfig): NextConfig {
   } catch (err) {
     // Token set but the integration isn't installed — degrade to a no-op
     // instead of breaking the build.
-    console.warn('[next.config] SENTRY_AUTH_TOKEN set but @sentry/nextjs not installed; skipping source-map upload.', err);
+    console.warn(
+      '[next.config] SENTRY_AUTH_TOKEN set but @sentry/nextjs not installed; skipping source-map upload.',
+      err,
+    );
     return config;
   }
 }
