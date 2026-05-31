@@ -34,6 +34,9 @@ const connectSrc = ["'self'", apiOrigin, sentryConnectSrc()].filter(Boolean).joi
 const contentSecurityPolicy = [
   "default-src 'self'",
   `connect-src ${connectSrc}`,
+  // PWA: the web app manifest and its icon PNGs are served same-origin.
+  // Explicit (does not weaken default-src 'self', which already covers these).
+  "manifest-src 'self'",
   "img-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self'",

@@ -13,7 +13,7 @@
 
 FuelGrid OS is a full-fledged fuel operations operating system designed to support single fuel stations, multi-station chains, depots, fleet operators, distributors, and enterprise fuel organizations.
 
-The architecture must support operational workflows, financial-grade reconciliation, immutable audit trails, offline-first station operations, high-volume analytics, hardware integrations, AI intelligence, multi-tenant security, real-time alerts, mobile workflows, and enterprise extensibility.
+The architecture must support operational workflows, financial-grade reconciliation, immutable audit trails, offline-capable station operations (planned — see §16; the web app today ships as an installable PWA, with the service worker and offline sync engine scheduled for Phase 14), high-volume analytics, hardware integrations, AI intelligence, multi-tenant security, real-time alerts, mobile workflows, and enterprise extensibility.
 
 FuelGrid OS should be designed as a modular, event-driven platform. The first implementation can be delivered as a modular monolith with strict domain boundaries, but the architecture must be clean enough to evolve into distributed services as usage grows.
 
