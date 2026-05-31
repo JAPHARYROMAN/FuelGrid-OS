@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -70,8 +71,11 @@ func (r *Repo) PostSalesForShift(ctx context.Context, tx pgx.Tx, tenantID, shift
 			MovementType:  TypeSales,
 			SourceRefType: &srcType,
 			SourceRefID:   &sid,
-			Litres:        -ln.LitresSold,
-			RecordedBy:    recordedBy,
+			// MD-1 boundary: LitresSold is still an upstream float (metered
+			// shift-close litres). Format the negated stock-out to 3-decimal
+			// numeric text here; the float source is retyped in a later wave.
+			Litres:     strconv.FormatFloat(-ln.LitresSold, 'f', 3, 64),
+			RecordedBy: recordedBy,
 		})
 		if err != nil {
 			return nil, nil, err

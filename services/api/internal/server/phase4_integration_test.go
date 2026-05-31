@@ -69,7 +69,7 @@ func TestPhase4_StockLedger(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
-	post := func(mvType string, litres float64) *inventory.Movement {
+	post := func(mvType string, litres string) *inventory.Movement {
 		m, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
 			TankID: h.ids.tankPMS, MovementType: mvType, Litres: litres, RecordedBy: adminID,
 		})
@@ -79,10 +79,10 @@ func TestPhase4_StockLedger(t *testing.T) {
 		}
 		return m
 	}
-	post(inventory.TypeOpening, 20000)
-	delivery := post(inventory.TypeDelivery, 10000)
+	post(inventory.TypeOpening, "20000")
+	delivery := post(inventory.TypeDelivery, "10000")
 	deliveryID = delivery.ID
-	post(inventory.TypeSales, -4200)
+	post(inventory.TypeSales, "-4200")
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit: %v", err)
 	}
@@ -100,8 +100,8 @@ func TestPhase4_StockLedger(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("book-balance: status %d: %v", code, body)
 	}
-	if got := body["book_balance"].(float64); got != 25800 {
-		t.Fatalf("book_balance = %v, want 25800", got)
+	if got := body["book_balance"].(string); got != "25800.000" {
+		t.Fatalf("book_balance = %v, want 25800.000", got)
 	}
 
 	// Ledger lists the three movements in append order with running balances.
@@ -114,13 +114,13 @@ func TestPhase4_StockLedger(t *testing.T) {
 		t.Fatalf("ledger count = %d, want 3", len(items))
 	}
 	wantTypes := []string{"opening", "delivery", "sales"}
-	wantBalances := []float64{20000, 30000, 25800}
+	wantBalances := []string{"20000.000", "30000.000", "25800.000"}
 	for i, raw := range items {
 		it := raw.(map[string]any)
 		if it["movement_type"] != wantTypes[i] {
 			t.Fatalf("item %d type = %v, want %s", i, it["movement_type"], wantTypes[i])
 		}
-		if bal := it["balance_after"].(float64); bal != wantBalances[i] {
+		if bal := it["balance_after"].(string); bal != wantBalances[i] {
 			t.Fatalf("item %d balance_after = %v, want %v", i, bal, wantBalances[i])
 		}
 	}
@@ -136,9 +136,9 @@ func TestPhase4_StockLedger(t *testing.T) {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("reverse: %v", err)
 	}
-	if contra.Litres != -10000 {
+	if contra.Litres != "-10000.000" {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("contra litres = %v, want -10000", contra.Litres)
+		t.Fatalf("contra litres = %v, want -10000.000", contra.Litres)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatalf("commit reverse: %v", err)
@@ -159,8 +159,8 @@ func TestPhase4_StockLedger(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("book-balance after reverse: status %d", code)
 	}
-	if got := body["book_balance"].(float64); got != 15800 {
-		t.Fatalf("book_balance after reverse = %v, want 15800", got)
+	if got := body["book_balance"].(string); got != "15800.000" {
+		t.Fatalf("book_balance after reverse = %v, want 15800.000", got)
 	}
 	code, body = h.getJSON(t, "/api/v1/tanks/"+h.ids.tankPMS.String()+"/ledger", admin)
 	if code != http.StatusOK {
@@ -202,13 +202,13 @@ func TestPhase4_StockMovementImmutable(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
-		TankID: h.ids.tankPMS, MovementType: inventory.TypeOpening, Litres: 15000, RecordedBy: adminID,
+		TankID: h.ids.tankPMS, MovementType: inventory.TypeOpening, Litres: "15000", RecordedBy: adminID,
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("post opening: %v", err)
 	}
 	delivery, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
-		TankID: h.ids.tankPMS, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
+		TankID: h.ids.tankPMS, MovementType: inventory.TypeDelivery, Litres: "5000", RecordedBy: adminID,
 	})
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -270,7 +270,7 @@ func TestPhase4_TankDeleteBlockedByLedger(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	if _, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
-		TankID: h.ids.tankMSA, MovementType: inventory.TypeOpening, Litres: 5000, RecordedBy: adminID,
+		TankID: h.ids.tankMSA, MovementType: inventory.TypeOpening, Litres: "5000", RecordedBy: adminID,
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("post opening: %v", err)
@@ -299,7 +299,7 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 	_, err = repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
-		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
+		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: "5000", RecordedBy: adminID,
 	})
 	_ = tx.Rollback(ctx)
 	if !errors.Is(err, inventory.ErrNoOpeningBalance) {
@@ -312,12 +312,12 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("set opening: status %d: %v", code, body)
 	}
-	if body["movement_type"] != "opening" || body["litres"].(float64) != 8000 {
+	if body["movement_type"] != "opening" || body["litres"].(string) != "8000.000" {
 		t.Fatalf("opening movement = %v", body)
 	}
 
 	code, body = h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin)
-	if code != http.StatusOK || body["book_balance"].(float64) != 8000 {
+	if code != http.StatusOK || body["book_balance"].(string) != "8000.000" {
 		t.Fatalf("book balance after opening = %v (status %d)", body["book_balance"], code)
 	}
 
@@ -327,7 +327,7 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 		t.Fatalf("begin delivery: %v", err)
 	}
 	if _, err := repo.PostMovement(ctx, tx, h.ids.tenantID, inventory.PostInput{
-		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: 5000, RecordedBy: adminID,
+		TankID: h.ids.tankAGO, MovementType: inventory.TypeDelivery, Litres: "5000", RecordedBy: adminID,
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("delivery after opening: %v", err)
@@ -336,7 +336,7 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 		t.Fatalf("commit delivery: %v", err)
 	}
 	code, body = h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin)
-	if code != http.StatusOK || body["book_balance"].(float64) != 13000 {
+	if code != http.StatusOK || body["book_balance"].(string) != "13000.000" {
 		t.Fatalf("book balance after delivery = %v", body["book_balance"])
 	}
 
@@ -372,7 +372,7 @@ func TestPhase4_OpeningBalance(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("set opening from dip: status %d: %v", code, body)
 	}
-	if body["litres"].(float64) != dipVolume {
+	if body["litres"].(string) != "17500.000" {
 		t.Fatalf("opening from dip litres = %v, want %v", body["litres"], dipVolume)
 	}
 
@@ -414,12 +414,12 @@ func TestPhase4_Delivery(t *testing.T) {
 		t.Fatalf("no-dip delivery should not flag a mismatch")
 	}
 	mv := body["movement"].(map[string]any)
-	if mv["movement_type"] != "delivery" || mv["litres"].(float64) != 10000 || mv["balance_after"].(float64) != 18000 {
+	if mv["movement_type"] != "delivery" || mv["litres"].(string) != "10000.000" || mv["balance_after"].(string) != "18000.000" {
 		t.Fatalf("delivery movement = %v", mv)
 	}
 
 	// Book balance rose by the delivered volume.
-	if code, b := h.getJSON(t, tank+"/book-balance", admin); code != http.StatusOK || b["book_balance"].(float64) != 18000 {
+	if code, b := h.getJSON(t, tank+"/book-balance", admin); code != http.StatusOK || b["book_balance"].(string) != "18000.000" {
 		t.Fatalf("book balance after delivery = %v (status %d)", b["book_balance"], code)
 	}
 
@@ -507,8 +507,8 @@ func TestPhase4_SalesOnApproval(t *testing.T) {
 	}
 
 	code, body := h.getJSON(t, pmsTank+"/book-balance", admin)
-	if code != http.StatusOK || body["book_balance"].(float64) != 25800 {
-		t.Fatalf("book balance after sales = %v (status %d), want 25800", body["book_balance"], code)
+	if code != http.StatusOK || body["book_balance"].(string) != "25800.000" {
+		t.Fatalf("book balance after sales = %v (status %d), want 25800.000", body["book_balance"], code)
 	}
 
 	// The ledger carries the sales movement keyed to the shift.
@@ -523,7 +523,7 @@ func TestPhase4_SalesOnApproval(t *testing.T) {
 	if sale == nil {
 		t.Fatalf("no sales movement in ledger: %v", ledger["items"])
 	}
-	if sale["litres"].(float64) != -4200 || sale["source_ref_type"] != "shift" || sale["source_ref_id"] != shiftID.String() {
+	if sale["litres"].(string) != "-4200.000" || sale["source_ref_type"] != "shift" || sale["source_ref_id"] != shiftID.String() {
 		t.Fatalf("sales movement = %v", sale)
 	}
 
@@ -544,8 +544,8 @@ func TestPhase4_SalesOnApproval(t *testing.T) {
 	if len(posted) != 0 || len(skipped) != 0 {
 		t.Fatalf("re-post should be a no-op, got posted=%d skipped=%d", len(posted), len(skipped))
 	}
-	if code, b := h.getJSON(t, pmsTank+"/book-balance", admin); b["book_balance"].(float64) != 25800 {
-		t.Fatalf("book balance after re-post = %v (status %d), want 25800 (no double-count)", b["book_balance"], code)
+	if code, b := h.getJSON(t, pmsTank+"/book-balance", admin); b["book_balance"].(string) != "25800.000" {
+		t.Fatalf("book balance after re-post = %v (status %d), want 25800.000 (no double-count)", b["book_balance"], code)
 	}
 
 	// Skip: a tank with no opening balance is skipped, not posted.
@@ -565,8 +565,10 @@ func TestPhase4_SalesOnApproval(t *testing.T) {
 	if len(posted) != 0 || len(skipped) != 1 || skipped[0] != h.ids.tankAGO {
 		t.Fatalf("unopened tank should be skipped, got posted=%d skipped=%v", len(posted), skipped)
 	}
-	if _, b := h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin); b["book_balance"].(float64) != 0 {
-		t.Fatalf("unopened tank balance = %v, want 0", b["book_balance"])
+	// An empty ledger sums to COALESCE(NULL, 0)::text = "0" (the integer-literal
+	// default carries no scale), distinct from a numeric(14,3) sum's "N.000".
+	if _, b := h.getJSON(t, "/api/v1/tanks/"+h.ids.tankAGO.String()+"/book-balance", admin); b["book_balance"].(string) != "0" {
+		t.Fatalf("unopened tank balance = %v, want \"0\"", b["book_balance"])
 	}
 }
 
@@ -654,8 +656,8 @@ func TestPhase4_Reconciliation(t *testing.T) {
 		t.Fatalf("sealed status = %v", sealed["status"])
 	}
 	// Ledger is reconciled to physical.
-	if _, b := h.getJSON(t, pms+"/book-balance", admin); b["book_balance"].(float64) != 25000 {
-		t.Fatalf("book balance after seal = %v, want 25000", b["book_balance"])
+	if _, b := h.getJSON(t, pms+"/book-balance", admin); b["book_balance"].(string) != "25000.000" {
+		t.Fatalf("book balance after seal = %v, want 25000.000", b["book_balance"])
 	}
 	// Re-sealing is rejected.
 	if code, _ := h.do(t, http.MethodPost, "/api/v1/reconciliations/"+reconID+"/seal", admin, nil, ""); code != http.StatusConflict {
@@ -831,8 +833,8 @@ func TestPhase4_Overviews(t *testing.T) {
 		t.Fatalf("inventory-overview: %d %v", code, inv)
 	}
 	pmsInv := findTankEntry(t, inv["tanks"].([]any), h.ids.tankPMS.String())
-	if pmsInv["book_balance"].(float64) != 25000 {
-		t.Fatalf("inventory book_balance = %v, want 25000 (post-seal)", pmsInv["book_balance"])
+	if pmsInv["book_balance"].(string) != "25000.000" {
+		t.Fatalf("inventory book_balance = %v, want 25000.000 (post-seal)", pmsInv["book_balance"])
 	}
 	if pmsInv["latest_physical"].(float64) != 25000 {
 		t.Fatalf("inventory latest_physical = %v, want 25000", pmsInv["latest_physical"])

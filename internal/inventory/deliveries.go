@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -140,9 +141,11 @@ func (r *Repo) ReceiveDelivery(ctx context.Context, tx pgx.Tx, tenantID uuid.UUI
 		MovementType:  TypeDelivery,
 		SourceRefType: &srcType,
 		SourceRefID:   &d.ID,
-		Litres:        in.VolumeLitres,
-		RecordedBy:    in.ReceivedBy,
-		Notes:         in.Notes,
+		// MD-1 boundary: VolumeLitres is still an upstream float (delivery volume
+		// input). Format to 3-decimal numeric text; the float source is a later wave.
+		Litres:     strconv.FormatFloat(in.VolumeLitres, 'f', 3, 64),
+		RecordedBy: in.ReceivedBy,
+		Notes:      in.Notes,
 	})
 	if err != nil {
 		return nil, nil, err
@@ -263,11 +266,13 @@ func (r *Repo) ReceiveGoodsReceipt(ctx context.Context, tx pgx.Tx, tenantID uuid
 
 	srcType := "delivery"
 	m, err := r.PostMovement(ctx, tx, tenantID, PostInput{
-		TankID:             in.TankID,
-		MovementType:       TypeDelivery,
-		SourceRefType:      &srcType,
-		SourceRefID:        &d.ID,
-		Litres:             in.VolumeLitres,
+		TankID:        in.TankID,
+		MovementType:  TypeDelivery,
+		SourceRefType: &srcType,
+		SourceRefID:   &d.ID,
+		// MD-1 boundary: VolumeLitres is still an upstream float (PO receipt
+		// volume). Format to 3-decimal numeric text; the float source is a later wave.
+		Litres:             strconv.FormatFloat(in.VolumeLitres, 'f', 3, 64),
 		SupplierID:         &snap.SupplierID,
 		PurchaseOrderID:    &in.PurchaseOrderID,
 		LandedCostTotal:    d.LandedCostTotal,
