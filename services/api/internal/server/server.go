@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -79,6 +80,15 @@ type Server struct {
 	metrics    *observability.Metrics
 	rateLimit  *rateLimiter
 
+	// Readiness-aware load shedding (REL-5). dbHealthy is the cached DB health
+	// observed by the background checker; it defaults to true so the shedding
+	// middleware passes traffic through until an actual failed ping flips it.
+	// The checker is started by Start() and stopped by Shutdown(); stopHealthcheck
+	// cancels its context and healthcheckDone is closed when its goroutine exits.
+	dbHealthy       atomic.Bool
+	stopHealthcheck context.CancelFunc
+	healthcheckDone chan struct{}
+
 	accounting     *accounting.Repo
 	banking        *banking.Repo
 	enterprise     *enterprise.Repo
@@ -126,6 +136,12 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		policy:   deps.Policy,
 		metrics:  deps.Metrics,
 	}
+
+	// Default to healthy so the load-shedding middleware (REL-5) passes traffic
+	// through until the background checker observes a failed DB ping. This keeps
+	// shedding OFF in any context that builds the Server but never starts the
+	// checker (the integration harness) and in thin smoke deployments (DB nil).
+	s.dbHealthy.Store(true)
 
 	// Request throttling (REL-4). The per-tenant limiter reuses the Redis-backed
 	// ratelimit.Limiter under its own key prefix; it is only built when Redis is
@@ -203,6 +219,14 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// shed responses are still counted, and skips the operational probes. No-op
 	// when API_MAX_INFLIGHT is unset/0.
 	r.Use(s.limitInflight)
+	// Readiness-aware load shedding (REL-5): when the background checker has
+	// observed the database unreachable, shed regular traffic fast with 503 +
+	// Retry-After (a single atomic read — no DB call in the hot path) instead of
+	// letting every request block on a dead dependency and pile up. Sits beside
+	// the in-flight cap and skips the operational probes so health stays visible
+	// and the orchestrator can route recovery. No-op until an observed failed
+	// ping flips the flag, so it never sheds when the checker isn't running.
+	r.Use(s.shedWhenUnhealthy)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(limitRequestBody)
 	r.Use(cors.Handler(cors.Options{
@@ -926,6 +950,9 @@ func (s *Server) Router() chi.Router { return s.router }
 // Start blocks on http.ListenAndServe. It returns nil on graceful
 // shutdown via Shutdown; any other error is propagated.
 func (s *Server) Start() error {
+	// Kick off the background DB health checker (REL-5) before we start
+	// serving so the cached health flag is primed. No-op when deps.DB is nil.
+	s.startHealthcheck()
 	s.logger.Info("api listening", "addr", s.cfg.Addr())
 	if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -933,8 +960,11 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Shutdown drains in-flight requests within the deadline carried by ctx.
+// Shutdown drains in-flight requests within the deadline carried by ctx, then
+// stops the background health checker so its goroutine is never leaked.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("api shutting down")
-	return s.http.Shutdown(ctx)
+	err := s.http.Shutdown(ctx)
+	s.stopHealthcheckChecker()
+	return err
 }

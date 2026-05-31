@@ -122,6 +122,18 @@ type Config struct {
 	TenantRateWindow time.Duration `envconfig:"API_TENANT_RATE_WINDOW" default:"1m"`
 	MaxInflight      int64         `envconfig:"API_MAX_INFLIGHT" default:"256"`
 
+	// Readiness-aware load shedding (REL-5). A lightweight background checker
+	// Pings the database on this interval and caches the result in an atomic
+	// flag; when the DB has been observed unreachable the shedding middleware
+	// returns 503 + Retry-After fast (no per-request DB call) for ordinary API
+	// traffic, while the operational probes and recovery paths stay reachable.
+	// A non-positive interval (the Go zero value of a Config built without
+	// Load(), e.g. the integration harness) falls back to the in-code default
+	// when the checker is started; the checker is only started by Start(), so a
+	// harness that never calls Start() leaves the flag at its default-healthy
+	// value and nothing is ever shed.
+	HealthcheckInterval time.Duration `envconfig:"API_HEALTHCHECK_INTERVAL" default:"3s"`
+
 	// Platform admin. A static bearer used by the tenant-provisioning
 	// endpoint (POST /api/v1/platform/tenants). Empty disables the route
 	// entirely. Distinct from user sessions — it's an operator/IaC token,
