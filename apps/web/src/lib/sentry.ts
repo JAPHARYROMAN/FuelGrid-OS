@@ -28,3 +28,30 @@ export function initSentry() {
 
   initialized = true;
 }
+
+/** True only once init has actually wired Sentry (i.e. a DSN was set). */
+function isActive(): boolean {
+  return initialized;
+}
+
+/**
+ * Capture an unexpected error. NO-OP when Sentry was never initialized (no
+ * DSN), so dev/CI/build are unaffected. `requestId` (from SdkError) is set as
+ * a tag so the captured event can be correlated with server logs/traces.
+ */
+export function captureError(error: unknown, requestId?: string | null) {
+  if (!isActive()) return;
+  Sentry.captureException(error, requestId ? { tags: { request_id: requestId } } : undefined);
+}
+
+/** Associate subsequent events with the signed-in user. NO-OP when inactive. */
+export function setSentryUser(user: { id?: string; tenantId?: string }) {
+  if (!isActive()) return;
+  Sentry.setUser({ id: user.id, tenant_id: user.tenantId });
+}
+
+/** Clear the associated user on logout. NO-OP when inactive. */
+export function clearSentryUser() {
+  if (!isActive()) return;
+  Sentry.setUser(null);
+}

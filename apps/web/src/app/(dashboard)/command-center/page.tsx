@@ -1,5 +1,6 @@
 'use client';
 
+import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { LayoutDashboard } from 'lucide-react';
 
@@ -15,12 +16,21 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { setSentryUser } from '@/lib/sentry';
 
 export default function CommandCenterPage() {
   const meQuery = useQuery({
     queryKey: ['me'],
     queryFn: ({ signal }) => api.me(signal),
   });
+
+  // Associate Sentry events with the signed-in user once /me resolves. No-op
+  // when Sentry is unconfigured. This is the earliest point the app reliably
+  // has the user/tenant id (the login response carries only a token).
+  const me = meQuery.data;
+  React.useEffect(() => {
+    if (me) setSentryUser({ id: me.user_id, tenantId: me.tenant_id });
+  }, [me]);
 
   return (
     <div className="flex flex-col gap-6">

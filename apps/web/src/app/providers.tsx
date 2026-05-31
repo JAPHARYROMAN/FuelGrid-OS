@@ -1,13 +1,42 @@
 'use client';
 
 import * as React from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from 'next-themes';
 
-import { initSentry } from '@/lib/sentry';
+import { SdkError } from '@fuelgrid/sdk';
+
+import { handleUnauthorized } from '@/lib/api';
+import { captureError, initSentry } from '@/lib/sentry';
+
+/**
+ * Central error sink for every query and mutation. Two jobs:
+ *   (a) a 401 anywhere is the logout backstop — clear the session + redirect;
+ *   (b) anything else unexpected is captured to Sentry, tagged with the
+ *       SdkError's request id for server-log correlation.
+ * Expected auth errors (401, plus 403 permission denials) are NOT captured —
+ * they're normal flow, not bugs.
+ */
+function reportError(error: unknown) {
+  if (error instanceof SdkError) {
+    if (error.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+    // Don't noise up Sentry with routine permission denials.
+    if (error.status === 403) return;
+    captureError(error, error.requestId);
+    return;
+  }
+  // AbortErrors are deliberate cancellations, not failures.
+  if (error instanceof DOMException && error.name === 'AbortError') return;
+  captureError(error);
+}
 
 function makeQueryClient() {
   return new QueryClient({
+    queryCache: new QueryCache({ onError: reportError }),
+    mutationCache: new MutationCache({ onError: reportError }),
     defaultOptions: {
       queries: {
         // Most dashboard data is read often and changes rarely; tune
