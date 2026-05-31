@@ -8,7 +8,7 @@ Quick reference for how we work in this repo. Keep it open while you're shipping
 | ---- | ------------------------------- |
 | Node | 22 (LTS) — see [.nvmrc](.nvmrc) |
 | pnpm | 10.x — enabled via Corepack     |
-| Go   | 1.23+ (lands in Stage 2)        |
+| Go   | 1.25 — see [go.mod](go.mod)     |
 
 Install:
 
@@ -62,7 +62,7 @@ Subject line: imperative mood, no trailing period, ≤72 chars. Use the body to 
 ## Code style
 
 - TypeScript: enforced via [packages/config](packages/config). Don't loosen `strict`, `noUncheckedIndexedAccess`, or `verbatimModuleSyntax` in a package's local `tsconfig.json`.
-- Go: `gofmt` + `golangci-lint` (config lands in Stage 2). Use `slog`, not `log`.
+- Go: `gofmt` + `golangci-lint` (config in [.golangci.yml](.golangci.yml)). Use `slog`, not `log`.
 - No emojis in code or commit messages.
 - No comments that restate the code. Use comments only for non-obvious _why_.
 
