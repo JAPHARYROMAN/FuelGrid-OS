@@ -148,7 +148,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 
 	if cfg.DatabaseURL != "" {
 		pool, err := database.Connect(ctx, database.Config{
-			URL:             cfg.DatabaseURL,
+			URL:             cfg.DatabaseURL.Reveal(),
 			MaxOpenConns:    cfg.DatabaseMaxOpenConns,
 			MinIdleConns:    cfg.DatabaseMinIdleConns,
 			ConnMaxLifetime: cfg.DatabaseConnLifetime,
@@ -173,7 +173,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 	if deps.DB != nil {
 		if cfg.DatabaseAppURL != "" {
 			appPool, err := database.Connect(ctx, database.Config{
-				URL:             cfg.DatabaseAppURL,
+				URL:             cfg.DatabaseAppURL.Reveal(),
 				MaxOpenConns:    cfg.DatabaseMaxOpenConns,
 				MinIdleConns:    cfg.DatabaseMinIdleConns,
 				ConnMaxLifetime: cfg.DatabaseConnLifetime,
@@ -193,7 +193,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 	}
 
 	if cfg.RedisURL != "" {
-		client, err := cache.Connect(ctx, cfg.RedisURL)
+		client, err := cache.Connect(ctx, cfg.RedisURL.Reveal())
 		if err != nil {
 			cleanup()
 			return deps, nil, errors.New("redis connect: " + err.Error())
@@ -213,7 +213,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			cleanup()
 			return deps, nil, errors.New("AUTH_PASSWORD_PEPPER must be set outside development — load it from a secret store; refusing to start with an empty pepper")
 		}
-		hasher := password.New(password.DefaultParams, cfg.AuthPasswordPepper)
+		hasher := password.New(password.DefaultParams, cfg.AuthPasswordPepper.Reveal())
 		store := session.NewRedisStore(deps.Redis, "session:")
 		limiter := ratelimit.New(deps.Redis, "ratelimit:")
 		userRepo := repo.NewUserRepo(deps.DB)
@@ -236,7 +236,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			limiter,
 			deps.Redis,
 			logger,
-			cfg.AuthPasswordPepper,
+			cfg.AuthPasswordPepper.Reveal(),
 		)
 		logger.Info("identity service wired")
 
