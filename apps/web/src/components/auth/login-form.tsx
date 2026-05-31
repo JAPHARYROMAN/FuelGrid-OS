@@ -20,6 +20,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { safeRedirect } from '@/lib/safe-redirect';
 import { useAuthStore } from '@/stores/auth-store';
 
 const schema = z.object({
@@ -33,20 +34,6 @@ const schema = z.object({
 });
 
 type FormValues = z.infer<typeof schema>;
-
-/**
- * safeRedirect guards the post-login `?next=` against open-redirect.
- * A value must be a same-origin absolute path: it starts with a single
- * "/" and not "//" (protocol-relative, e.g. //evil.com) or "/\" (which
- * some browsers also treat as protocol-relative). Anything else falls
- * back to the command center.
- */
-function safeRedirect(next: string | null): string {
-  if (!next) return '/command-center';
-  if (!next.startsWith('/')) return '/command-center';
-  if (next.startsWith('//') || next.startsWith('/\\')) return '/command-center';
-  return next;
-}
 
 export function LoginForm() {
   const router = useRouter();
