@@ -1,0 +1,180 @@
+name: CD
+
+# Continuous Deployment for the FuelGrid OS API (CICD-4 / OPS-5).
+#
+# This workflow is intentionally a *safe no-op* until the deployment secrets
+# are configured (see docs/deployment.md). The image build + push to GHCR is
+# always exercised (GHCR auth uses the automatic GITHUB_TOKEN), but the
+# migrate and post-deploy smoke jobs guard on optional secrets — they skip
+# cleanly when those secrets are absent so the pipeline is valid before any
+# real infrastructure exists.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+# Single-flight per ref: never let two deploys of the same ref race. We do NOT
+# cancel in progress — a half-applied migration interrupted mid-flight is worse
+# than waiting for the prior deploy to finish.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required for docker/login-action to push to GHCR with GITHUB_TOKEN.
+  packages: write
+
+jobs:
+  build-push:
+    name: Build + push API image to GHCR
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GHCR auth is automatic: GITHUB_TOKEN + packages:write is all that's
+      # needed, no manually-created secret. Image repo is the lowercased
+      # owner/repo with an -api suffix: ghcr.io/<owner>/<repo>-api.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image reference
+        id: meta
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-api"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Image repository: $image"
+
+      # Tags:
+      #   - :sha-<full-sha>   immutable handle for every build
+      #   - :latest           moving handle, only on branch pushes (not tags)
+      #   - :<tag>            the git tag name, on tag pushes (e.g. v1.2.3)
+      - name: Docker metadata (tags + labels)
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.meta.outputs.image }}
+          tags: |
+            type=sha,prefix=sha-,format=long
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+
+      - name: Build + push API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/api/Dockerfile
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ github.sha }}
+            COMMIT=${{ github.sha }}
+
+  migrate:
+    name: Apply DB migrations (golang-migrate up)
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guard: when DATABASE_URL is unset (no infra yet) this job is a clean
+      # no-op. We cannot use a job-level `if:` on secrets (secrets aren't
+      # allowed in job-level conditionals), so the gate lives in a first step
+      # that exports a flag the rest of the job reads.
+      - name: Check for DATABASE_URL secret
+        id: gate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -n "$DATABASE_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "DATABASE_URL is configured — migrations will run."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DATABASE_URL secret is not set; skipping migrations (no-op until infra exists)."
+          fi
+
+      - uses: actions/setup-go@v5
+        if: steps.gate.outputs.configured == 'true'
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Canonical project invocation: the migrate command wraps golang-migrate
+      # v4 and applies services/api/migrations against $DATABASE_URL. `up` is
+      # idempotent (ErrNoChange -> success), so re-running is safe.
+      - name: Run migrations (up)
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: go run ./services/api/cmd/migrate up
+
+      - name: Confirm migration version
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: go run ./services/api/cmd/migrate version
+
+  smoke:
+    name: Post-deploy smoke (/readyz must be 200)
+    runs-on: ubuntu-latest
+    needs: migrate
+    environment: production
+    steps:
+      # Guard on DEPLOY_HEALTH_URL the same way as the migrate job: skip
+      # cleanly when the health URL secret is unset.
+      - name: Check for DEPLOY_HEALTH_URL secret
+        id: gate
+        env:
+          DEPLOY_HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+        run: |
+          if [ -n "$DEPLOY_HEALTH_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "DEPLOY_HEALTH_URL is configured — smoke gate will run."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::DEPLOY_HEALTH_URL secret is not set; skipping smoke gate (no-op until infra exists)."
+          fi
+
+      # Poll /readyz: the deployed API reports 200 + {"status":"ready"} only
+      # when its postgres and redis checks pass. Anything else fails the deploy.
+      - name: Probe deployed /readyz
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          DEPLOY_HEALTH_URL: ${{ secrets.DEPLOY_HEALTH_URL }}
+        run: |
+          echo "Probing $DEPLOY_HEALTH_URL"
+          status=0
+          for i in $(seq 1 30); do
+            status=$(curl -sS -o /tmp/readyz.json -w '%{http_code}' --max-time 10 "$DEPLOY_HEALTH_URL" || echo 000)
+            if [ "$status" = "200" ]; then
+              echo "readyz returned 200 on attempt $i"
+              cat /tmp/readyz.json
+              break
+            fi
+            echo "attempt $i: status=$status, retrying in 5s..."
+            sleep 5
+          done
+          if [ "$status" != "200" ]; then
+            echo "::error::Post-deploy smoke gate failed: /readyz returned $status (expected 200)"
+            cat /tmp/readyz.json 2>/dev/null || true
+            exit 1
+          fi
+          grep -q '"status":"ready"' /tmp/readyz.json
+          echo "Post-deploy smoke gate passed."
