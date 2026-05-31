@@ -4,21 +4,28 @@ import * as React from 'react';
 import { motion } from 'framer-motion';
 
 import { cn } from '../lib/cn';
+import { parseDecimal } from '../lib/money';
 
 export interface TankVisualProps {
   name: string;
   code: string;
   /** Product colour (any CSS colour — usually the product's stored hex). */
   color: string;
-  capacityLitres: number;
-  safeMinLitres: number;
-  safeMaxLitres: number;
+  /**
+   * Tank dimensions as exact decimal STRINGS from the SDK (numeric -> text).
+   * Parsed once here for the SVG geometry/display; never fed back into
+   * business logic.
+   */
+  capacityLitres: string;
+  safeMinLitres: string;
+  safeMaxLitres: string;
   /**
    * Current volume in litres. Phase 2 has no readings yet, so leave it
    * null/undefined — the tank renders an "awaiting reading" placeholder.
-   * Phase 3 fills this from dip readings and the fill animates in.
+   * Phase 3 fills this from dip readings and the fill animates in. The API
+   * still emits current_litres as a number, so accept either.
    */
-  currentLitres?: number | null;
+  currentLitres?: number | string | null;
   status?: string;
   className?: string;
 }
@@ -52,14 +59,19 @@ export function TankVisual({
   className,
 }: TankVisualProps) {
   const gradientID = React.useId();
-  const hasReading = currentLitres != null && Number.isFinite(currentLitres);
-  const fillFrac = hasReading ? clamp01(currentLitres! / capacityLitres) : 0;
+  // Parse the decimal-string dimensions once for geometry/display.
+  const capacity = parseDecimal(capacityLitres);
+  const safeMin = parseDecimal(safeMinLitres);
+  const safeMax = parseDecimal(safeMaxLitres);
+  const current = parseDecimal(currentLitres);
+  const hasReading = currentLitres != null && currentLitres !== '' && Number.isFinite(current);
+  const fillFrac = hasReading ? clamp01(current / capacity) : 0;
   const fillH = BODY_H * fillFrac;
   const fillY = BODY_TOP + BODY_H - fillH;
 
-  const minY = levelY(safeMinLitres, capacityLitres);
-  const maxY = levelY(safeMaxLitres, capacityLitres);
-  const ullage = hasReading ? Math.max(0, capacityLitres - currentLitres!) : null;
+  const minY = levelY(safeMin, capacity);
+  const maxY = levelY(safeMax, capacity);
+  const ullage = hasReading ? Math.max(0, capacity - current) : null;
 
   return (
     <div
@@ -160,13 +172,11 @@ export function TankVisual({
         <dl className="flex flex-col gap-1.5 text-sm">
           <div>
             <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">Current</dt>
-            <dd className="font-semibold tabular-nums">
-              {hasReading ? `${fmt(currentLitres!)} L` : '—'}
-            </dd>
+            <dd className="font-semibold tabular-nums">{hasReading ? `${fmt(current)} L` : '—'}</dd>
           </div>
           <div>
             <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">Capacity</dt>
-            <dd className="tabular-nums text-muted-foreground">{fmt(capacityLitres)} L</dd>
+            <dd className="tabular-nums text-muted-foreground">{fmt(capacity)} L</dd>
           </div>
           {status && status !== 'active' ? (
             <span className="w-fit rounded-full bg-warning/15 px-2 py-0.5 text-[11px] uppercase tracking-wider text-warning">

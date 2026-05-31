@@ -543,7 +543,7 @@ export class Client {
       supplier_id: string;
       expected_delivery_date?: string;
       notes?: string;
-      lines: Array<{ product_id: string; ordered_litres: number; unit_price: string }>;
+      lines: Array<{ product_id: string; ordered_litres: string; unit_price: string }>;
     },
     signal?: AbortSignal,
   ): Promise<PurchaseOrder> {
@@ -559,7 +559,7 @@ export class Client {
     req: {
       expected_delivery_date?: string;
       notes?: string;
-      lines?: Array<{ product_id: string; ordered_litres: number; unit_price: string }>;
+      lines?: Array<{ product_id: string; ordered_litres: string; unit_price: string }>;
     },
     signal?: AbortSignal,
   ): Promise<PurchaseOrder> {
@@ -691,7 +691,7 @@ export class Client {
       product_id: string;
       name: string;
       code: string;
-      capacity_litres: number;
+      capacity_litres: string;
     },
     signal?: AbortSignal,
   ): Promise<Tank> {
@@ -861,7 +861,7 @@ export class Client {
       pump_id: string;
       tank_id: string;
       number: number;
-      default_price?: number;
+      default_price?: string;
       meter_decimal_places?: number;
     },
     signal?: AbortSignal,
@@ -1049,7 +1049,7 @@ export class Client {
 
   captureMeterReading(
     shiftID: string,
-    req: { nozzle_id: string; reading_type: 'opening' | 'closing'; reading: number },
+    req: { nozzle_id: string; reading_type: 'opening' | 'closing'; reading: string },
     signal?: AbortSignal,
   ): Promise<MeterReading> {
     return this.request<MeterReading>(
@@ -1061,7 +1061,7 @@ export class Client {
   correctMeterReading(
     shiftID: string,
     readingID: string,
-    reading: number,
+    reading: string,
     signal?: AbortSignal,
   ): Promise<MeterReading> {
     return this.request<MeterReading>(
@@ -1084,7 +1084,7 @@ export class Client {
     req: {
       tank_id: string;
       reading_type: 'opening' | 'closing';
-      dip_mm: number;
+      dip_mm: string;
       water_mm?: number;
       temperature_c?: number;
     },
@@ -1100,7 +1100,7 @@ export class Client {
   correctDipReading(
     shiftID: string,
     readingID: string,
-    req: { dip_mm: number; water_mm?: number; temperature_c?: number },
+    req: { dip_mm: string; water_mm?: number; temperature_c?: number },
     signal?: AbortSignal,
   ): Promise<DipReading> {
     return this.request<DipReading>(
@@ -1128,10 +1128,10 @@ export class Client {
   submitCash(
     shiftID: string,
     req: {
-      cash_amount: number;
-      mobile_money_amount?: number;
-      card_amount?: number;
-      credit_amount?: number;
+      cash_amount: string;
+      mobile_money_amount?: string;
+      card_amount?: string;
+      credit_amount?: string;
       notes?: string;
     },
     signal?: AbortSignal,

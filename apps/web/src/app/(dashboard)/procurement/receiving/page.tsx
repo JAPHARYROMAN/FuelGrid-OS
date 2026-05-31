@@ -20,13 +20,16 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres, formatMoney, parseDecimal } from '@/lib/money';
 
-function fmtLitres(n: number) {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+// Litres arrive as decimal strings (PO lines) or display numbers (computed
+// remaining/variance); formatLitres handles both.
+function fmtLitres(n: number | string) {
+  return formatLitres(n, { fallback: '0' });
 }
 
 function fmtMoney(v?: string) {
-  return Number(v ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatMoney(v, { fallback: '0.00' });
 }
 
 function openForReceiving(po: PurchaseOrder) {
@@ -190,12 +193,11 @@ export default function ReceivingPage() {
   });
 
   const projectedReceipt = Number(volume || 0);
-  const remaining = selectedLine
-    ? Math.max(0, selectedLine.ordered_litres - selectedLine.received_litres)
-    : 0;
-  const projectedVariance = selectedLine
-    ? selectedLine.received_litres + projectedReceipt - selectedLine.ordered_litres
-    : 0;
+  // PO-line litres are decimal strings; parse for these display-only figures.
+  const orderedLitres = selectedLine ? parseDecimal(selectedLine.ordered_litres) : 0;
+  const receivedLitres = selectedLine ? parseDecimal(selectedLine.received_litres) : 0;
+  const remaining = selectedLine ? Math.max(0, orderedLitres - receivedLitres) : 0;
+  const projectedVariance = selectedLine ? receivedLitres + projectedReceipt - orderedLitres : 0;
 
   return (
     <div className="flex flex-col gap-5">

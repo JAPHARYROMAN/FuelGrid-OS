@@ -16,9 +16,12 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres } from '@/lib/money';
 
-function fmtLitres(n: number) {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+// Litre fields arrive as exact decimal strings (book_balance, capacity_litres)
+// or display numbers (latest_physical); formatLitres handles both.
+function fmtLitres(n: number | string) {
+  return formatLitres(n, { fallback: '0' });
 }
 
 function fillTone(pct: number): 'success' | 'warning' | 'danger' {

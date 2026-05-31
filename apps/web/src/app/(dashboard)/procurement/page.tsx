@@ -25,14 +25,14 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres, formatMoney, parseDecimal, sumMoney } from '@/lib/money';
 
 function money(v?: string) {
-  const n = Number(v ?? 0);
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return formatMoney(v, { fallback: '0.00' });
 }
 
-function litres(v: number) {
-  return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+function litres(v: number | string) {
+  return formatLitres(v, { fallback: '0' });
 }
 
 function statusTone(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
@@ -153,13 +153,10 @@ export default function ProcurementPage() {
             <MetricCard label="Recent receipts" value={overview.data.recent_receipts.length} />
             <MetricCard
               label="Outstanding supplier balance"
+              // Decimal-safe sum of the per-supplier outstanding strings (integer
+              // cents) — Number()+reduce drifts across a long column (PAGE-002).
               value={money(
-                String(
-                  overview.data.supplier_balances.reduce(
-                    (sum, b) => sum + Number(b.outstanding_amount || 0),
-                    0,
-                  ),
-                ),
+                sumMoney(overview.data.supplier_balances.map((b) => b.outstanding_amount)),
               )}
             />
           </div>
@@ -326,8 +323,10 @@ function PORow({
   productName: Map<string, string>;
 }) {
   const firstLine = po.lines[0];
-  const ordered = po.lines.reduce((sum, ln) => sum + ln.ordered_litres, 0);
-  const received = po.lines.reduce((sum, ln) => sum + ln.received_litres, 0);
+  // ordered/received litres are decimal strings; parse each for a display-only
+  // per-PO total (formatLitres rounds for the column).
+  const ordered = po.lines.reduce((sum, ln) => sum + parseDecimal(ln.ordered_litres), 0);
+  const received = po.lines.reduce((sum, ln) => sum + parseDecimal(ln.received_litres), 0);
   return (
     <TableRow>
       <TableCell className="font-medium">{supplierName}</TableCell>

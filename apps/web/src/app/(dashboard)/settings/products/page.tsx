@@ -28,6 +28,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatMoney } from '@/lib/money';
 
 interface FormState {
   code: string;
@@ -68,16 +69,18 @@ export default function ProductsPage() {
     queryFn: ({ signal }) => api.listProducts(signal),
   });
 
+  // Money/rate fields are sent as decimal STRINGS (the API accepts string or
+  // number and stores exact numeric); trim and default empties to "0".
   function buildPayload(input: FormState) {
     return {
       code: input.code.trim(),
       name: input.name.trim(),
       category: input.category,
       unit: input.unit,
-      default_price: Number(input.default_price) || 0,
-      tax_rate: Number(input.tax_rate) || 0,
-      density_kg_m3: input.density_kg_m3 ? Number(input.density_kg_m3) : undefined,
-      loss_tolerance_percent: Number(input.loss_tolerance_percent) || 0,
+      default_price: input.default_price.trim() || '0',
+      tax_rate: input.tax_rate.trim() || '0',
+      density_kg_m3: input.density_kg_m3.trim() ? input.density_kg_m3.trim() : undefined,
+      loss_tolerance_percent: input.loss_tolerance_percent.trim() || '0',
       color: input.color,
     };
   }
@@ -190,7 +193,7 @@ export default function ProductsPage() {
                 <TableCell className="text-muted-foreground capitalize">{p.category}</TableCell>
                 <TableCell className="text-muted-foreground">{p.unit}</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {p.default_price.toFixed(2)}
+                  {formatMoney(p.default_price)}
                 </TableCell>
                 <TableCell>
                   <Badge tone={p.status === 'active' ? 'success' : 'warning'}>{p.status}</Badge>

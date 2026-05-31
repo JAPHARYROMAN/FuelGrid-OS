@@ -1,5 +1,8 @@
 export { cn } from './lib/cn';
 
+export { formatMoney, formatLitres, parseDecimal, sumMoney } from './lib/money';
+export type { FormatOptions } from './lib/money';
+
 export { Button, buttonVariants } from './components/button';
 export type { ButtonProps } from './components/button';
 
