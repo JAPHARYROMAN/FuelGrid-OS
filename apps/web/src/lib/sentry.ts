@@ -44,6 +44,23 @@ export function captureError(error: unknown, requestId?: string | null) {
   Sentry.captureException(error, requestId ? { tags: { request_id: requestId } } : undefined);
 }
 
+/**
+ * reportError is the clean entry point for *render* errors caught by React
+ * error boundaries (app/global-error.tsx, app/(segment)/error.tsx). Unlike
+ * `captureError` (which correlates an SdkError with a server request id), a
+ * render error carries no request id — instead Next.js attaches a `digest`
+ * that maps to the server-side log line, plus we tag the boundary that caught
+ * it. NO-OP when Sentry was never initialized (no DSN), so dev/CI/build are
+ * unaffected.
+ */
+export function reportError(error: Error & { digest?: string }, context?: { boundary?: string }) {
+  if (!isActive()) return;
+  const tags: Record<string, string> = {};
+  if (error.digest) tags.digest = error.digest;
+  if (context?.boundary) tags.boundary = context.boundary;
+  Sentry.captureException(error, Object.keys(tags).length ? { tags } : undefined);
+}
+
 /** Associate subsequent events with the signed-in user. NO-OP when inactive. */
 export function setSentryUser(user: { id?: string; tenantId?: string }) {
   if (!isActive()) return;
