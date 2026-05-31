@@ -136,6 +136,31 @@ func (r *Repo) ListCashReconciliations(ctx context.Context, tenantID, stationID 
 	return out, rows.Err()
 }
 
+// ListCashReconciliationsPage returns a page of cash reconciliations for the
+// tenant (optionally filtered by station), newest first by created_at (with id
+// as a tiebreaker for stable paging), applying the supplied limit and offset.
+func (r *Repo) ListCashReconciliationsPage(ctx context.Context, tenantID, stationID uuid.UUID, limit, offset int) ([]CashReconciliation, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+cashReconColumns+` FROM cash_reconciliations
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR station_id = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, nullUUID(stationID), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CashReconciliation{}
+	for rows.Next() {
+		var c CashReconciliation
+		if err := scanCashRecon(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // SubmitCashReconciliation records counted cash and recomputes variance in SQL,
 // moving draft/rejected -> submitted.
 func (r *Repo) SubmitCashReconciliation(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, countedCash string, notes *string) (*CashReconciliation, error) {

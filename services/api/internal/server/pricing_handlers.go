@@ -214,17 +214,25 @@ func (s *Server) handlePriceHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "product_id query param is required")
 		return
 	}
-	rows, err := s.pricing.History(r.Context(), actor.TenantID, stationID, productID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.pricing.HistoryPage(r.Context(), actor.TenantID, stationID, productID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("price history", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]priceChangeDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toPriceChangeDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // parseDecimal parses a money/price decimal string for validation and soft

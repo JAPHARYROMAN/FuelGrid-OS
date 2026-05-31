@@ -180,16 +180,24 @@ func (s *Server) handleListCashReconciliations(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid station id")
 		return
 	}
-	rows, err := s.banking.ListCashReconciliations(r.Context(), actor.TenantID, stationID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.banking.ListCashReconciliationsPage(r.Context(), actor.TenantID, stationID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]cashReconDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toCashReconDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetCashReconciliation(w http.ResponseWriter, r *http.Request) {
@@ -413,16 +421,24 @@ func (s *Server) handleListBankAccounts(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.banking.ListBankAccounts(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.banking.ListBankAccountsPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]bankAccountDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toBankAccountDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // ---- Bank deposits (Stage 5) ----
@@ -528,16 +544,24 @@ func (s *Server) handleListBankDeposits(w http.ResponseWriter, r *http.Request) 
 			stationID = id
 		}
 	}
-	rows, err := s.banking.ListDeposits(r.Context(), actor.TenantID, stationID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.banking.ListDepositsPage(r.Context(), actor.TenantID, stationID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]bankDepositDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toBankDepositDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // handlePrepareBankDeposit posts cash on hand -> bank clearing for the deposit's
@@ -814,16 +838,24 @@ func (s *Server) handleListBankStatementLines(w http.ResponseWriter, r *http.Req
 			accountID = id
 		}
 	}
-	rows, err := s.banking.ListStatementLines(r.Context(), actor.TenantID, accountID, r.URL.Query().Get("status"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.banking.ListStatementLinesPage(r.Context(), actor.TenantID, accountID, r.URL.Query().Get("status"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]statementLineDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toStatementLineDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleMatchBankStatementLine(w http.ResponseWriter, r *http.Request) {

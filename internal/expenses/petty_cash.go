@@ -106,6 +106,26 @@ func (r *Repo) ListFloats(ctx context.Context, tenantID uuid.UUID) ([]Float, err
 	return out, rows.Err()
 }
 
+// ListFloatsPage returns a page of petty cash floats for the tenant ordered by
+// name (with id as a tiebreaker for stable paging), applying the supplied limit
+// and offset.
+func (r *Repo) ListFloatsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Float, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+floatColumns+` FROM petty_cash_floats WHERE tenant_id = $1 ORDER BY name, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Float{}
+	for rows.Next() {
+		var f Float
+		if err := scanFloat(rows, &f); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // increases lists the transaction types that add to a float's balance; all
 // others subtract.
 func increases(txnType string) bool {
@@ -171,6 +191,26 @@ func (r *Repo) SetTransactionJournalEntry(ctx context.Context, tx pgx.Tx, tenant
 
 func (r *Repo) ListTransactions(ctx context.Context, tenantID, floatID uuid.UUID) ([]PettyTransaction, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+pettyTxnColumns+` FROM petty_cash_transactions WHERE tenant_id = $1 AND float_id = $2 ORDER BY created_at`, tenantID, floatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PettyTransaction{}
+	for rows.Next() {
+		var t PettyTransaction
+		if err := scanPettyTxn(rows, &t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ListTransactionsPage returns a page of petty cash transactions for the given
+// float ordered by created_at (with id as a tiebreaker for stable paging),
+// applying the supplied limit and offset.
+func (r *Repo) ListTransactionsPage(ctx context.Context, tenantID, floatID uuid.UUID, limit, offset int) ([]PettyTransaction, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+pettyTxnColumns+` FROM petty_cash_transactions WHERE tenant_id = $1 AND float_id = $2 ORDER BY created_at, id LIMIT $3 OFFSET $4`, tenantID, floatID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

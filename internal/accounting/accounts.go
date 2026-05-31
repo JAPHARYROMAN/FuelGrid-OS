@@ -116,6 +116,25 @@ func (r *Repo) ListAccounts(ctx context.Context, tenantID uuid.UUID) ([]Account,
 	return out, rows.Err()
 }
 
+// ListAccountsPage returns a page of accounts for the tenant ordered by code
+// (a stable, deterministic key), applying the supplied limit and offset.
+func (r *Repo) ListAccountsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Account, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+accountColumns+` FROM accounts WHERE tenant_id = $1 ORDER BY code LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Account{}
+	for rows.Next() {
+		var a Account
+		if err := scanAccount(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetAccount(ctx context.Context, tenantID, id uuid.UUID) (*Account, error) {
 	var a Account
 	err := scanAccount(r.pool.QueryRow(ctx, `SELECT `+accountColumns+` FROM accounts WHERE tenant_id = $1 AND id = $2`, tenantID, id), &a)

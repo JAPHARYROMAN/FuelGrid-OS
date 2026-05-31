@@ -232,6 +232,36 @@ func (r *Repo) ListEntries(ctx context.Context, tenantID uuid.UUID, limit int) (
 	return out, rows.Err()
 }
 
+// ListEntriesPage returns a page of journal entries (headers + total debit) for
+// the tenant, newest first by entry_number (a stable, deterministic key),
+// applying the supplied limit and offset.
+func (r *Repo) ListEntriesPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]JournalEntry, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+prefixedEntryColumns+`,
+		    COALESCE((SELECT SUM(debit) FROM journal_lines l WHERE l.journal_entry_id = e.id), 0)::text
+		FROM journal_entries e
+		WHERE e.tenant_id = $1
+		ORDER BY e.entry_number DESC
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []JournalEntry{}
+	for rows.Next() {
+		var e JournalEntry
+		if err := rows.Scan(
+			&e.ID, &e.EntryNumber, &e.TenantID, &e.PeriodID, &e.EntryDate, &e.SourceType, &e.SourceID, &e.StationID,
+			&e.Status, &e.Memo, &e.ReversesEntryID, &e.ReversedByEntryID, &e.PostedBy, &e.PostedAt, &e.Total,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 const prefixedEntryColumns = `
     e.id, e.entry_number, e.tenant_id, e.period_id, e.entry_date, e.source_type, e.source_id, e.station_id,
     e.status, e.memo, e.reverses_entry_id, e.reversed_by_entry_id, e.posted_by, e.posted_at

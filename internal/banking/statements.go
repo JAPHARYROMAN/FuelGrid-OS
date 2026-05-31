@@ -97,6 +97,33 @@ func (r *Repo) ListStatementLines(ctx context.Context, tenantID, bankAccountID u
 	return out, rows.Err()
 }
 
+// ListStatementLinesPage returns a page of bank statement lines for the tenant
+// (optionally filtered by account and status), newest first by txn_date (with
+// id as a tiebreaker for stable paging), applying the supplied limit and offset.
+func (r *Repo) ListStatementLinesPage(ctx context.Context, tenantID, bankAccountID uuid.UUID, status string, limit, offset int) ([]StatementLine, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+statementLineColumns+` FROM bank_statement_lines
+		WHERE tenant_id = $1
+		  AND ($2::uuid IS NULL OR bank_account_id = $2)
+		  AND ($3 = '' OR status = $3)
+		ORDER BY txn_date DESC, created_at DESC, id
+		LIMIT $4 OFFSET $5
+	`, tenantID, nullUUID(bankAccountID), status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []StatementLine{}
+	for rows.Next() {
+		var l StatementLine
+		if err := scanStatementLine(rows, &l); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetStatementLine(ctx context.Context, tenantID, id uuid.UUID) (*StatementLine, error) {
 	var l StatementLine
 	err := scanStatementLine(r.pool.QueryRow(ctx, `SELECT `+statementLineColumns+` FROM bank_statement_lines WHERE tenant_id = $1 AND id = $2`, tenantID, id), &l)

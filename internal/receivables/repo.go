@@ -123,6 +123,30 @@ func (r *Repo) ListCustomers(ctx context.Context, tenantID uuid.UUID) ([]Custome
 	return out, rows.Err()
 }
 
+// ListCustomersPage returns a page of (non-deleted) customers for the tenant
+// ordered by name (with id as a tiebreaker for stable paging), applying the
+// supplied limit and offset.
+func (r *Repo) ListCustomersPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Customer, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+customerColumns+` FROM customers
+		WHERE tenant_id = $1 AND status <> 'deleted' ORDER BY name, id
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Customer{}
+	for rows.Next() {
+		var c Customer
+		if err := scanCustomer(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetCustomer(ctx context.Context, tenantID, id uuid.UUID) (*Customer, error) {
 	var c Customer
 	err := scanCustomer(r.pool.QueryRow(ctx, `

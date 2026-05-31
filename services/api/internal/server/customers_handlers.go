@@ -96,17 +96,25 @@ func (s *Server) handleListCustomers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.receivables.ListCustomers(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.receivables.ListCustomersPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list customers", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]customerDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toCustomerDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleCreateCustomer(w http.ResponseWriter, r *http.Request) {

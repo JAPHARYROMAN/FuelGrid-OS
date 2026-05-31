@@ -87,6 +87,26 @@ func (r *Repo) ListPeriods(ctx context.Context, tenantID uuid.UUID) ([]Period, e
 	return out, rows.Err()
 }
 
+// ListPeriodsPage returns a page of accounting periods for the tenant ordered
+// by start_date DESC (with id as a tiebreaker for stable paging), applying the
+// supplied limit and offset.
+func (r *Repo) ListPeriodsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Period, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+periodColumns+` FROM accounting_periods WHERE tenant_id = $1 ORDER BY start_date DESC, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Period{}
+	for rows.Next() {
+		var p Period
+		if err := scanPeriod(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) GetPeriod(ctx context.Context, tenantID, id uuid.UUID) (*Period, error) {
 	var p Period
 	err := scanPeriod(r.pool.QueryRow(ctx, `SELECT `+periodColumns+` FROM accounting_periods WHERE tenant_id = $1 AND id = $2`, tenantID, id), &p)
