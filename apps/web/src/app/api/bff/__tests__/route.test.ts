@@ -184,7 +184,9 @@ describe('BFF proxy — login token capture', () => {
       }),
     );
 
-    const req = request('POST', 'api/v1/auth/login', { body: { email: 'a@b.com', password: 'pw' } });
+    const req = request('POST', 'api/v1/auth/login', {
+      body: { email: 'a@b.com', password: 'pw' },
+    });
     const res = await POST(req, ctx('api', 'v1', 'auth', 'login'));
 
     expect(res.headers.get('set-cookie')).toBeNull();
