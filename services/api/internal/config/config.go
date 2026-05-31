@@ -63,6 +63,14 @@ type Config struct {
 	// not a logged-in principal.
 	PlatformAdminToken string `envconfig:"PLATFORM_ADMIN_TOKEN"`
 
+	// Pagination. DefaultPageSize is the limit applied to list endpoints when
+	// the caller omits ?limit; MaxPageSize is the hard ceiling a caller may
+	// request (larger values clamp down). A non-positive value falls back to
+	// the in-code default (50 / 200) so the helper stays safe even when
+	// config is partially populated.
+	DefaultPageSize int `envconfig:"API_DEFAULT_PAGE_SIZE" default:"50"`
+	MaxPageSize     int `envconfig:"API_MAX_PAGE_SIZE" default:"200"`
+
 	// Outbox publisher.
 	OutboxPollInterval time.Duration `envconfig:"OUTBOX_POLL_INTERVAL" default:"2s"`
 	OutboxBatchSize    int           `envconfig:"OUTBOX_BATCH_SIZE" default:"100"`
