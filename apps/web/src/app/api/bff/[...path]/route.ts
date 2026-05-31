@@ -2,11 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 import { apiOrigin } from '@/lib/server/api-origin';
-import {
-  SESSION_COOKIE,
-  clearSessionCookie,
-  setSessionCookie,
-} from '@/lib/server/session-cookie';
+import { SESSION_COOKIE, clearSessionCookie, setSessionCookie } from '@/lib/server/session-cookie';
 
 /**
  * Same-origin BFF proxy (WEB-001 / Wave-10).
