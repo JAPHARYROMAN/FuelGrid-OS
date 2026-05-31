@@ -90,17 +90,25 @@ func (s *Server) handleListCalibrationCharts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	tankID := tank.ID
-	rows, err := s.calibration.ListCharts(r.Context(), actor.TenantID, tankID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.calibration.ListChartsPage(r.Context(), actor.TenantID, tankID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list calibration charts", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]calibrationChartDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toCalibrationChartDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetActiveCalibrationChart(w http.ResponseWriter, r *http.Request) {

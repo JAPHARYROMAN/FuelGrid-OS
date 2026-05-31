@@ -74,6 +74,24 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, companyID *uuid.UUI
 	return scanList(rows)
 }
 
+// ListPage mirrors List with limit/offset paging and a stable (name, id)
+// ordering. Filter by company when companyID is non-nil.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, companyID *uuid.UUID, limit, offset int) ([]Region, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM regions
+		WHERE tenant_id = $1
+		  AND ($2::uuid IS NULL OR company_id = $2::uuid)
+		  AND status <> 'deleted'
+		ORDER BY name, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, companyID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return scanList(rows)
+}
+
 func scanList(rows pgx.Rows) ([]Region, error) {
 	defer rows.Close()
 	var out []Region

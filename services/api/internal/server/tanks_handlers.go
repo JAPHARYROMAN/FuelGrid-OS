@@ -89,17 +89,25 @@ func (s *Server) handleListTanks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.tanks.List(r.Context(), actor.TenantID, filter)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.tanks.ListPage(r.Context(), actor.TenantID, filter, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list tanks", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]tankDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toTankDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetTank(w http.ResponseWriter, r *http.Request) {

@@ -102,6 +102,36 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.U
 	return out, rows.Err()
 }
 
+// ListPage mirrors List (same station and pump filters) with limit/offset
+// paging and a stable (pump_id, number, id) ordering. Callers fetch limit+1 to
+// detect a further page.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, pumpID *uuid.UUID, limit, offset int) ([]Nozzle, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM nozzles
+		WHERE tenant_id = $1
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
+		  AND ($3::uuid IS NULL OR pump_id = $3)
+		  AND status <> 'deleted'
+		ORDER BY pump_id, number, id
+		LIMIT $4 OFFSET $5
+	`, tenantID, database.UUIDStrings(stationIDs), pumpID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Nozzle
+	for rows.Next() {
+		var n Nozzle
+		if err := scan(rows, &n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Nozzle, error) {
 	var n Nozzle
 	if err := scan(r.pool.QueryRow(ctx, `

@@ -67,6 +67,33 @@ func (r *Repo) ListCalibrations(ctx context.Context, tenantID, pumpID uuid.UUID)
 	return out, rows.Err()
 }
 
+// ListCalibrationsPage mirrors ListCalibrations with limit/offset paging and a
+// stable (performed_at DESC, id) ordering. Callers fetch limit+1 to detect a
+// further page.
+func (r *Repo) ListCalibrationsPage(ctx context.Context, tenantID, pumpID uuid.UUID, limit, offset int) ([]Calibration, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+calibrationColumns+`
+		FROM pump_calibrations
+		WHERE tenant_id = $1 AND pump_id = $2
+		ORDER BY performed_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, pumpID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Calibration
+	for rows.Next() {
+		var c Calibration
+		if err := scanCalibration(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // CreateCalibration records a calibration event inside the caller's tx.
 func (r *Repo) CreateCalibration(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateCalibrationInput) (*Calibration, error) {
 	status := in.Status

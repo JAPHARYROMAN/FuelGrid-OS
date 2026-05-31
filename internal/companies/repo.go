@@ -94,6 +94,33 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID) ([]Company, error) 
 	return out, rows.Err()
 }
 
+// ListPage returns a page of non-deleted companies for a tenant, newest first,
+// with a stable id tiebreaker so paging is deterministic. limit/offset bound
+// the window; callers fetch limit+1 to detect a further page.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Company, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM companies
+		WHERE tenant_id = $1 AND status <> 'deleted'
+		ORDER BY created_at DESC, id
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Company
+	for rows.Next() {
+		var c Company
+		if err := scan(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // Get returns a single non-deleted company.
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Company, error) {
 	var c Company

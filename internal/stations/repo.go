@@ -112,6 +112,36 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID, regionID *uuid.UUID
 	return out, rows.Err()
 }
 
+// ListPage mirrors List (same region + station-scope filters) with limit/offset
+// paging and a stable (name, id) ordering. Callers fetch limit+1 to detect a
+// further page.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, regionID *uuid.UUID, stationIDs []uuid.UUID, limit, offset int) ([]Station, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM stations
+		WHERE tenant_id = $1
+		  AND ($2::uuid IS NULL OR region_id = $2::uuid)
+		  AND ($3::uuid[] IS NULL OR id = ANY($3::uuid[]))
+		  AND status <> 'deleted'
+		ORDER BY name, id
+		LIMIT $4 OFFSET $5
+	`, tenantID, regionID, database.UUIDStrings(stationIDs), limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Station
+	for rows.Next() {
+		var s Station
+		if err := scan(rows, &s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Station, error) {
 	var s Station
 	if err := scan(r.pool.QueryRow(ctx, `
