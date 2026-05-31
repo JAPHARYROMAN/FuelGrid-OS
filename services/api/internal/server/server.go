@@ -176,6 +176,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Use(chimiddleware.RequestID)
 	r.Use(echoRequestID)
 	r.Use(chimiddleware.Recoverer)
+	r.Use(s.captureErrors)
 	r.Use(s.logRequests)
 	r.Use(s.recordMetrics)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
