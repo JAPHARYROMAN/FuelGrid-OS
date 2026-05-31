@@ -105,7 +105,8 @@ type Server struct {
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
 
-	http *http.Server
+	router chi.Router
+	http   *http.Server
 }
 
 // New wires the router, middleware stack, and route table for the API.
@@ -873,6 +874,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		}
 	})
 
+	s.router = r
 	s.http = &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           r,
@@ -883,6 +885,12 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	}
 	return s
 }
+
+// Router returns the built chi router so the registered route table can be
+// walked (e.g. by the route enumerator and the route-vs-OpenAPI contract
+// test). The router is fully assembled in New and registers regardless of
+// whether the backing DB is wired, so it is safe to walk with nil Deps.
+func (s *Server) Router() chi.Router { return s.router }
 
 // Start blocks on http.ListenAndServe. It returns nil on graceful
 // shutdown via Shutdown; any other error is propagated.
