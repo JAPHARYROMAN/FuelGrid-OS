@@ -14,11 +14,11 @@ the topology grow.
 
 ## Objectives
 
-| SLO          | Objective                                              | SLI (how we measure)                                                                                          |
-| ------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Availability | 99.5% of requests succeed (non-5xx)                    | `1 - (sum(rate(5xx[window])) / sum(rate(all[window])))`                                                        |
-| Latency      | 95% of requests < 300ms, 99% < 750ms                   | `histogram_quantile` over `fuelgrid_http_request_duration_seconds_bucket`                                     |
-| Freshness    | Domain events published within 60s (p99 outbox lag)    | `fuelgrid_outbox_oldest_unpublished_age_seconds`                                                              |
+| SLO          | Objective                                           | SLI (how we measure)                                                      |
+| ------------ | --------------------------------------------------- | ------------------------------------------------------------------------- |
+| Availability | 99.5% of requests succeed (non-5xx)                 | `1 - (sum(rate(5xx[window])) / sum(rate(all[window])))`                   |
+| Latency      | 95% of requests < 300ms, 99% < 750ms                | `histogram_quantile` over `fuelgrid_http_request_duration_seconds_bucket` |
+| Freshness    | Domain events published within 60s (p99 outbox lag) | `fuelgrid_outbox_oldest_unpublished_age_seconds`                          |
 
 Health/readiness probe traffic (`/healthz`, `/readyz`, `/metrics`) is excluded
 from the availability and latency SLIs where the dashboard/queries allow, since
@@ -42,14 +42,14 @@ Budget policy:
 Alerts in `prometheus-alerts.yml` are tuned to fire before the budget is fully
 spent rather than as pure burn-rate alerts (kept simple for the current scale):
 
-| Alert                  | Threshold                          | Relates to      |
-| ---------------------- | ---------------------------------- | --------------- |
-| `ApiHigh5xxRate`       | 5xx ratio > 2% for 5m              | Availability    |
-| `ApiHighP99Latency`    | p99 > 750ms for 10m                | Latency         |
-| `ApiReadinessFailing`  | target down or /readyz 503 for 3m  | Availability    |
-| `DbPoolSaturation`     | acquired/max > 90% for 5m          | Latency (cause) |
-| `OutboxDeadLetterBacklog` | unpublished > 500 for 10m       | Freshness       |
-| `OutboxPublisherStalled`  | oldest unpublished > 300s for 5m | Freshness       |
+| Alert                     | Threshold                         | Relates to      |
+| ------------------------- | --------------------------------- | --------------- |
+| `ApiHigh5xxRate`          | 5xx ratio > 2% for 5m             | Availability    |
+| `ApiHighP99Latency`       | p99 > 750ms for 10m               | Latency         |
+| `ApiReadinessFailing`     | target down or /readyz 503 for 3m | Availability    |
+| `DbPoolSaturation`        | acquired/max > 90% for 5m         | Latency (cause) |
+| `OutboxDeadLetterBacklog` | unpublished > 500 for 10m         | Freshness       |
+| `OutboxPublisherStalled`  | oldest unpublished > 300s for 5m  | Freshness       |
 
 ## Known gaps (must validate before relying on every panel/alert)
 
