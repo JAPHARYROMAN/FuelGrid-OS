@@ -24,6 +24,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/fleet"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/incidents"
 	"github.com/japharyroman/fuelgrid-os/internal/inventory"
@@ -76,6 +77,7 @@ type Server struct {
 	identity   *identity.Service
 	policy     *policy.Service
 	metrics    *observability.Metrics
+	rateLimit  *rateLimiter
 
 	accounting     *accounting.Repo
 	banking        *banking.Repo
@@ -124,6 +126,18 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		policy:   deps.Policy,
 		metrics:  deps.Metrics,
 	}
+
+	// Request throttling (REL-4). The per-tenant limiter reuses the Redis-backed
+	// ratelimit.Limiter under its own key prefix; it is only built when Redis is
+	// wired, so a thin smoke deployment (no Redis) keeps the per-tenant guard
+	// off while the in-flight cap can still apply. Both guards self-disable on a
+	// non-positive limit (the Go zero value), so a Config built without Load()
+	// — as the integration harness does — never throttles test traffic.
+	var tenantLimiter *ratelimit.Limiter
+	if deps.Redis != nil {
+		tenantLimiter = ratelimit.New(deps.Redis, "ratelimit:tenant:")
+	}
+	s.rateLimit = newRateLimiter(tenantLimiter, cfg.TenantRateLimit, cfg.TenantRateWindow, cfg.MaxInflight)
 
 	// appDB backs request-scoped queries. When DATABASE_APP_URL is configured
 	// it is the non-owner fuelgrid_app pool and RLS is enforced per request;
@@ -179,6 +193,11 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	r.Use(s.captureErrors)
 	r.Use(s.logRequests)
 	r.Use(s.recordMetrics)
+	// Global concurrency guard (REL-4): shed load with 503 before doing real
+	// work when too many requests are already in flight. Sits after metrics so
+	// shed responses are still counted, and skips the operational probes. No-op
+	// when API_MAX_INFLIGHT is unset/0.
+	r.Use(s.limitInflight)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 	r.Use(limitRequestBody)
 	r.Use(cors.Handler(cors.Options{
@@ -213,6 +232,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireAuth)
+					r.Use(s.rateLimitPerTenant)
 					r.Post("/mfa/enroll", s.handleMfaEnroll)
 					r.Post("/mfa/verify", s.handleMfaVerify)
 				})
@@ -222,6 +242,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 			// having a session).
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireAuth)
+				r.Use(s.rateLimitPerTenant)
 				r.Get("/me", s.handleMe)
 				if s.operations != nil {
 					// Self-scoped: returns only the actor's own shift + assignments.
@@ -242,6 +263,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 				// the proper stations repo).
 				r.Group(func(r chi.Router) {
 					r.Use(s.requireAuth)
+					r.Use(s.rateLimitPerTenant)
 					// Held (not station-scoped) at the route so a cross-tenant
 					// station id reaches the handler, where the tenant-scoped
 					// load returns 404 — never 403 — keeping another tenant's
@@ -272,6 +294,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 				if s.companies != nil {
 					r.Group(func(r chi.Router) {
 						r.Use(s.requireAuth)
+						r.Use(s.rateLimitPerTenant)
 
 						r.With(s.requirePermissionHeld("station.read")).
 							Get("/companies", s.handleListCompanies)

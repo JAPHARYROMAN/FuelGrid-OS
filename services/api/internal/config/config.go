@@ -100,6 +100,28 @@ type Config struct {
 	AuthLoginLockFor     time.Duration `envconfig:"AUTH_LOGIN_LOCK_FOR" default:"30m"`
 	AuthPasswordResetTTL time.Duration `envconfig:"AUTH_PASSWORD_RESET_TTL" default:"1h"`
 
+	// Request throttling (REL-4). Two independent guards layered on top of the
+	// login limiter, both fail-open when Redis is unavailable:
+	//
+	//   - TenantRateLimit / TenantRateWindow: a per-tenant sliding(-ish) fixed
+	//     window quota on authenticated requests, keyed by tenant_id. A
+	//     non-positive limit disables the per-tenant guard entirely. The default
+	//     is deliberately generous so ordinary traffic (and the integration
+	//     harness, which fires many requests fast) never trips it; production
+	//     tunes it down per its own load profile.
+	//   - MaxInflight: a process-wide cap on concurrently in-flight requests; the
+	//     N+1th request is shed with 503 to protect the service under overload.
+	//     0 (the default) means unlimited — the cap is opt-in.
+	//
+	// All three default such that a Config built without going through Load
+	// (e.g. a test that constructs config.Config{} directly) leaves them at
+	// their Go zero value, which the middleware treats as "disabled" — so test
+	// traffic is never throttled. envconfig only applies the `default` tags when
+	// Load() runs, which is the production path.
+	TenantRateLimit  int64         `envconfig:"API_TENANT_RATE_LIMIT" default:"600"`
+	TenantRateWindow time.Duration `envconfig:"API_TENANT_RATE_WINDOW" default:"1m"`
+	MaxInflight      int64         `envconfig:"API_MAX_INFLIGHT" default:"256"`
+
 	// Platform admin. A static bearer used by the tenant-provisioning
 	// endpoint (POST /api/v1/platform/tenants). Empty disables the route
 	// entirely. Distinct from user sessions — it's an operator/IaC token,
