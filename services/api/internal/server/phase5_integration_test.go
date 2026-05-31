@@ -87,14 +87,18 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 	if del["landed_cost_per_litre"] != "2515.3061" {
 		t.Fatalf("landed cost per litre = %v, want 2515.3061", del["landed_cost_per_litre"])
 	}
+	firstDeliveryID := del["id"].(string)
 
-	// Invoice billing 10,000L while only 9,800L has arrived raises a blocking
-	// discrepancy. Approval is refused until the discrepancy is resolved.
+	// Invoice billing 10,000L while only 9,800L arrived on the attributed receipt
+	// raises a blocking quantity discrepancy. The match is scoped to THIS
+	// invoice's receipt (firstDeliveryID), not a cumulative sum of all PO
+	// receipts. Approval is refused until the discrepancy is resolved.
 	code, inv := h.invPostJSON(t, "/api/v1/supplier-invoices", admin, map[string]any{
 		"purchase_order_id": poID,
 		"invoice_number":    fmt.Sprintf("INV-%d", suffix),
 		"lines": []map[string]any{{
 			"po_line_id":      lineID,
+			"delivery_id":     firstDeliveryID,
 			"invoiced_litres": 10000,
 			"unit_price":      "2500.00",
 		}},
@@ -137,6 +141,56 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 	})
 	if code != http.StatusCreated || receipt["purchase_order_status"] != "received" {
 		t.Fatalf("receive balance: %d %v", code, receipt)
+	}
+	secondDeliveryID := receipt["delivery"].(map[string]any)["id"].(string)
+
+	// PROC-19 regression: the quantity match is per-invoice, not a running sum
+	// of every receipt on the PO. By now 10,000L total has been received
+	// (9,800 + 200). A SECOND partial invoice attributed to the 200L receipt
+	// must be compared against THAT receipt only, never the 10,000L cumulative.
+	//
+	// (a) A second partial invoice billing 200L against the 200L receipt matches
+	//     cleanly — the earlier 9,800L delivery is not double-counted into it.
+	code, inv2 := h.invPostJSON(t, "/api/v1/supplier-invoices", admin, map[string]any{
+		"purchase_order_id": poID,
+		"invoice_number":    fmt.Sprintf("INV2-%d", suffix),
+		"lines": []map[string]any{{
+			"po_line_id":      lineID,
+			"delivery_id":     secondDeliveryID,
+			"invoiced_litres": 200,
+			"unit_price":      "2500.00",
+		}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("record second invoice: %d %v", code, inv2)
+	}
+	if inv2["status"] != "matched" || len(inv2["discrepancies"].([]any)) != 0 {
+		t.Fatalf("second partial invoice should match its own 200L receipt, got %v", inv2)
+	}
+
+	// (b) A third partial invoice billing 1,000L against the SAME 200L receipt
+	//     flags a quantity discrepancy — proving the comparison is against that
+	//     receipt's 200L, not the 10,000L cumulative (against which 1,000L would
+	//     have spuriously matched under the old running-sum logic).
+	code, inv3 := h.invPostJSON(t, "/api/v1/supplier-invoices", admin, map[string]any{
+		"purchase_order_id": poID,
+		"invoice_number":    fmt.Sprintf("INV3-%d", suffix),
+		"lines": []map[string]any{{
+			"po_line_id":      lineID,
+			"delivery_id":     secondDeliveryID,
+			"invoiced_litres": 1000,
+			"unit_price":      "2500.00",
+		}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("record third invoice: %d %v", code, inv3)
+	}
+	if inv3["status"] != "discrepancy" || len(inv3["discrepancies"].([]any)) != 1 {
+		t.Fatalf("third invoice (1,000L vs 200L receipt) should flag, got %v", inv3)
+	}
+	d3 := inv3["discrepancies"].([]any)[0].(map[string]any)
+	if d3["type"] != "quantity" || d3["variance_litres"].(float64) != 800 {
+		t.Fatalf("third invoice variance should be +800L against its receipt, got %v", d3)
 	}
 }
 

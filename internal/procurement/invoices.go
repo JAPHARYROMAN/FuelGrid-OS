@@ -337,29 +337,54 @@ func (r *Repo) OpenDiscrepancyCount(ctx context.Context, q pgxQuerier, tenantID,
 }
 
 func (r *Repo) raiseInvoiceDiscrepancies(ctx context.Context, tx pgx.Tx, tenantID, invoiceID uuid.UUID) error {
+	// Quantity match is scoped PER INVOICE LINE, never against a cumulative sum
+	// of every receipt on the PO. Re-aggregating all receipts here double-counts
+	// earlier deliveries the moment a second partial invoice is recorded.
+	//
+	// Each line is compared against the quantity attributable to THAT line:
+	//   - if the line is attributed to a specific goods receipt (delivery_id set),
+	//     the reference is that single delivery's volume_litres; the variance is
+	//     invoiced - received-on-that-delivery and the tolerance is keyed off the
+	//     delivery volume.
+	//   - otherwise there is no receipt attribution, so the only per-invoice-stable
+	//     reference is the PO line's ordered quantity (the agreed litres the line
+	//     bills against); the variance is invoiced - ordered with tolerance keyed
+	//     off ordered.
+	// Either reference is fixed per line, so two partial invoices each flag/pass
+	// against their own slice instead of a running total. All arithmetic stays in
+	// SQL because litres are exact numerics.
 	if _, err := tx.Exec(ctx, `
-		WITH receipt_totals AS (
+		WITH line_match AS (
 			SELECT il.supplier_invoice_id, il.purchase_order_id, il.po_line_id,
-			       NULL::uuid AS delivery_id,
+			       il.delivery_id,
 			       il.invoiced_litres,
-			       COALESCE(SUM(d.volume_litres), 0) AS received_litres
+			       CASE
+			           WHEN il.delivery_id IS NOT NULL THEN COALESCE(d.volume_litres, 0)
+			           ELSE pol.ordered_litres
+			       END AS reference_litres
 			FROM supplier_invoice_lines il
+			JOIN purchase_order_lines pol
+			  ON pol.tenant_id = il.tenant_id
+			 AND pol.purchase_order_id = il.purchase_order_id
+			 AND pol.id = il.po_line_id
 			LEFT JOIN deliveries d
 			  ON d.tenant_id = il.tenant_id
-			 AND d.purchase_order_id = il.purchase_order_id
-			 AND d.po_line_id = il.po_line_id
+			 AND d.id = il.delivery_id
 			WHERE il.tenant_id = $1 AND il.supplier_invoice_id = $2
-			GROUP BY il.supplier_invoice_id, il.purchase_order_id, il.po_line_id, il.invoiced_litres
 		)
 		INSERT INTO procurement_discrepancies
 		    (tenant_id, supplier_invoice_id, purchase_order_id, delivery_id, po_line_id,
 		     type, severity, detail, variance_litres)
 		SELECT $1, supplier_invoice_id, purchase_order_id, delivery_id, po_line_id,
 		       'quantity', 'blocking',
-		       'invoice quantity differs from received litres',
-		       invoiced_litres - received_litres
-		FROM receipt_totals
-		WHERE abs(invoiced_litres - received_litres) > greatest(received_litres * 0.005, 1)
+		       CASE
+		           WHEN delivery_id IS NOT NULL
+		               THEN 'invoice quantity differs from received litres'
+		           ELSE 'invoice quantity differs from ordered litres'
+		       END,
+		       invoiced_litres - reference_litres
+		FROM line_match
+		WHERE abs(invoiced_litres - reference_litres) > greatest(reference_litres * 0.005, 1)
 	`, tenantID, invoiceID); err != nil {
 		return err
 	}
