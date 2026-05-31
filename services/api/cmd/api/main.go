@@ -246,29 +246,39 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
 	}
 
-	// Outbox metrics worker. Refreshes backlog + oldest-unpublished-age
-	// on a timer so Prometheus has data even between scrapes.
+	// Metrics observe worker. Refreshes the DB-sampled gauges — outbox
+	// backlog + oldest-unpublished-age + dead-letter count, plus the
+	// business gauges (open shifts, posted journal entries) — on a timer so
+	// Prometheus has data even between scrapes.
 	if deps.DB != nil {
 		obsCtx, obsCancel := context.WithCancel(context.Background()) //nolint:gosec // cancel registered via cleanups below
 		// Register cancel before launching the goroutine so cleanup is
 		// guaranteed even if Start fails between here and Run().
 		cleanups = append(cleanups, obsCancel)
 
+		// observe samples every gauge once. Each probe is logged and
+		// swallowed independently so a failure on one (e.g. a not-yet-migrated
+		// table) doesn't starve the others.
+		observe := func() {
+			if err := metrics.ObserveOutbox(obsCtx, deps.DB); err != nil {
+				logger.Warn("metrics: outbox observe", "error", err)
+			}
+			if err := metrics.ObserveBusiness(obsCtx, deps.DB); err != nil {
+				logger.Warn("metrics: business observe", "error", err)
+			}
+		}
+
 		go func() {
 			t := time.NewTicker(cfg.MetricsObserveInterval)
 			defer t.Stop()
 			// Prime once on startup so /metrics is non-zero immediately.
-			if err := metrics.ObserveOutbox(obsCtx, deps.DB); err != nil {
-				logger.Warn("metrics: outbox observe", "error", err)
-			}
+			observe()
 			for {
 				select {
 				case <-obsCtx.Done():
 					return
 				case <-t.C:
-					if err := metrics.ObserveOutbox(obsCtx, deps.DB); err != nil {
-						logger.Warn("metrics: outbox observe", "error", err)
-					}
+					observe()
 				}
 			}
 		}()
