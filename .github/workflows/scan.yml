@@ -33,7 +33,7 @@ jobs:
       # up in the Security tab; it never fails the job (exit-code 0) so the
       # code-scanning record is always complete.
       - name: Trivy filesystem scan (SARIF report)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scanners: vuln,misconfig,secret
@@ -59,7 +59,7 @@ jobs:
       # Gate pass: fail the build only on CRITICAL/HIGH vulns that have a fix
       # available. ignore-unfixed keeps un-actionable noise from blocking PRs.
       - name: Trivy filesystem gate (fixable CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scanners: vuln
@@ -98,7 +98,7 @@ jobs:
 
       # Full-visibility image scan -> SARIF for the Security tab.
       - name: Trivy image scan (SARIF report)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: image
           image-ref: fuelgrid-api:scan
@@ -120,7 +120,7 @@ jobs:
 
       # Gate pass: same fixable CRITICAL/HIGH policy as the filesystem job.
       - name: Trivy image gate (fixable CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: image
           image-ref: fuelgrid-api:scan
