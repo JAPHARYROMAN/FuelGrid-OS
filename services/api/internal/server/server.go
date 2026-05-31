@@ -141,7 +141,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.banking = banking.New(deps.DB)
 		s.enterprise = enterprise.New(deps.DB)
 		s.expenses = expenses.New(deps.DB)
-		s.fleet = fleet.New(deps.DB, cfg.AuthPasswordPepper)
+		s.fleet = fleet.New(deps.DB, cfg.AuthPasswordPepper.Reveal())
 		s.companies = companies.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)

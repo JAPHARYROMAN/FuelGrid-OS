@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -11,6 +12,46 @@ import (
 
 	"github.com/kelseyhightower/envconfig"
 )
+
+// redactedPlaceholder is rendered in place of any non-empty secret whenever a
+// Secret is stringified or logged. An empty secret renders as "" so that
+// "is this configured?" log lines stay truthful.
+const redactedPlaceholder = "***redacted***"
+
+// Secret is a string-backed type for sensitive configuration values
+// (passwords, peppers, bearer tokens, and connection URLs that embed
+// credentials). It exists so a secret can never accidentally leak into logs
+// or error output: String and the slog.LogValuer hook both redact the value.
+//
+// It is a defined string type so envconfig can populate it directly from the
+// environment and so call sites that only need the raw bytes can convert with
+// []byte(s). When the plaintext value is genuinely needed (e.g. to build a DB
+// DSN or seed a password hasher) call Reveal — that name makes the disclosure
+// explicit at the call site and easy to audit.
+type Secret string
+
+// String redacts the secret. It implements fmt.Stringer, so any %s/%v
+// formatting (including the default formatting Go uses when a value lands in a
+// log field or error string) prints the placeholder instead of the plaintext.
+func (s Secret) String() string {
+	if s == "" {
+		return ""
+	}
+	return redactedPlaceholder
+}
+
+// LogValue implements slog.LogValuer so structured logging redacts the value
+// even when the secret is passed directly as a slog attribute (slog reads
+// LogValue rather than calling String in that path).
+func (s Secret) LogValue() slog.Value {
+	return slog.StringValue(s.String())
+}
+
+// Reveal returns the underlying plaintext. Use it only at the boundary where
+// the raw secret is actually required; never pass the result to a logger.
+func (s Secret) Reveal() string {
+	return string(s)
+}
 
 // Config is the full set of runtime parameters for the API service.
 // Defaults are tuned for local development; production values are
@@ -33,22 +74,24 @@ type Config struct {
 	// Optional deps. Leaving DatabaseURL / RedisURL unset is supported
 	// for ultra-thin smoke tests; the readiness probe simply skips probes
 	// for un-configured dependencies.
-	DatabaseURL string `envconfig:"DATABASE_URL"`
+	// DatabaseURL / DatabaseAppURL / RedisURL are Secrets: the DSNs embed the
+	// connection password, so they must never reach a log line.
+	DatabaseURL Secret `envconfig:"DATABASE_URL"`
 	// DatabaseAppURL, when set, connects request-scoped queries as the
 	// non-owner `fuelgrid_app` role so Postgres RLS enforces tenant isolation.
 	// Leave empty to keep connecting as the owner (RLS bypassed — the default).
-	DatabaseAppURL       string        `envconfig:"DATABASE_APP_URL"`
+	DatabaseAppURL       Secret        `envconfig:"DATABASE_APP_URL"`
 	DatabaseMaxOpenConns int32         `envconfig:"DATABASE_MAX_OPEN_CONNS" default:"25"`
 	DatabaseMinIdleConns int32         `envconfig:"DATABASE_MIN_IDLE_CONNS" default:"5"`
 	DatabaseConnLifetime time.Duration `envconfig:"DATABASE_CONN_MAX_LIFETIME" default:"30m"`
 	DatabaseConnIdleTime time.Duration `envconfig:"DATABASE_CONN_MAX_IDLE_TIME" default:"5m"`
 
-	RedisURL string `envconfig:"REDIS_URL"`
+	RedisURL Secret `envconfig:"REDIS_URL"`
 
 	// Auth. AUTH_PASSWORD_PEPPER is a base64-or-text secret mixed into
 	// every password hash. Empty in dev is fine; production deployments
 	// must set it from a secret store.
-	AuthPasswordPepper   string        `envconfig:"AUTH_PASSWORD_PEPPER"`
+	AuthPasswordPepper   Secret        `envconfig:"AUTH_PASSWORD_PEPPER"`
 	AuthSessionTTL       time.Duration `envconfig:"AUTH_SESSION_TTL" default:"12h"`
 	AuthRefreshTTL       time.Duration `envconfig:"AUTH_REFRESH_TTL" default:"720h"`
 	AuthLoginRateMax     int64         `envconfig:"AUTH_LOGIN_RATE_LIMIT" default:"5"`
@@ -61,7 +104,7 @@ type Config struct {
 	// endpoint (POST /api/v1/platform/tenants). Empty disables the route
 	// entirely. Distinct from user sessions — it's an operator/IaC token,
 	// not a logged-in principal.
-	PlatformAdminToken string `envconfig:"PLATFORM_ADMIN_TOKEN"`
+	PlatformAdminToken Secret `envconfig:"PLATFORM_ADMIN_TOKEN"`
 
 	// Pagination. DefaultPageSize is the limit applied to list endpoints when
 	// the caller omits ?limit; MaxPageSize is the hard ceiling a caller may

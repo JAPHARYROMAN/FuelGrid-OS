@@ -84,6 +84,8 @@ fly secrets set --app fuelgrid-api \
 
 Rotation: secrets are stored in Fly's Vault, never committed. The `AUTH_PASSWORD_PEPPER` rotation invalidates all existing password hashes — coordinate carefully (force a password reset wave).
 
+The full secret inventory, redaction model (the `config.Secret` type redacts secrets in logs/errors), rotation procedures, and leak response live in [docs/security/secrets.md](security/secrets.md).
+
 ## Observability in production
 
 | Signal | Endpoint | Scraper |
