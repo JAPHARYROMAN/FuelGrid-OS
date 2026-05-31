@@ -53,13 +53,13 @@ The policy evaluator ([internal/identity/policy](../internal/identity/policy/)) 
 
 Every tenant-owned table has a Postgres RLS policy that enforces `tenant_id = current_setting('app.current_tenant')`. If application code ever forgets a WHERE clause, RLS still refuses to return cross-tenant rows.
 
-#### Today's posture (Stage 6)
+#### Current posture
 
-- RLS is **enabled** on every tenant-owned table.
-- RLS is **not FORCED** — the role the API connects as today (superuser) bypasses RLS. The API continues to rely on application-layer scoping as its operative defense.
-- A separate `fuelgrid_app` role exists and is subject to RLS. It is the role:
-  - **CI integration tests** use to prove DB-layer isolation.
-  - **A future stage** will migrate the API onto, at which point RLS becomes the *operative* defense and FORCE can be added.
+- RLS is **enabled** on **every** tenant-owned table. Migration `0005` covered the Phase-1 tables; later phase migrations added it inline; migration `0074` closes any remaining gaps by enabling the standard `tenant_isolation` policy on every table with a `NOT NULL tenant_id` that lacked one (INFRA-01/AUTH-25/MT-4).
+- **The API runs as the non-owner `fuelgrid_app` role in production, by default.** Request-scoped queries acquire a `fuelgrid_app` connection with `app.current_tenant` set per request (see `database.AcquireTenant`), so RLS is the **operative** DB-layer defense — not just app-layer scoping. `config.validate()` **fail-stops** outside development if `DATABASE_APP_URL` is unset (or equals `DATABASE_URL`), so production can never boot RLS-bypassed. In development the owner-pool fallback remains for convenience.
+- Pre-auth paths (login, session resolve, tenant lookup by slug), platform provisioning, the seed, and owner-pool background jobs / the outbox publisher run as the **owner** and bypass RLS — they legitimately operate before or across tenant context.
+- RLS is **enabled, not FORCED**. FORCE (subjecting the owner too) is deferred: the seed and every owner-run background job would first need to set a per-tenant `app.current_tenant` GUC. ENABLE already makes the `fuelgrid_app` request path fail-closed, which is the operative protection.
+- `fuelgrid_app` isolation is proven in CI by `rls_integration_test.go` through the real request connection path.
 
 #### Tables under RLS
 
