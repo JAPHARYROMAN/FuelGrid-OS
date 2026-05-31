@@ -143,16 +143,24 @@ func (s *Server) handleListCustomerInvoices(w http.ResponseWriter, r *http.Reque
 			customerID = id
 		}
 	}
-	rows, err := s.receivables.ListInvoices(r.Context(), actor.TenantID, customerID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.receivables.ListInvoicesPage(r.Context(), actor.TenantID, customerID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]customerInvoiceDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toCustomerInvoiceDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetCustomerInvoice(w http.ResponseWriter, r *http.Request) {
@@ -386,10 +394,18 @@ func (s *Server) handleListCustomerPayments(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.receivables.ListCustomerPayments(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.receivables.ListCustomerPaymentsPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -400,5 +416,5 @@ func (s *Server) handleListCustomerPayments(w http.ResponseWriter, r *http.Reque
 			"source_account_key": p.SourceAccountKey, "status": p.Status, "journal_entry_id": p.JournalEntryID,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }

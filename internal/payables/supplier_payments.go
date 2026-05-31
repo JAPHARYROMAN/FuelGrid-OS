@@ -103,3 +103,23 @@ func (r *Repo) ListPayments(ctx context.Context, tenantID uuid.UUID) ([]Supplier
 	}
 	return out, rows.Err()
 }
+
+// ListPaymentsPage returns a page of supplier payments for the tenant, newest
+// first by payment_date (with id as a tiebreaker for stable paging), applying
+// the supplied limit and offset.
+func (r *Repo) ListPaymentsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]SupplierPayment, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+paymentColumns+` FROM supplier_payments WHERE tenant_id = $1 ORDER BY payment_date DESC, created_at DESC, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SupplierPayment{}
+	for rows.Next() {
+		var p SupplierPayment
+		if err := scanPayment(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

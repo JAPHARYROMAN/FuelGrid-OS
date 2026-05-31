@@ -171,3 +171,29 @@ func (r *Repo) History(ctx context.Context, tenantID, stationID, productID uuid.
 	}
 	return out, rows.Err()
 }
+
+// HistoryPage returns a page of price changes for the given station + product,
+// newest first by effective_from (with id as a tiebreaker for stable paging),
+// applying the supplied limit and offset.
+func (r *Repo) HistoryPage(ctx context.Context, tenantID, stationID, productID uuid.UUID, limit, offset int) ([]PriceChange, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+`
+		FROM price_changes
+		WHERE tenant_id = $1 AND station_id = $2 AND product_id = $3
+		ORDER BY effective_from DESC, created_at DESC, id
+		LIMIT $4 OFFSET $5
+	`, tenantID, stationID, productID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PriceChange{}
+	for rows.Next() {
+		var p PriceChange
+		if err := scan(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

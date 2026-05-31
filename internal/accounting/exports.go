@@ -104,3 +104,26 @@ func (r *Repo) ListExports(ctx context.Context, tenantID uuid.UUID) ([]ExportRun
 	}
 	return out, rows.Err()
 }
+
+// ListExportsPage returns a page of export runs for the tenant, newest first by
+// generated_at (with id as a tiebreaker for stable paging), applying the
+// supplied limit and offset.
+func (r *Repo) ListExportsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]ExportRun, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, export_type, format, row_count, checksum, provisional, generated_at
+		FROM accounting_exports WHERE tenant_id = $1 ORDER BY generated_at DESC, id LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ExportRun{}
+	for rows.Next() {
+		var e ExportRun
+		if err := rows.Scan(&e.ID, &e.ExportType, &e.Format, &e.RowCount, &e.Checksum, &e.Provisional, &e.GeneratedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

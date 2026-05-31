@@ -103,10 +103,18 @@ func (s *Server) handleListExpenseCategories(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.expenses.ListCategories(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.expenses.ListCategoriesPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -114,7 +122,7 @@ func (s *Server) handleListExpenseCategories(w http.ResponseWriter, r *http.Requ
 			"id": rows[i].ID, "name": rows[i].Name, "account_key": rows[i].AccountKey, "status": rows[i].Status,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // ---- Expenses ----
@@ -186,16 +194,24 @@ func (s *Server) handleListExpenses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.expenses.ListExpenses(r.Context(), actor.TenantID, r.URL.Query().Get("status"))
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.expenses.ListExpensesPage(r.Context(), actor.TenantID, r.URL.Query().Get("status"), limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]expenseDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toExpenseDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetExpense(w http.ResponseWriter, r *http.Request) {
@@ -390,16 +406,24 @@ func (s *Server) handleListPettyCashFloats(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.expenses.ListFloats(r.Context(), actor.TenantID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.expenses.ListFloatsPage(r.Context(), actor.TenantID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
 		out = append(out, toFloatMap(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetPettyCashFloat(w http.ResponseWriter, r *http.Request) {
@@ -576,10 +600,18 @@ func (s *Server) handleListPettyCashTransactions(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	rows, err := s.expenses.ListTransactions(r.Context(), actor.TenantID, floatID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.expenses.ListTransactionsPage(r.Context(), actor.TenantID, floatID, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
@@ -590,7 +622,7 @@ func (s *Server) handleListPettyCashTransactions(w http.ResponseWriter, r *http.
 			"journal_entry_id": t.JournalEntryID, "created_at": t.CreatedAt.Format(time.RFC3339),
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // handleReconcilePettyCash counts a float against its expected balance and posts

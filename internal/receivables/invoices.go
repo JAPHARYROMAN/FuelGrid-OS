@@ -207,6 +207,35 @@ func (r *Repo) ListInvoices(ctx context.Context, tenantID uuid.UUID, customerID 
 	return out, rows.Err()
 }
 
+// ListInvoicesPage returns a page of customer invoices for the tenant
+// (optionally filtered by customer), newest first by invoice_date (with id as a
+// tiebreaker for stable paging), applying the supplied limit and offset.
+func (r *Repo) ListInvoicesPage(ctx context.Context, tenantID uuid.UUID, customerID uuid.UUID, limit, offset int) ([]CustomerInvoice, error) {
+	var custFilter *uuid.UUID
+	if customerID != uuid.Nil {
+		custFilter = &customerID
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+invoiceColumns+` FROM customer_invoices
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR customer_id = $2)
+		ORDER BY invoice_date DESC, created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, custFilter, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CustomerInvoice{}
+	for rows.Next() {
+		var i CustomerInvoice
+		if err := scanInvoice(rows, &i); err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
 // ApplyInvoicePayment reduces an issued invoice's outstanding balance, updating
 // status. The invoice must belong to customerID — the customer making the
 // payment — so a payment can never settle another customer's invoices

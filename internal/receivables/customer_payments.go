@@ -98,3 +98,23 @@ func (r *Repo) ListCustomerPayments(ctx context.Context, tenantID uuid.UUID) ([]
 	}
 	return out, rows.Err()
 }
+
+// ListCustomerPaymentsPage returns a page of customer payments for the tenant,
+// newest first by payment_date (with id as a tiebreaker for stable paging),
+// applying the supplied limit and offset.
+func (r *Repo) ListCustomerPaymentsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]CustomerPayment, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+customerPaymentColumns+` FROM customer_payments WHERE tenant_id = $1 ORDER BY payment_date DESC, created_at DESC, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CustomerPayment{}
+	for rows.Next() {
+		var p CustomerPayment
+		if err := scanCustomerPayment(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

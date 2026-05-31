@@ -105,6 +105,26 @@ func (r *Repo) ListCategories(ctx context.Context, tenantID uuid.UUID) ([]Catego
 	return out, rows.Err()
 }
 
+// ListCategoriesPage returns a page of expense categories for the tenant ordered
+// by name (with id as a tiebreaker for stable paging), applying the supplied
+// limit and offset.
+func (r *Repo) ListCategoriesPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Category, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+categoryColumns+` FROM expense_categories WHERE tenant_id = $1 ORDER BY name, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Category{}
+	for rows.Next() {
+		var c Category
+		if err := scanCategory(rows, &c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // resolveAccountKey returns the expense account to debit: the explicit
 // AccountKey, else the category's account_key, else operating_expense.
 func (r *Repo) resolveAccountKey(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in ExpenseInput) string {
@@ -159,6 +179,31 @@ func (r *Repo) ListExpenses(ctx context.Context, tenantID uuid.UUID, status stri
 		WHERE tenant_id = $1 AND ($2 = '' OR status = $2)
 		ORDER BY expense_date DESC, created_at DESC
 	`, tenantID, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Expense{}
+	for rows.Next() {
+		var e Expense
+		if err := scanExpense(rows, &e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListExpensesPage returns a page of expenses for the tenant (optionally
+// filtered by status), newest first by expense_date (with id as a tiebreaker
+// for stable paging), applying the supplied limit and offset.
+func (r *Repo) ListExpensesPage(ctx context.Context, tenantID uuid.UUID, status string, limit, offset int) ([]Expense, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+expenseColumns+` FROM expenses
+		WHERE tenant_id = $1 AND ($2 = '' OR status = $2)
+		ORDER BY expense_date DESC, created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, status, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -83,6 +83,17 @@ func (r *Repo) List(ctx context.Context, tenantID uuid.UUID) ([]Payable, error) 
 	return collect(rows)
 }
 
+// ListPage returns a page of payables for the tenant ordered by due_date
+// (NULLS LAST) then created_at (with id as a tiebreaker for stable paging),
+// applying the supplied limit and offset.
+func (r *Repo) ListPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Payable, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+columns+` FROM payables WHERE tenant_id = $1 ORDER BY due_date NULLS LAST, created_at, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return collect(rows)
+}
+
 func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Payable, error) {
 	var p Payable
 	err := scan(r.pool.QueryRow(ctx, `SELECT `+columns+` FROM payables WHERE tenant_id = $1 AND id = $2`, tenantID, id), &p)

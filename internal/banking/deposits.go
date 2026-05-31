@@ -93,6 +93,26 @@ func (r *Repo) ListBankAccounts(ctx context.Context, tenantID uuid.UUID) ([]Bank
 	return out, rows.Err()
 }
 
+// ListBankAccountsPage returns a page of bank accounts for the tenant ordered by
+// name (with id as a tiebreaker for stable paging), applying the supplied limit
+// and offset.
+func (r *Repo) ListBankAccountsPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]BankAccount, error) {
+	rows, err := r.pool.Query(ctx, `SELECT `+bankAccountColumns+` FROM bank_accounts WHERE tenant_id = $1 ORDER BY name, id LIMIT $2 OFFSET $3`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []BankAccount{}
+	for rows.Next() {
+		var a BankAccount
+		if err := scanBankAccount(rows, &a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ---- Deposits ----
 
 type DepositInput struct {
@@ -148,6 +168,31 @@ func (r *Repo) ListDeposits(ctx context.Context, tenantID, stationID uuid.UUID) 
 		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR station_id = $2)
 		ORDER BY created_at DESC
 	`, tenantID, nullUUID(stationID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []BankDeposit{}
+	for rows.Next() {
+		var d BankDeposit
+		if err := scanDeposit(rows, &d); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ListDepositsPage returns a page of bank deposits for the tenant (optionally
+// filtered by station), newest first by created_at (with id as a tiebreaker for
+// stable paging), applying the supplied limit and offset.
+func (r *Repo) ListDepositsPage(ctx context.Context, tenantID, stationID uuid.UUID, limit, offset int) ([]BankDeposit, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+depositColumns+` FROM bank_deposits
+		WHERE tenant_id = $1 AND ($2::uuid IS NULL OR station_id = $2)
+		ORDER BY created_at DESC, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, nullUUID(stationID), limit, offset)
 	if err != nil {
 		return nil, err
 	}
