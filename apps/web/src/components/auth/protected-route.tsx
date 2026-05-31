@@ -12,7 +12,8 @@ import { useAuthStore } from '@/stores/auth-store';
  * surface area of the app. It does three things:
  *
  *   1. Waits for the auth store to rehydrate from localStorage so we
- *      never flash-redirect a user whose token is still in flight.
+ *      never flash-redirect a user whose session hint is still in flight.
+ *      (The session token itself lives in an httpOnly cookie, not here.)
  *   2. Redirects to /login with the current URL preserved as `?next=`
  *      so post-login navigation lands them back where they came from.
  *   3. Renders nothing during the redirect to avoid the protected UI
@@ -22,15 +23,15 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const hydrated = useAuthStore((s) => s.hydrated);
-  const token = useAuthStore((s) => s.token);
+  const authed = useAuthStore((s) => s.authed);
 
   useEffect(() => {
     if (!hydrated) return;
-    if (!token) {
+    if (!authed) {
       const next = encodeURIComponent(pathname || '/');
       router.replace(`/login?next=${next}`);
     }
-  }, [hydrated, token, pathname, router]);
+  }, [hydrated, authed, pathname, router]);
 
   if (!hydrated) {
     return (
@@ -40,7 +41,7 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!token) return null;
+  if (!authed) return null;
 
   return <>{children}</>;
 }

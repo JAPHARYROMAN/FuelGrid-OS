@@ -4,27 +4,23 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
 /**
- * Non-sensitive PRESENCE cookie name. It holds only "1" — never the token —
- * so the Next.js middleware (which cannot read localStorage) can server-side
- * gate protected routes. The real httpOnly-cookie session migration is a
- * tracked LATER item (WEB-001/W10); this is the interim guard (WEB-002).
+ * Client-side auth state (WEB-001 / Wave-10 — httpOnly cookie migration).
+ *
+ * The session TOKEN no longer lives anywhere client JS can read it. It is held
+ * only in an httpOnly `fg_session` cookie set by the BFF login route handler
+ * and attached to API calls server-side by the same-origin proxy
+ * (app/api/bff/[...path]). This store keeps ONLY non-sensitive UI state:
+ *   - `authed`: a boolean hint (was the `fg_authed` presence flag) used by the
+ *     client guards to avoid a flash-of-redirect before the real server-side
+ *     middleware check runs. It is NOT a security boundary — middleware reads
+ *     the httpOnly cookie, and the API independently enforces the bearer.
+ *   - `expiresAt`: the session expiry the API reported, for display only.
+ *
+ * No token is ever persisted, so an XSS foothold has nothing to steal here.
  */
-const PRESENCE_COOKIE = 'fg_authed';
-
-/** Set the presence flag: Path=/, SameSite=Lax, NOT httpOnly (it's only a flag). */
-function setPresenceCookie() {
-  if (typeof document === 'undefined') return;
-  document.cookie = `${PRESENCE_COOKIE}=1; Path=/; SameSite=Lax`;
-}
-
-/** Clear the presence flag by expiring it. */
-function clearPresenceCookie() {
-  if (typeof document === 'undefined') return;
-  document.cookie = `${PRESENCE_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`;
-}
-
 interface AuthState {
-  token: string | null;
+  /** Non-sensitive UI hint: a session was established (token is in the cookie). */
+  authed: boolean;
   expiresAt: string | null;
   /**
    * False until the zustand persist middleware has rehydrated from
@@ -32,7 +28,9 @@ interface AuthState {
    */
   hydrated: boolean;
 
-  setSession: (token: string, expiresAt?: string) => void;
+  /** Record that a session was established (called after the BFF set the cookie). */
+  setAuthed: (expiresAt?: string) => void;
+  /** Forget the local session hint (the BFF/route handler clears the cookie). */
   clearSession: () => void;
   setHydrated: () => void;
 }
@@ -40,19 +38,13 @@ interface AuthState {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set) => ({
-      token: null,
+      authed: false,
       expiresAt: null,
       hydrated: false,
 
-      setSession: (token, expiresAt) => {
-        setPresenceCookie();
-        set({ token, expiresAt: expiresAt ?? null });
-      },
+      setAuthed: (expiresAt) => set({ authed: true, expiresAt: expiresAt ?? null }),
 
-      clearSession: () => {
-        clearPresenceCookie();
-        set({ token: null, expiresAt: null });
-      },
+      clearSession: () => set({ authed: false, expiresAt: null }),
 
       setHydrated: () => set({ hydrated: true }),
     }),
@@ -60,15 +52,12 @@ export const useAuthStore = create<AuthState>()(
       name: 'fuelgrid.auth',
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
-        token: state.token,
+        // Persist ONLY non-sensitive UI hints — never a token.
+        authed: state.authed,
         expiresAt: state.expiresAt,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHydrated();
-        // Re-sync the presence cookie with the rehydrated token: a returning
-        // user with a persisted token but no cookie (e.g. cookie expired, or
-        // first load after this change shipped) should still pass middleware.
-        if (state?.token) setPresenceCookie();
       },
     },
   ),

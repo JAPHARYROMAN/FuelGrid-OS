@@ -6,12 +6,14 @@ import { middleware } from '@/middleware';
 function req(path: string, opts: { authed?: boolean } = {}): NextRequest {
   const url = `http://localhost:3000${path}`;
   const headers = new Headers();
-  if (opts.authed) headers.set('cookie', 'fg_authed=1');
+  // The session token is held in the httpOnly fg_session cookie (WEB-001);
+  // middleware gates on its presence.
+  if (opts.authed) headers.set('cookie', 'fg_session=e2e-session-token');
   return new NextRequest(url, { headers });
 }
 
-describe('route-guard middleware (WEB-002, presence-flag)', () => {
-  it('lets public routes through without the presence flag', () => {
+describe('route-guard middleware (WEB-001, httpOnly session cookie)', () => {
+  it('lets public routes through without the session cookie', () => {
     for (const path of [
       '/login',
       '/login?next=/finance',
@@ -25,7 +27,7 @@ describe('route-guard middleware (WEB-002, presence-flag)', () => {
     }
   });
 
-  it('redirects a protected route to /login with ?next when the flag is absent', () => {
+  it('redirects a protected route to /login with ?next when the cookie is absent', () => {
     const res = middleware(req('/finance'));
     const location = res.headers.get('location');
     expect(location).not.toBeNull();
@@ -34,7 +36,7 @@ describe('route-guard middleware (WEB-002, presence-flag)', () => {
     expect(loc.searchParams.get('next')).toBe('/finance');
   });
 
-  it('allows a protected route through when the presence flag is set', () => {
+  it('allows a protected route through when the session cookie is set', () => {
     const res = middleware(req('/finance', { authed: true }));
     expect(res.headers.get('location')).toBeNull();
   });

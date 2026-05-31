@@ -2,23 +2,21 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 /**
- * Server-side route guard (WEB-002 / FE-MW).
+ * Server-side route guard (WEB-001 / Wave-10 — httpOnly cookie migration).
  *
- * PRESENCE-FLAG GUARD — NOT a real session check. The session token lives in
- * localStorage today, which middleware cannot read. So auth-store sets a
- * non-sensitive presence cookie (`fg_authed=1`, SameSite=Lax, NOT httpOnly)
- * on login and clears it on logout. This middleware redirects requests for
- * protected routes to /login when that flag is absent.
+ * The session token now lives in the httpOnly `fg_session` cookie (set by the
+ * BFF login route, attached to API calls server-side by the /api/bff proxy).
+ * Middleware runs server-side, so it reads that real session cookie directly
+ * and redirects protected-route requests to /login when it is absent — this is
+ * a genuine presence check on the actual session credential, no longer the old
+ * forgeable `fg_authed` flag.
  *
- * Because the flag is forgeable, this is defense-in-depth only: it stops the
- * dashboard HTML from streaming to a logged-out visitor and removes the
- * client-side flash-of-redirect. The API still independently enforces the
- * bearer token on every call, and the client-side ProtectedRoute remains in
- * place. Migrating the token itself to an httpOnly cookie (so this becomes a
- * real session check) is a tracked LATER item: WEB-001 / Wave-10.
+ * The cookie's mere presence (not its validity) is what's checked here; the Go
+ * API still authoritatively validates the bearer on every call, and any 401
+ * routes through the SDK backstop, which clears the cookie + redirects.
  */
 
-const PRESENCE_COOKIE = 'fg_authed';
+const SESSION_COOKIE = 'fg_session';
 
 /**
  * Public paths that never require the presence flag. Everything else under
@@ -39,7 +37,7 @@ export function middleware(req: NextRequest) {
     return NextResponse.next();
   }
 
-  const authed = req.cookies.get(PRESENCE_COOKIE)?.value === '1';
+  const authed = Boolean(req.cookies.get(SESSION_COOKIE)?.value);
   if (authed) {
     return NextResponse.next();
   }

@@ -38,7 +38,7 @@ type FormValues = z.infer<typeof schema>;
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const setSession = useAuthStore((s) => s.setSession);
+  const setAuthed = useAuthStore((s) => s.setAuthed);
 
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [mfaRequired, setMfaRequired] = useState(false);
@@ -55,6 +55,9 @@ export function LoginForm() {
   async function onSubmit(values: FormValues) {
     setSubmitError(null);
     try {
+      // The login call goes through the BFF proxy: on success it sets the
+      // httpOnly session cookie server-side and STRIPS the token from this
+      // response body, so the client only sees { mfa_required, expires_at }.
       const res = await api.login(values);
 
       if (res.mfa_required) {
@@ -62,12 +65,9 @@ export function LoginForm() {
         return;
       }
 
-      if (!res.token) {
-        setSubmitError('Server did not return a session token.');
-        return;
-      }
-
-      setSession(res.token, res.expires_at);
+      // No mfa challenge -> the cookie was set. Record the non-sensitive UI
+      // hint (no token) so the client guards stop showing the login screen.
+      setAuthed(res.expires_at);
 
       router.replace(safeRedirect(searchParams.get('next')));
     } catch (err) {

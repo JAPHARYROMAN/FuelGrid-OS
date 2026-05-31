@@ -16,7 +16,7 @@ import { ProtectedRoute } from './protected-route';
 describe('ProtectedRoute', () => {
   beforeEach(() => {
     replace.mockClear();
-    useAuthStore.setState({ token: null, expiresAt: null, hydrated: false });
+    useAuthStore.setState({ authed: false, expiresAt: null, hydrated: false });
   });
 
   afterEach(() => {
@@ -35,7 +35,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('redirects to /login with the current path as ?next when unauthenticated', () => {
-    useAuthStore.setState({ hydrated: true, token: null });
+    useAuthStore.setState({ hydrated: true, authed: false });
 
     render(
       <ProtectedRoute>
@@ -48,7 +48,7 @@ describe('ProtectedRoute', () => {
   });
 
   it('renders children when hydrated and authenticated', () => {
-    useAuthStore.setState({ hydrated: true, token: 'tok-123' });
+    useAuthStore.setState({ hydrated: true, authed: true });
 
     render(
       <ProtectedRoute>

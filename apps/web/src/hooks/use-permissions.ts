@@ -12,13 +12,13 @@ import { useAuthStore } from '@/stores/auth-store';
  * keeps it cached for 60 seconds. Underpins usePermission(code).
  */
 export function usePermissions() {
-  const token = useAuthStore((s) => s.token);
+  const authed = useAuthStore((s) => s.authed);
 
   return useQuery<MePermissions>({
     queryKey: ['me', 'permissions'],
     queryFn: ({ signal }) => api.mePermissions(signal),
     staleTime: 60 * 1000,
-    enabled: Boolean(token),
+    enabled: authed,
   });
 }
 

@@ -27,12 +27,12 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
   const activeStationID = useTenantStore((s) => s.activeStationID);
   const setActiveStation = useTenantStore((s) => s.setActiveStation);
 
-  const token = useAuthStore((s) => s.token);
+  const authed = useAuthStore((s) => s.authed);
 
   const stations = useQuery({
     queryKey: ['stations'],
     queryFn: ({ signal }) => api.listStations({}, signal),
-    enabled: Boolean(token),
+    enabled: authed,
   });
 
   async function handleLogout() {

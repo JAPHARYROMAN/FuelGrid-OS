@@ -7,20 +7,20 @@ import { useAuthStore } from '@/stores/auth-store';
 
 /**
  * Root route is a thin redirector — authenticated users go to the
- * command center, the rest get the login screen. Doing this on the
- * client (rather than via server-side middleware) keeps Stage 8 within
- * the localStorage-only auth contract; cookie-backed middleware can
- * replace this in a later stage.
+ * command center, the rest get the login screen. The real session lives
+ * in the httpOnly cookie (checked by middleware); this client-side hop
+ * uses the non-sensitive `authed` hint only to pick the destination
+ * without a flash.
  */
 export default function HomePage() {
   const router = useRouter();
   const hydrated = useAuthStore((s) => s.hydrated);
-  const token = useAuthStore((s) => s.token);
+  const authed = useAuthStore((s) => s.authed);
 
   useEffect(() => {
     if (!hydrated) return;
-    router.replace(token ? '/command-center' : '/login');
-  }, [hydrated, token, router]);
+    router.replace(authed ? '/command-center' : '/login');
+  }, [hydrated, authed, router]);
 
   return null;
 }
