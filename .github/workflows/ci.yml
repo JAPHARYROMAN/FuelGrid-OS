@@ -93,25 +93,30 @@ jobs:
         with:
           version: latest
 
-      - name: Test (with race detector + coverage gate)
+      - name: Test (with race detector + no-DB coverage guard)
         # CONTRACT_STRICT flips the route↔OpenAPI contract test
         # (services/api/internal/server) from skip to enforce: any
         # registered route missing from docs/openapi.yaml fails CI.
         #
-        # COVERAGE GATE (QA-6): the race run also writes a coverage profile
-        # and the job FAILS if total statement coverage regresses below the
-        # ratchet FLOOR. This job runs WITHOUT a database (the `migrations`
-        # job owns Postgres/Redis), so the DB-backed integration suite skips
-        # here — FLOOR reflects the no-DB total and is set a few points under
-        # the current measurement (~5.1%). Ratchet upward as coverage grows;
-        # never lower it to make a red build green.
+        # COVERAGE SPLIT (QA-6): this `go` job is the race/vet/lint/build
+        # gate. It runs WITHOUT a database, so the DB-backed integration
+        # suite (services/api/internal/server) skips here and the total
+        # reflects only the no-DB unit tests — a misleadingly low number.
+        # The AUTHORITATIVE coverage gate therefore lives in the `migrations`
+        # job, which has Postgres+Redis and exercises the real domain
+        # packages end-to-end (see "Coverage gate" step there).
+        #
+        # The low FLOOR below is kept only as a cheap regression guard for
+        # the no-DB packages (don't let unit coverage fall to zero). Ratchet
+        # it upward as no-DB coverage grows; never lower it to make a red
+        # build green. The meaningful floor is enforced in `migrations`.
         env:
           CONTRACT_STRICT: '1'
         run: |
           FLOOR=4.0
           go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
           total=$(go tool cover -func=coverage.out | tail -1 | grep -oE '[0-9]+\.[0-9]+')
-          echo "total Go statement coverage: ${total}% (floor ${FLOOR}%)"
+          echo "total Go statement coverage (no-DB): ${total}% (floor ${FLOOR}%)"
           awk -v t="$total" -v f="$FLOOR" 'BEGIN {
             if (t + 0 < f + 0) {
               printf "coverage %.1f%% is below the ratchet floor %.1f%%\n", t, f
@@ -639,10 +644,37 @@ jobs:
       # matching the `go` job — the request-scoped connection / RLS pool wrapper
       # exercised here is exactly where a data race would hide.
       - name: Integration test suite (Postgres + Redis)
+        # -coverpkg=./... attributes coverage to EVERY package the DB-backed
+        # integration suite exercises (handlers -> services -> repos across
+        # internal/*), not just the server package under test — so the
+        # profile written here reflects REAL end-to-end domain coverage.
         env:
           TEST_DATABASE_URL: postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable
           TEST_REDIS_URL: redis://localhost:6379/0
-        run: go test -race -count=1 -timeout 15m ./services/api/internal/server/...
+        run: |
+          go test -race -count=1 -timeout 15m \
+            -covermode=atomic -coverpkg=./... -coverprofile=coverage.db.out \
+            ./services/api/internal/server/...
+
+      - name: Coverage gate (authoritative — DB-backed total)
+        # AUTHORITATIVE coverage gate (QA-6). Unlike the `go` job (no DB, low
+        # floor, regression guard only), this runs against the live
+        # Postgres+Redis-backed integration suite, so the total reflects the
+        # real domain coverage driven through the HTTP stack. FAIL the job if
+        # it regresses below the ratchet FLOOR. The FLOOR is set a few points
+        # under the first measured total (40.6% measured locally against the
+        # same migrated Postgres+Redis the integration suite uses); ratchet
+        # upward as coverage grows, never lower it to make a red build green.
+        run: |
+          FLOOR=37.0
+          total=$(go tool cover -func=coverage.db.out | tail -1 | grep -oE '[0-9]+\.[0-9]+')
+          echo "DB-backed total Go statement coverage: ${total}% (floor ${FLOOR}%)"
+          awk -v t="$total" -v f="$FLOOR" 'BEGIN {
+            if (t + 0 < f + 0) {
+              printf "DB-backed coverage %.1f%% is below the ratchet floor %.1f%%\n", t, f
+              exit 1
+            }
+          }'
 
   docker:
     name: Docker — build api image
