@@ -993,3 +993,53 @@ func TestPhase7_JournalImmutability(t *testing.T) {
 		t.Fatalf("original entry status = %s, want reversed", status)
 	}
 }
+
+// TestPhase7_AuditLogImmutable proves the audit trail is strictly append-only at
+// the database (migration 0070): an audit_logs row can never be UPDATE-d and
+// cannot be DELETE-d directly. An audit log that can be edited after the fact is
+// worthless for forensics; the 0070 trigger enforces immutability beneath every
+// code path, so a bug or a direct write cannot silently rewrite the record of
+// who did what. (The only sanctioned DELETE is whole-tenant teardown, which sets
+// the app.allow_ledger_delete escape hatch — exercised by the test cleanup.)
+func TestPhase7_AuditLogImmutable(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, _ := h.adminContext(t, ctx)
+
+	// Seed an audit row directly (this is how every sensitive action is logged).
+	var logID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO audit_logs (tenant_id, actor_id, action, entity_type, entity_id, reason)
+		VALUES ($1, $2, 'product.created', 'product', 'PMS-1', 'original') RETURNING id
+	`, h.ids.tenantID, adminID).Scan(&logID); err != nil {
+		t.Fatalf("seed audit log: %v", err)
+	}
+
+	// Every mutation of a logged action must be refused at the database. Assert
+	// the error comes from our trigger (not some incidental failure).
+	mustBlock := func(label, want, sql string, args ...any) {
+		t.Helper()
+		if _, err := h.pool.Exec(ctx, sql, args...); err == nil {
+			t.Fatalf("%s: expected the immutability trigger to refuse the write, got nil error", label)
+		} else if !strings.Contains(err.Error(), want) {
+			t.Fatalf("%s: error = %q, want it to contain %q", label, err.Error(), want)
+		}
+	}
+	// No UPDATE is ever permitted — an audit entry is never amended.
+	mustBlock("UPDATE audit_logs", "immutable",
+		`UPDATE audit_logs SET reason = 'tampered' WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, logID)
+	// Direct delete is rejected (no app.allow_ledger_delete on this connection).
+	mustBlock("DELETE audit_logs", "append-only",
+		`DELETE FROM audit_logs WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, logID)
+
+	// The audit row is untouched after the rejected writes.
+	var reason string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT reason FROM audit_logs WHERE tenant_id = $1 AND id = $2`, h.ids.tenantID, logID).Scan(&reason); err != nil {
+		t.Fatalf("reread audit log: %v", err)
+	}
+	if reason != "original" {
+		t.Fatalf("after blocked writes: reason=%q, want \"original\"", reason)
+	}
+}
