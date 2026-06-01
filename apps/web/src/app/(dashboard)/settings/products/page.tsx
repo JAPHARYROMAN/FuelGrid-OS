@@ -66,6 +66,7 @@ export default function ProductsPage() {
   const [editing, setEditing] = useState<Product | null>(null);
   const [form, setForm] = useState<FormState>(blankForm);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [rowError, setRowError] = useState<string | null>(null);
 
   const list = useQuery({
     queryKey: ['products'],
@@ -108,6 +109,27 @@ export default function ProductsPage() {
     },
     onError: (err) => setSubmitError(err instanceof SdkError ? err.message : 'Could not save'),
   });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteProduct(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      setRowError(null);
+    },
+    onError: (err) =>
+      setRowError(
+        err instanceof SdkError
+          ? err.message
+          : 'Could not delete this product (it may be in use by tanks, nozzles, or sales).',
+      ),
+  });
+
+  function confirmDelete(p: Product) {
+    setRowError(null);
+    if (window.confirm(`Delete product "${p.name}" (${p.code})? This cannot be undone.`)) {
+      remove.mutate(p.id);
+    }
+  }
 
   function openCreate() {
     setEditing(null);
@@ -155,6 +177,12 @@ export default function ProductsPage() {
           </Button>
         }
       />
+
+      {rowError ? (
+        <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+          {rowError}
+        </p>
+      ) : null}
 
       {list.isPending ? (
         <Card>
@@ -214,9 +242,20 @@ export default function ProductsPage() {
                       <Badge tone={p.status === 'active' ? 'success' : 'warning'}>{p.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
-                        Edit
-                      </Button>
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-danger hover:text-danger"
+                          disabled={remove.isPending}
+                          onClick={() => confirmDelete(p)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

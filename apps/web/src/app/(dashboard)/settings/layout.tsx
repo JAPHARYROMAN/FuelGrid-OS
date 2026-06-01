@@ -11,6 +11,7 @@ const nav = [
   { href: '/settings/stations', label: 'Stations' },
   { href: '/settings/products', label: 'Products' },
   { href: '/settings/suppliers', label: 'Suppliers' },
+  { href: '/settings/customers', label: 'Customers' },
   { href: '/settings/tanks', label: 'Tanks' },
   { href: '/settings/pumps', label: 'Pumps' },
   { href: '/settings/employees', label: 'Employees' },
