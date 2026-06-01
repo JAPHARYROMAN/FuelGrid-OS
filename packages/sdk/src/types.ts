@@ -401,6 +401,25 @@ export interface UnreadCount {
   unread_count: number;
 }
 
+export type JobRunStatus = 'running' | 'success' | 'failure' | 'skipped';
+
+/** One run of a background scheduler job, from the admin job-health endpoint. */
+export interface JobRun {
+  id: string;
+  job_name: string;
+  started_at: string;
+  finished_at?: string;
+  status: JobRunStatus;
+  detail?: string;
+  /** Derived wall-clock run time in ms; absent while a run is in progress. */
+  duration_ms?: number;
+}
+
+export interface JobRunList {
+  items: JobRun[];
+  count: number;
+}
+
 export interface StationOverview {
   station: Station;
   tanks: Tank[];
@@ -759,6 +778,33 @@ export interface ShiftPaymentReconciliation {
   over_threshold: boolean;
 }
 
+/** One M-Pesa (Safaricom Daraja) STK Push collection and its lifecycle. */
+export interface MpesaTransaction {
+  id: string;
+  station_id: string;
+  checkout_request_id: string;
+  merchant_request_id?: string;
+  /** Decimal string (e.g. "150.00"). */
+  amount: string;
+  phone: string;
+  /** pending | paid | failed | cancelled */
+  status: string;
+  result_code?: number;
+  mpesa_receipt?: string;
+  account_reference?: string;
+  description?: string;
+  reconciled_revenue_day_id?: string;
+  reconciled_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response of initiating an STK push: the pending txn + Daraja's prompt msg. */
+export interface MpesaStkPushResult {
+  transaction: MpesaTransaction;
+  customer_message: string;
+}
+
 export interface Customer {
   id: string;
   tenant_id: string;
@@ -1081,8 +1127,11 @@ export interface CustomerBalance {
 
 // ---- Standard report exports (CSV + PDF) ----
 
-/** Reporting window for the financials export. */
+/** Reporting window for the financials and general-ledger exports. */
 export type ReportPeriod = 'this-month' | 'last-month' | 'ytd' | 'last-30';
+
+/** Accountant-importable format for the general-ledger export. */
+export type GeneralLedgerFormat = 'csv' | 'iif' | 'xero';
 
 /**
  * Discriminated spec for a standard report. Passed to client.reportUrl /
@@ -1099,7 +1148,8 @@ export type ReportSpec =
   | { kind: 'financials'; period?: ReportPeriod }
   | { kind: 'ar-aging' }
   | { kind: 'daily-close-pdf'; stationID: string; operatingDayID?: string }
-  | { kind: 'financials-pdf'; period?: ReportPeriod };
+  | { kind: 'financials-pdf'; period?: ReportPeriod }
+  | { kind: 'gl-export'; period?: ReportPeriod; format?: GeneralLedgerFormat };
 
 // ---- Phase 7: Finance & Accounting Control ----
 

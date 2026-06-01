@@ -36,6 +36,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
 	"github.com/japharyroman/fuelgrid-os/internal/payables"
 	"github.com/japharyroman/fuelgrid-os/internal/payments"
+	"github.com/japharyroman/fuelgrid-os/internal/payments/mpesa"
 	"github.com/japharyroman/fuelgrid-os/internal/pricing"
 	"github.com/japharyroman/fuelgrid-os/internal/procurement"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
@@ -46,6 +47,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 	"github.com/japharyroman/fuelgrid-os/internal/risk"
+	"github.com/japharyroman/fuelgrid-os/internal/scheduler"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 	"github.com/japharyroman/fuelgrid-os/internal/workforce"
@@ -115,6 +117,7 @@ type Server struct {
 	inventory      *inventory.Repo
 	payables       *payables.Repo
 	payments       *payments.Repo
+	mpesa          *mpesa.Client
 	pricing        *pricing.Repo
 	procurement    *procurement.Repo
 	receivables    *receivables.Repo
@@ -122,6 +125,7 @@ type Server struct {
 	revenue        *revenue.Repo
 	risk           *risk.Repo
 	notifications  *notifications.Repo
+	jobRuns        *scheduler.ReadRepo
 	workforce      *workforce.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
@@ -165,6 +169,19 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	}
 	s.rateLimit = newRateLimiter(tenantLimiter, cfg.TenantRateLimit, cfg.TenantRateWindow, cfg.MaxInflight)
 
+	// M-Pesa (Daraja) client. Built unconditionally (no DB dependency) so the
+	// payments handlers always have a client to call; when MPESA_CONSUMER_KEY/
+	// SECRET are unset the constructor returns a disabled no-op that fails calls
+	// with ErrDisabled instead of dialing Safaricom — a safe no-op in dev/CI.
+	s.mpesa = mpesa.New(mpesa.Config{
+		ConsumerKey:    cfg.MpesaConsumerKey.Reveal(),
+		ConsumerSecret: cfg.MpesaConsumerSecret.Reveal(),
+		Shortcode:      cfg.MpesaShortcode,
+		Passkey:        cfg.MpesaPasskey.Reveal(),
+		Env:            cfg.MpesaEnv,
+		CallbackURL:    cfg.MpesaCallbackURL,
+	}, logger.With("component", "mpesa"))
+
 	// appDB backs request-scoped queries. When DATABASE_APP_URL is configured
 	// it is the non-owner fuelgrid_app pool and RLS is enforced per request;
 	// otherwise it falls back to the owner pool (RLS bypassed, unchanged).
@@ -203,6 +220,9 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
 		s.notifications = notifications.New(deps.DB)
+		// job_runs is an owner-only SYSTEM table (no RLS); the scheduler read
+		// repo always runs on the owner pool (deps.DB), never appDB.
+		s.jobRuns = scheduler.NewReadRepo(deps.DB)
 		s.workforce = workforce.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)

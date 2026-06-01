@@ -44,6 +44,8 @@ tags:
     description: System + tenant role catalogue
   - name: Audit
     description: Append-only sensitive-action log
+  - name: Admin
+    description: Operational/system administration surfaces (scheduler health)
   - name: Platform
     description: Platform-admin operations (tenant provisioning)
   - name: Operating Days
@@ -60,6 +62,8 @@ tags:
     description: Tank + cash reconciliation, adjustments, sealing
   - name: Revenue
     description: Revenue days, sales, payments, payment reconciliation
+  - name: Payments
+    description: M-Pesa (Safaricom Daraja) mobile-money collections + reconciliation
   - name: Procurement
     description: Purchase orders, receipts, suppliers, discrepancies
   - name: Finance
@@ -479,6 +483,33 @@ paths:
                 properties:
                   marked_read: { type: integer }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/admin/jobs:
+    get:
+      tags: [Admin]
+      summary: Latest run of every background scheduler job (admin)
+      description: |
+        Read-only scheduler visibility. Returns the most recent run of each
+        registered background job — name, last run time, terminal status, and
+        derived duration — for the admin System health page. Gated on
+        `audit.read`. The job_runs ledger is cross-tenant system telemetry, so
+        this endpoint takes no paging or filters; a deployment without the
+        ledger table returns an empty list.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count]
+                properties:
+                  count: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/companies:
     get:
@@ -1696,6 +1727,21 @@ paths:
       responses:
         '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/accounting/gl-export.csv:
+    get:
+      tags: [Reports]
+      summary: Export the general ledger for a period (CSV / QuickBooks IIF / Xero CSV)
+      description: >-
+        Streams the posted general ledger (journal entries + lines) for the
+        selected period in an accountant-importable format. Money stays an exact
+        decimal string. Permission-gated by finance.read and audited.
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
+        - { in: query, name: format, required: false, schema: { type: string, enum: [csv, iif, xero] } }
+      responses:
+        '200': { description: Ledger export, content: { text/csv: { schema: { type: string } }, application/octet-stream: { schema: { type: string, format: binary } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/audit-logs/export:
     post:
@@ -2481,6 +2527,52 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Payments — M-Pesa (Safaricom Daraja) mobile-money collections
+  # ---------------------------------------------------------------------------
+  /api/v1/payments/mpesa/transactions:
+    get:
+      tags: [Payments]
+      summary: List M-Pesa transactions (paginated; ?station_id, ?status filters)
+      parameters:
+        - { in: query, name: station_id, required: false, schema: { type: string, format: uuid } }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [pending, paid, failed, cancelled] } }
+        - { in: query, name: limit, required: false, schema: { type: integer } }
+        - { in: query, name: offset, required: false, schema: { type: integer } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/payments/mpesa/stk-push:
+    post:
+      tags: [Payments]
+      summary: Initiate an M-Pesa STK push (Lipa na M-Pesa Online)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Initiated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502': { description: M-Pesa request failed }
+        '503': { description: M-Pesa not configured }
+  /api/v1/payments/mpesa/transactions/{id}/reconcile:
+    post:
+      tags: [Payments]
+      summary: Reconcile a paid M-Pesa transaction against a revenue day's mobile-money tender
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Reconciled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Transaction not paid, or station mismatch }
+  /api/v1/payments/mpesa/callback:
+    post:
+      tags: [Payments]
+      summary: Safaricom Daraja STK result callback (unauthenticated webhook)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
 
   # ---------------------------------------------------------------------------
   # Pricing — station price boards + agreements
@@ -4271,6 +4363,18 @@ components:
         limit:    { type: integer }
         offset:   { type: integer }
         has_more: { type: boolean }
+
+    JobRun:
+      type: object
+      required: [id, job_name, started_at, status]
+      properties:
+        id:          { type: string, format: uuid }
+        job_name:    { type: string, description: Stable scheduler job name (also the metric label). }
+        started_at:  { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, description: Absent while the run is still in progress. }
+        status:      { type: string, enum: [running, success, failure, skipped] }
+        detail:      { type: string, description: Short human-readable run summary or error. }
+        duration_ms: { type: integer, format: int64, description: Derived wall-clock run time in milliseconds; absent while in progress. }
 
     PumpWithNozzles:
       allOf:

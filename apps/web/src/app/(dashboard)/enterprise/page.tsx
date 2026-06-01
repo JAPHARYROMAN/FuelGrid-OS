@@ -13,11 +13,13 @@ import {
 import { SdkError, type StationRank } from '@fuelgrid/sdk';
 import {
   Badge,
+  BarChart,
   Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
+  chartColors,
   EmptyState,
   ErrorState,
   PageHeader,
@@ -152,32 +154,45 @@ export default function EnterprisePage() {
               icon={<TrendingUp className="size-8" />}
             />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Rank</TableHead>
-                  <TableHead>Station</TableHead>
-                  <TableHead className="text-right">Gross</TableHead>
-                  <TableHead className="text-right">Margin</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {ranking.data!.items.map((s: StationRank, i: number) => (
-                  <TableRow key={s.station_id}>
-                    <TableCell>
-                      <Badge tone="neutral">#{i + 1}</Badge>
-                    </TableCell>
-                    <TableCell className="font-medium text-foreground">{s.name}</TableCell>
-                    <TableCell className="text-right font-mono font-medium tabular-nums">
-                      {formatMoney(s.gross_revenue)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
-                      {formatMoney(s.margin_total)}
-                    </TableCell>
+            <div className="flex flex-col gap-5">
+              <BarChart
+                data={ranking.data!.items.slice(0, 8)}
+                xKey="name"
+                layout="vertical"
+                series={[
+                  { key: 'gross_revenue', label: 'Gross', color: chartColors.accent },
+                  { key: 'margin_total', label: 'Margin', color: chartColors.success },
+                ]}
+                valueFormatter={(v) => formatMoney(v as string)}
+                height={Math.max(180, Math.min(8, ranking.data!.items.length) * 44)}
+              />
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Rank</TableHead>
+                    <TableHead>Station</TableHead>
+                    <TableHead className="text-right">Gross</TableHead>
+                    <TableHead className="text-right">Margin</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {ranking.data!.items.map((s: StationRank, i: number) => (
+                    <TableRow key={s.station_id}>
+                      <TableCell>
+                        <Badge tone="neutral">#{i + 1}</Badge>
+                      </TableCell>
+                      <TableCell className="font-medium text-foreground">{s.name}</TableCell>
+                      <TableCell className="text-right font-mono font-medium tabular-nums">
+                        {formatMoney(s.gross_revenue)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                        {formatMoney(s.margin_total)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

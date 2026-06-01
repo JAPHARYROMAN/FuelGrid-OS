@@ -5,11 +5,13 @@ import { useQuery } from '@tanstack/react-query';
 
 import { SdkError, type InventoryOverviewTank, type RecentVariance } from '@fuelgrid/sdk';
 import {
+  AreaChart,
   Badge,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
+  chartColors,
   EmptyState,
   ErrorState,
   PageHeader,
@@ -194,27 +196,30 @@ function TankCard({ t }: { t: InventoryOverviewTank }) {
 function VarianceTrend({ rows }: { rows: RecentVariance[] }) {
   // Oldest -> newest for a left-to-right reading.
   const ordered = [...rows].reverse();
+  // Color the series red if any recent reconciliation breached tolerance.
+  const breached = ordered.some((v) => v.over_tolerance);
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Variance trend
       </span>
-      <div className="flex items-end gap-1">
-        {ordered.map((v) => (
-          <div
-            key={v.operating_day_id}
-            title={`${v.business_date}: ${v.variance_litres.toFixed(1)} L${
-              v.over_tolerance ? ' (over tolerance)' : ''
-            }`}
-            className={
-              'h-6 flex-1 rounded-sm ' + (v.over_tolerance ? 'bg-danger/60' : 'bg-success/50')
-            }
-            style={{
-              opacity: 0.4 + Math.min(0.6, Math.abs(v.variance_percent) / 5),
-            }}
-          />
-        ))}
-      </div>
+      <AreaChart
+        data={ordered}
+        xKey="business_date"
+        xFormatter={(d) => {
+          const s = String(d ?? '');
+          return s.length >= 10 ? s.slice(5) : s;
+        }}
+        valueFormatter={(v) => `${Number(v).toFixed(1)} L`}
+        series={[
+          {
+            key: 'variance_litres',
+            label: 'Variance',
+            color: breached ? chartColors.danger : chartColors.success,
+          },
+        ]}
+        height={120}
+      />
     </div>
   );
 }

@@ -18,8 +18,10 @@ import {
   ListChecks,
   Receipt,
   Scale,
+  ServerCog,
   Settings,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   Tag,
   Truck,
@@ -71,6 +73,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Sales', href: '/sales', icon: BarChart3 },
       { label: 'Revenue', href: '/revenue', icon: Receipt },
+      { label: 'Payments', href: '/payments', icon: Smartphone },
       { label: 'Pricing', href: '/settings/pricing', icon: Tag },
       { label: 'Inventory', href: '/inventory', icon: Droplet },
       { label: 'Reconciliation', href: '/reconciliation', icon: Scale },
@@ -98,6 +101,7 @@ const navGroups: NavGroup[] = [
     label: 'System',
     items: [
       { label: 'Setup', href: '/setup', icon: ListChecks },
+      { label: 'System', href: '/settings/system', icon: ServerCog },
       { label: 'AI Assistant', href: '/assistant', icon: Sparkles },
       { label: 'Settings', href: '/settings', icon: Settings },
     ],

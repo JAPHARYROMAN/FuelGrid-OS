@@ -33,6 +33,7 @@ import type {
   ExpenseCategory,
   Incident,
   InventoryOverview,
+  JobRunList,
   LoginRequest,
   LoginResponse,
   Me,
@@ -85,6 +86,8 @@ import type {
   Vehicle,
   VehicleConsumption,
   Payment,
+  MpesaTransaction,
+  MpesaStkPushResult,
   RevenueDay,
   RevenueOverview,
   ShiftPaymentReconciliation,
@@ -1586,6 +1589,52 @@ export class Client {
     );
   }
 
+  // ----------- M-Pesa (Daraja) collections -----------
+
+  listMpesaTransactions(
+    params: { stationID?: string; status?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<MpesaTransaction>> {
+    const q = new URLSearchParams();
+    if (params.stationID) q.set('station_id', params.stationID);
+    if (params.status) q.set('status', params.status);
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.offset != null) q.set('offset', String(params.offset));
+    const qs = q.toString();
+    return this.request<Paginated<MpesaTransaction>>(
+      `/api/v1/payments/mpesa/transactions${qs ? `?${qs}` : ''}`,
+      { signal },
+    );
+  }
+
+  initiateMpesaStkPush(
+    req: {
+      station_id: string;
+      phone: string;
+      amount: string;
+      account_reference?: string;
+      description?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<MpesaStkPushResult> {
+    return this.request<MpesaStkPushResult>('/api/v1/payments/mpesa/stk-push', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  reconcileMpesaTransaction(
+    id: string,
+    req: { revenue_day_id: string },
+    signal?: AbortSignal,
+  ): Promise<MpesaTransaction> {
+    return this.request<MpesaTransaction>(
+      `/api/v1/payments/mpesa/transactions/${encodeURIComponent(id)}/reconcile`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
   listCustomers(signal?: AbortSignal): Promise<Paginated<Customer>> {
     return this.request<Paginated<Customer>>('/api/v1/customers', { signal });
   }
@@ -2333,6 +2382,13 @@ export class Client {
       case 'financials-pdf': {
         const qs = report.period ? `?period=${encodeURIComponent(report.period)}` : '';
         return `${this.baseURL}/api/v1/reports/financials.pdf${qs}`;
+      }
+      case 'gl-export': {
+        const params = new URLSearchParams();
+        if (report.period) params.set('period', report.period);
+        if (report.format) params.set('format', report.format);
+        const qs = params.toString();
+        return `${this.baseURL}/api/v1/accounting/gl-export.csv${qs ? `?${qs}` : ''}`;
       }
     }
   }
@@ -3331,6 +3387,17 @@ export class Client {
       method: 'POST',
       signal,
     });
+  }
+
+  // ----------- Admin / system -----------
+
+  /**
+   * Latest run of every background scheduler job (name, last run, status,
+   * duration) for the admin System health page. Requires the `audit.read`
+   * permission.
+   */
+  listJobRuns(signal?: AbortSignal): Promise<JobRunList> {
+    return this.request<JobRunList>('/api/v1/admin/jobs', { signal });
   }
 }
 

@@ -26,6 +26,11 @@ func (s *Server) registerRoutes(r chi.Router) {
 		// 404s when PLATFORM_ADMIN_TOKEN is unset.
 		s.registerPlatformRoutes(r)
 
+		// M-Pesa (Daraja) result webhook — unauthenticated by design (Safaricom
+		// posts it with no session) and keyed by the globally-unique checkout id
+		// on the owner pool. Mounted outside every auth group.
+		s.registerPaymentsWebhook(r)
+
 		if s.identity != nil {
 			s.registerAuthRoutes(r)
 
@@ -54,6 +59,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 						s.registerPricingRoutes(r)
 						s.registerRevenueRoutes(r)
 						s.registerTenderRoutes(r)
+						s.registerPaymentsRoutes(r)
 						s.registerReceivablesRoutes(r)
 						s.registerFleetCreditRoutes(r)
 						s.registerEnterpriseRoutes(r)
@@ -61,9 +67,11 @@ func (s *Server) registerRoutes(r chi.Router) {
 						s.registerRevenueCloseRoutes(r)
 						s.registerFinanceRoutes(r)
 						s.registerReportsRoutes(r)
+						s.registerAccountingExportRoutes(r)
 						s.registerOperationsRoutes(r)
 						s.registerWorkforceRoutes(r)
 						s.registerUserAdminRoutes(r)
+						s.registerAdminJobRoutes(r)
 					})
 				}
 			}
