@@ -100,9 +100,12 @@ test.describe('auth smoke', () => {
 
     // Login success -> router.replace(safeRedirect(next)) -> /command-center.
     await expect(page).toHaveURL(/\/command-center(\?|$)/);
-    await expect(page.getByRole('heading', { name: 'Command Center' })).toBeVisible();
-    // /me resolved -> the Session card renders the mocked identity.
-    await expect(page.getByText(ME_BODY.user_id)).toBeVisible();
+    // The flagship Executive Command Center renders its hero immediately,
+    // independent of the (here-unmocked) dashboard data fan-out.
+    await expect(
+      page.getByRole('heading', { name: 'How is my fuel business performing right now?' }),
+    ).toBeVisible();
+    await expect(page.getByText('Executive command center')).toBeVisible();
 
     // The session token lives in an httpOnly cookie — present, and NOT
     // exposed to client JS.

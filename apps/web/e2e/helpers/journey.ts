@@ -98,6 +98,17 @@ export function permissionsBody() {
  * Returns nothing; call before navigating to a protected route.
  */
 export async function mockBaseline(page: Page) {
+  // Lowest-priority catch-all (Playwright matches the most-recently-registered
+  // route first, so this — registered first — only fires when nothing more
+  // specific matches). It keeps any un-mocked v1 GET from hanging on the
+  // unreachable upstream: the flagship Command Center landing page fans out
+  // across many reads, and a spec only mocks the routes its own page needs, so
+  // the rest must fail fast (aborted) instead of leaving the page's network
+  // pending and blocking the next navigation. Non-GETs fall through so a
+  // spec's own mutation mocks (always more specific) stay authoritative.
+  await page.route('**/api/bff/api/v1/**', (route) =>
+    route.request().method() === 'GET' ? route.abort() : route.continue(),
+  );
   await page.route('**/api/bff/api/v1/auth/login', (route) =>
     route.fulfill({
       status: 200,
