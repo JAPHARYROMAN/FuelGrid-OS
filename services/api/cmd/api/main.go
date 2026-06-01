@@ -395,6 +395,24 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 	// effectively idle — the integration harness, which constructs Config{},
 	// gets zero-value intervals and therefore no jobs.
 	if deps.DB != nil && cfg.SchedulerEnabled {
+		// Canned report-email digests. REPORT_DIGEST_ENABLED is the master switch;
+		// when off (the default) the shared digest interval is left at 0 so both
+		// report jobs are dropped at registration. Even when on, the jobs no-op
+		// unless real SMTP + recipients are configured (the console sender drops
+		// mail). The figures are sourced cross-tenant via the same owner pool.
+		reportInterval := time.Duration(0)
+		var reportDeps scheduler.ReportDeps
+		if cfg.ReportDigestEnabled {
+			reportInterval = cfg.SchedulerReportDigestInterval
+			reportDeps = scheduler.ReportDeps{
+				Email:      deps.Email,
+				Accounting: accounting.New(deps.DB),
+				Recipients: cfg.ReportDigestRecipients,
+				SendHour:   cfg.ReportDigestSendHour,
+				Logger:     logger.With("component", "scheduler.reports"),
+			}
+		}
+
 		jobs := scheduler.BuildJobs(scheduler.Deps{
 			Pool:        deps.DB,
 			Revenue:     revenue.New(deps.DB),
@@ -403,6 +421,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			Payables:    payables.New(deps.DB),
 			Enterprise:  enterprise.New(deps.DB),
 			Logger:      logger.With("component", "scheduler"),
+			Report:      reportDeps,
 		}, scheduler.Intervals{
 			RevenueCompute:     cfg.SchedulerRevenueComputeInterval,
 			AgingRefresh:       cfg.SchedulerAgingRefreshInterval,
@@ -410,6 +429,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			Projection:         cfg.SchedulerProjectionInterval,
 			OutboxSweep:        cfg.SchedulerOutboxSweepInterval,
 			SessionCleanup:     cfg.SchedulerSessionCleanupInterval,
+			ReportDigest:       reportInterval,
 			SessionRetention:   cfg.SchedulerSessionRetention,
 			OutboxRequeueAfter: cfg.SchedulerOutboxRequeueAfter,
 			JobRunRetention:    cfg.SchedulerJobRunRetention,

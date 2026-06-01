@@ -169,6 +169,13 @@ type Config struct {
 	SchedulerProjectionInterval     time.Duration `envconfig:"SCHEDULER_PROJECTION_INTERVAL" default:"15m"`
 	SchedulerOutboxSweepInterval    time.Duration `envconfig:"SCHEDULER_OUTBOX_SWEEP_INTERVAL" default:"5m"`
 	SchedulerSessionCleanupInterval time.Duration `envconfig:"SCHEDULER_SESSION_CLEANUP_INTERVAL" default:"1h"`
+	// SchedulerReportDigestInterval is the shared tick cadence for the canned
+	// scheduled-email digests (daily station-close + monthly P&L). It is
+	// deliberately sub-day: each job gates on REPORT_DIGEST_SEND_HOUR and a
+	// job_runs ledger guard, so a 1h tick still yields exactly one daily / one
+	// monthly send while landing it promptly after the send hour. <= 0 (or
+	// REPORT_DIGEST_ENABLED=false) disables both report jobs.
+	SchedulerReportDigestInterval time.Duration `envconfig:"SCHEDULER_REPORT_DIGEST_INTERVAL" default:"1h"`
 	// SchedulerSessionRetention is how long a session row is kept after it
 	// expires or is revoked before the cleanup job prunes it; the durable
 	// sessions table is an audit trail, so we keep terminated rows for a window
@@ -193,6 +200,19 @@ type Config struct {
 	// AppBaseURL is the public web origin used to build links in transactional
 	// email (e.g. the password-reset URL). Falls back to localhost in dev.
 	AppBaseURL string `envconfig:"APP_BASE_URL" default:"http://localhost:3000"`
+
+	// Canned scheduled report-email digests (internal/scheduler report jobs).
+	// ReportDigestEnabled is a master switch for BOTH the daily station-close
+	// digest and the monthly P&L summary; ReportDigestRecipients is the
+	// comma-separated To: list. When recipients are empty — or SMTP is
+	// unconfigured (console driver) — the jobs are a deliberate no-op, matching
+	// the rest of the env-gated email surface. ReportDigestSendHour (0–23, server
+	// local time) is the hour at/after which a once-per-period digest is allowed
+	// to send; combined with the sub-day scheduler tick and a job_runs ledger
+	// guard it collapses to exactly one send per day / per month.
+	ReportDigestEnabled    bool     `envconfig:"REPORT_DIGEST_ENABLED" default:"false"`
+	ReportDigestRecipients []string `envconfig:"REPORT_DIGEST_RECIPIENTS"`
+	ReportDigestSendHour   int      `envconfig:"REPORT_DIGEST_SEND_HOUR" default:"6"`
 
 	// M-Pesa (Safaricom Daraja) mobile-money collections. When
 	// MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET are unset the client is a
