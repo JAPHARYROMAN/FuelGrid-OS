@@ -118,7 +118,13 @@ export function Providers({
   }, []);
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} nonce={nonce}>
+    <ThemeProvider
+      attribute="class"
+      defaultTheme="dark"
+      enableSystem={false}
+      themes={['light', 'dark', 'navy']}
+      nonce={nonce}
+    >
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </ThemeProvider>
   );

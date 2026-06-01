@@ -11,7 +11,9 @@ import {
   Command,
   LogOut,
   Menu,
+  Monitor,
   Moon,
+  Palette,
   Search,
   Sun,
   UserCircle,
@@ -71,7 +73,12 @@ export function Topbar({ onOpenCommand, onOpenMobileNav }: TopbarProps) {
     router.replace('/login');
   }
 
-  const isDark = (theme ?? resolvedTheme) === 'dark';
+  const activeTheme = theme ?? resolvedTheme ?? 'dark';
+  const themeOptions = [
+    { value: 'light', label: 'Light', icon: Sun },
+    { value: 'dark', label: 'Dark', icon: Moon },
+    { value: 'navy', label: 'Navy', icon: Monitor },
+  ] as const;
   const stationItems = stations.data?.items ?? [];
   const activeStation = stationItems.find((s) => s.id === activeStationID) ?? null;
   const activeLabel = activeStation ? activeStation.code : 'All stations';
@@ -140,16 +147,34 @@ export function Topbar({ onOpenCommand, onOpenMobileNav }: TopbarProps) {
 
       <div className="flex items-center gap-0.5">
         <NotificationBell />
-        <Tooltip label={isDark ? 'Light mode' : 'Dark mode'}>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Toggle theme"
-            onClick={() => setTheme(isDark ? 'light' : 'dark')}
-          >
-            {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-        </Tooltip>
+        <DropdownMenu>
+          <Tooltip label="Theme">
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label="Select theme">
+                <Palette className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+          </Tooltip>
+          <DropdownMenuContent align="end">
+            <DropdownMenuLabel>Theme</DropdownMenuLabel>
+            {themeOptions.map((opt) => {
+              const Icon = opt.icon;
+              const selected = activeTheme === opt.value;
+              return (
+                <DropdownMenuItem
+                  key={opt.value}
+                  onSelect={() => setTheme(opt.value)}
+                  aria-checked={selected}
+                  role="menuitemradio"
+                >
+                  <Icon className="size-4 text-muted-foreground" />
+                  <span className="flex-1">{opt.label}</span>
+                  {selected ? <Check className="size-4 text-accent" /> : null}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Tooltip label="Profile">
           <Link
             href="/profile"

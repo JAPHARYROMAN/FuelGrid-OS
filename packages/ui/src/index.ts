@@ -45,6 +45,9 @@ export type { InsightCardProps, InsightSeverity } from './components/insight-car
 export { RiskBadge, riskBadgeVariants } from './components/risk-badge';
 export type { RiskBadgeProps, RiskSeverity } from './components/risk-badge';
 
+export { RiskAlertCard } from './components/risk-alert-card';
+export type { RiskAlertCardProps } from './components/risk-alert-card';
+
 export { ReconciliationWaterfall } from './components/reconciliation-waterfall';
 export type { ReconciliationWaterfallProps } from './components/reconciliation-waterfall';
 
