@@ -2,5 +2,8 @@
 
 DROP TABLE IF EXISTS mpesa_transactions;
 
--- role_permissions rows cascade off the permission delete via FK.
+-- role_permissions FK to permissions does NOT cascade, so unassign the
+-- permission from every role before deleting it.
+DELETE FROM role_permissions
+WHERE permission_id IN (SELECT id FROM permissions WHERE code = 'payment.mpesa.manage');
 DELETE FROM permissions WHERE code = 'payment.mpesa.manage';
