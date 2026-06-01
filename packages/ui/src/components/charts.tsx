@@ -32,7 +32,9 @@ import { axisTick, chartColors } from '../lib/chart-theme';
  * geometry never leaks into the displayed number.
  */
 
-type Datum = Record<string, unknown>;
+// A row of chart data. Kept open so typed SDK interfaces (which lack an index
+// signature) satisfy it; series keys are read via `keyof T` at the call sites.
+type Datum = object;
 
 export interface ChartSeries {
   /** Object key to read from each row. */
@@ -126,11 +128,7 @@ function renderTooltip(
   xFormatter: (value: unknown) => string,
   valueFormatter?: (value: unknown) => string,
 ) {
-  return (p: {
-    active?: boolean;
-    payload?: TooltipPayloadEntry[];
-    label?: unknown;
-  }) => (
+  return (p: { active?: boolean; payload?: TooltipPayloadEntry[]; label?: unknown }) => (
     <ChartTooltip
       active={p.active}
       payload={p.payload}
@@ -179,7 +177,7 @@ export function LineChart<T extends Datum>({
             <Line
               key={s.key}
               type="monotone"
-              dataKey={(row) => toNumber((row as T)[s.key])}
+              dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
               name={s.label}
               stroke={s.color ?? chartColors.accent}
               strokeWidth={2}
@@ -241,7 +239,7 @@ export function AreaChart<T extends Datum>({
             <Area
               key={s.key}
               type="monotone"
-              dataKey={(row) => toNumber((row as T)[s.key])}
+              dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
               name={s.label}
               stroke={s.color ?? chartColors.accent}
               strokeWidth={2}
@@ -274,11 +272,7 @@ export function BarChart<T extends Datum>({
   return (
     <div className={cn('w-full', className)} style={{ height }}>
       <ResponsiveContainer width="100%" height="100%">
-        <RBarChart
-          data={data}
-          layout={layout}
-          margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}
-        >
+        <RBarChart data={data} layout={layout} margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}>
           <CartesianGrid stroke={chartColors.grid} vertical={vertical} horizontal={!vertical} />
           {vertical ? (
             <>
@@ -325,7 +319,7 @@ export function BarChart<T extends Datum>({
           {series.map((s) => (
             <Bar
               key={s.key}
-              dataKey={(row) => toNumber((row as T)[s.key])}
+              dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
               name={s.label}
               fill={s.color ?? chartColors.accent}
               radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}
@@ -407,7 +401,7 @@ export function CategoricalBarChart<T extends Datum>({
             content={renderTooltip(xFormatter, valueFormatter)}
           />
           <Bar
-            dataKey={(row) => toNumber((row as T)[valueKey])}
+            dataKey={(row) => toNumber((row as Record<string, unknown>)[valueKey])}
             name={label}
             radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}
             isAnimationActive={false}
@@ -456,7 +450,7 @@ export function Sparkline<T extends Datum>({
           ) : null}
           <Area
             type="monotone"
-            dataKey={(row) => toNumber((row as T)[valueKey])}
+            dataKey={(row) => toNumber((row as Record<string, unknown>)[valueKey])}
             stroke={color}
             strokeWidth={1.75}
             fill={fill ? `url(#${gradId})` : 'none'}

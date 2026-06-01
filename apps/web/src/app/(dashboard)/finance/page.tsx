@@ -12,6 +12,8 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  CategoricalBarChart,
+  chartColors,
   EmptyState,
   ErrorState,
   PageHeader,
@@ -120,6 +122,37 @@ export default function FinancePage() {
               icon={<TrendingUp />}
             />
           </section>
+
+          {/* P&L composition */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Profit &amp; loss</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Revenue, expenses, and net over the last 30 days.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <CategoricalBarChart
+                data={[
+                  { label: 'Revenue', amount: overview.data.income_statement.revenue },
+                  { label: 'Expenses', amount: overview.data.income_statement.expenses },
+                  { label: 'Net profit', amount: overview.data.income_statement.net_profit },
+                ]}
+                xKey="label"
+                valueKey="amount"
+                label="Amount"
+                valueFormatter={(v) => formatMoney(v as string)}
+                colorFor={(row) => {
+                  if (row.label === 'Expenses') return chartColors.muted;
+                  if (row.label === 'Net profit') {
+                    return Number(row.amount) < 0 ? chartColors.danger : chartColors.success;
+                  }
+                  return chartColors.accent;
+                }}
+                height={220}
+              />
+            </CardContent>
+          </Card>
 
           {/* Control counts */}
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">

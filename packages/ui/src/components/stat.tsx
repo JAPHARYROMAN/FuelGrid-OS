@@ -28,6 +28,8 @@ export interface StatProps
   delta?: string;
   hint?: string;
   icon?: React.ReactNode;
+  /** Optional slot below the value, e.g. a <Sparkline />. */
+  children?: React.ReactNode;
 }
 
 export function Stat({
@@ -39,6 +41,7 @@ export function Stat({
   hint,
   icon,
   className,
+  children,
   ...props
 }: StatProps) {
   return (
@@ -80,6 +83,8 @@ export function Stat({
           {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
         </div>
       ) : null}
+
+      {children ? <div className="-mb-1 mt-1">{children}</div> : null}
     </div>
   );
 }
