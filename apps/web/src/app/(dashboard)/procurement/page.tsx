@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Truck } from 'lucide-react';
+import { FileStack, PackageCheck, Truck, Wallet } from 'lucide-react';
 
 import { SdkError, type PurchaseOrder } from '@fuelgrid/sdk';
 import {
@@ -15,7 +15,9 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
+  Stat,
   Table,
   TableBody,
   TableCell,
@@ -84,42 +86,45 @@ export default function ProcurementPage() {
   }, [products.data]);
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold">Procurement</h1>
-          <p className="text-sm text-muted-foreground">
-            Purchase orders, expected receipts, landed costs, and supplier exposure.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {(stations.data?.items?.length ?? 0) > 0 ? (
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Station</span>
-              <select
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-                value={stationID}
-                onChange={(e) => setStationID(e.target.value)}
-              >
-                {stations.data!.items.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.code})
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : null}
-          <Button asChild variant="outline" size="sm">
-            <Link href="/procurement/receiving">
-              <Truck className="size-4" />
-              Receiving
-            </Link>
-          </Button>
-        </div>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Commerce"
+        title="Procurement"
+        description="Purchase orders, expected receipts, landed costs, and supplier exposure."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {(stations.data?.items?.length ?? 0) > 0 ? (
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Station</span>
+                <select
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  value={stationID}
+                  onChange={(e) => setStationID(e.target.value)}
+                >
+                  {stations.data!.items.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <Button asChild variant="outline" size="sm">
+              <Link href="/procurement/receiving">
+                <Truck className="size-4" />
+                Receiving
+              </Link>
+            </Button>
+          </div>
+        }
+      />
 
       {stations.isPending ? (
-        <LoadingState />
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-[120px] rounded-xl" />
+          ))}
+        </section>
       ) : stations.isError ? (
         <ErrorState
           title="Couldn't load stations"
@@ -129,7 +134,11 @@ export default function ProcurementPage() {
       ) : (stations.data?.items?.length ?? 0) === 0 ? (
         <EmptyState title="No stations" description="You don't have access to any stations yet." />
       ) : overview.isPending ? (
-        <LoadingState />
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-[120px] rounded-xl" />
+          ))}
+        </section>
       ) : overview.isError ? (
         (() => {
           const err = overview.error;
@@ -148,22 +157,31 @@ export default function ProcurementPage() {
         })()
       ) : (
         <>
-          <div className="grid gap-4 lg:grid-cols-3">
-            <MetricCard label="Open POs" value={overview.data.open_purchase_orders.length} />
-            <MetricCard label="Recent receipts" value={overview.data.recent_receipts.length} />
-            <MetricCard
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Stat
+              label="Open POs"
+              value={overview.data.open_purchase_orders.length}
+              icon={<FileStack />}
+            />
+            <Stat
+              label="Recent receipts"
+              value={overview.data.recent_receipts.length}
+              icon={<PackageCheck />}
+            />
+            <Stat
               label="Outstanding supplier balance"
               // Decimal-safe sum of the per-supplier outstanding strings (integer
               // cents) — Number()+reduce drifts across a long column (PAGE-002).
               value={money(
                 sumMoney(overview.data.supplier_balances.map((b) => b.outstanding_amount)),
               )}
+              icon={<Wallet />}
             />
-          </div>
+          </section>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Open purchase orders</CardTitle>
+              <CardTitle>Open purchase orders</CardTitle>
             </CardHeader>
             <CardContent>
               {overview.data.open_purchase_orders.length === 0 ? (
@@ -202,13 +220,14 @@ export default function ProcurementPage() {
           <div className="grid gap-4 xl:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Recent receipts</CardTitle>
+                <CardTitle>Recent receipts</CardTitle>
               </CardHeader>
               <CardContent>
                 {overview.data.recent_receipts.length === 0 ? (
                   <EmptyState
                     title="No receipts"
                     description="PO-backed goods receipts appear here."
+                    icon={<PackageCheck />}
                   />
                 ) : (
                   <div className="flex flex-col divide-y divide-border">
@@ -218,13 +237,15 @@ export default function ProcurementPage() {
                         className="flex items-center justify-between gap-3 py-3 text-sm"
                       >
                         <div className="min-w-0">
-                          <p className="font-medium">{litres(r.volume_litres)} L</p>
+                          <p className="font-mono font-medium tabular-nums text-foreground">
+                            {litres(r.volume_litres)} L
+                          </p>
                           <p className="truncate text-muted-foreground">
                             {new Date(r.received_at).toLocaleString()}
                           </p>
                         </div>
-                        <div className="text-right">
-                          <p className="tabular-nums">
+                        <div className="flex flex-col items-end gap-1">
+                          <p className="font-mono tabular-nums text-foreground">
                             {r.landed_cost_per_litre ? money(r.landed_cost_per_litre) : '-'} / L
                           </p>
                           <Badge tone={statusTone(r.match_status)}>{r.match_status}</Badge>
@@ -238,13 +259,14 @@ export default function ProcurementPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Supplier balances</CardTitle>
+                <CardTitle>Supplier balances</CardTitle>
               </CardHeader>
               <CardContent>
                 {overview.data.supplier_balances.length === 0 ? (
                   <EmptyState
                     title="No approved payables"
                     description="Approved supplier invoices appear here."
+                    icon={<Wallet />}
                   />
                 ) : (
                   <div className="flex flex-col divide-y divide-border">
@@ -254,12 +276,14 @@ export default function ProcurementPage() {
                         className="flex items-center justify-between gap-3 py-3 text-sm"
                       >
                         <div>
-                          <p className="font-medium">{b.supplier_name}</p>
+                          <p className="font-medium text-foreground">{b.supplier_name}</p>
                           <p className="text-muted-foreground">
                             {b.invoice_count} invoice{b.invoice_count === 1 ? '' : 's'}
                           </p>
                         </div>
-                        <p className="font-medium tabular-nums">{money(b.outstanding_amount)}</p>
+                        <p className="font-mono font-medium tabular-nums text-foreground">
+                          {money(b.outstanding_amount)}
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -270,7 +294,7 @@ export default function ProcurementPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Landed cost trend</CardTitle>
+              <CardTitle>Landed cost trend</CardTitle>
             </CardHeader>
             <CardContent>
               {overview.data.price_trend.length === 0 ? (
@@ -283,11 +307,11 @@ export default function ProcurementPage() {
                   {overview.data.price_trend.map((p) => (
                     <div
                       key={`${p.received_at}-${p.product_id}`}
-                      className="rounded-md border border-border p-3"
+                      className="rounded-lg border border-border/80 bg-card p-3"
                     >
-                      <p className="text-sm font-medium">{p.product_name}</p>
+                      <p className="text-sm font-medium text-foreground">{p.product_name}</p>
                       <p className="text-xs text-muted-foreground">{p.supplier_name}</p>
-                      <p className="mt-2 text-lg font-semibold tabular-nums">
+                      <p className="mt-2 font-mono text-lg font-semibold tabular-nums text-foreground">
                         {money(p.landed_cost_per_litre)}
                       </p>
                     </div>
@@ -299,17 +323,6 @@ export default function ProcurementPage() {
         </>
       )}
     </div>
-  );
-}
-
-function MetricCard({ label, value }: { label: string; value: string | number }) {
-  return (
-    <Card>
-      <CardContent className="flex flex-col gap-1 p-4">
-        <span className="text-xs font-semibold uppercase text-muted-foreground">{label}</span>
-        <span className="text-2xl font-semibold tabular-nums">{value}</span>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -335,8 +348,8 @@ function PORow({
           ? (productName.get(firstLine.product_id) ?? firstLine.product_id.slice(0, 8))
           : '-'}
       </TableCell>
-      <TableCell className="text-right tabular-nums">{litres(ordered)} L</TableCell>
-      <TableCell className="text-right tabular-nums">{litres(received)} L</TableCell>
+      <TableCell className="text-right font-mono tabular-nums">{litres(ordered)} L</TableCell>
+      <TableCell className="text-right font-mono tabular-nums">{litres(received)} L</TableCell>
       <TableCell>
         <Badge tone={statusTone(po.status)}>{po.status.replace('_', ' ')}</Badge>
       </TableCell>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ShieldAlert, Users } from 'lucide-react';
 
 import { SdkError, type Customer } from '@fuelgrid/sdk';
 import {
@@ -12,16 +13,16 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
+import { formatMoney } from '@/lib/money';
 
 function money(n?: string) {
-  if (n == null) return '—';
-  const v = Number(n);
-  return Number.isFinite(v) ? v.toLocaleString(undefined, { minimumFractionDigits: 2 }) : n;
+  return formatMoney(n);
 }
 
 function statusTone(status: string): 'neutral' | 'success' | 'warning' {
@@ -46,43 +47,53 @@ export default function CustomersPage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Customers</h1>
-          <p className="text-sm text-muted-foreground">
-            Credit accounts, status, and credit-risk alerts.
-          </p>
-        </div>
-        <PermissionGate permission="customer_credit_alert.manage">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={scan.isPending}
-            onClick={() => scan.mutate()}
-          >
-            {scan.isPending ? 'Scanning…' : 'Scan credit alerts'}
-          </Button>
-        </PermissionGate>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Commerce"
+        title="Customers"
+        description="Credit accounts, status, and credit-risk alerts."
+        actions={
+          <PermissionGate permission="customer_credit_alert.manage">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={scan.isPending}
+              onClick={() => scan.mutate()}
+            >
+              {scan.isPending ? 'Scanning…' : 'Scan credit alerts'}
+            </Button>
+          </PermissionGate>
+        }
+      />
 
       {/* Open credit alerts */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Open credit alerts</CardTitle>
+          <CardTitle>Open credit alerts</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm">
+        <CardContent>
           {alerts.isPending ? (
-            <LoadingState />
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-lg" />
+              ))}
+            </div>
           ) : (alerts.data?.items?.length ?? 0) === 0 ? (
-            <EmptyState title="No open alerts" description="No customers are flagged right now." />
+            <EmptyState
+              title="No open alerts"
+              description="No customers are flagged right now."
+              icon={<ShieldAlert />}
+            />
           ) : (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1">
               {alerts.data!.items.map((a) => (
-                <div key={a.id} className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">{a.alert_type}</span>
+                <div
+                  key={a.id}
+                  className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5"
+                >
+                  <span className="text-sm text-muted-foreground">{a.alert_type}</span>
                   <span className="flex items-center gap-2">
-                    <span>{a.detail}</span>
+                    <span className="text-sm text-foreground">{a.detail}</span>
                     <Badge
                       tone={
                         a.severity === 'high' || a.severity === 'critical' ? 'warning' : 'neutral'
@@ -101,11 +112,15 @@ export default function CustomersPage() {
       {/* Customer list */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Accounts</CardTitle>
+          <CardTitle>Accounts</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm">
+        <CardContent>
           {customers.isPending ? (
-            <LoadingState />
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-lg" />
+              ))}
+            </div>
           ) : customers.isError ? (
             <ErrorState
               title="Couldn't load customers"
@@ -117,16 +132,25 @@ export default function CustomersPage() {
               }
             />
           ) : (customers.data?.items?.length ?? 0) === 0 ? (
-            <EmptyState title="No customers yet" description="Credit customers will appear here." />
+            <EmptyState
+              title="No customers yet"
+              description="Credit customers will appear here."
+              icon={<Users />}
+            />
           ) : (
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1">
               {customers.data!.items.map((c: Customer) => (
-                <div key={c.id} className="flex items-center justify-between gap-2">
-                  <span>
+                <div
+                  key={c.id}
+                  className="-mx-2 flex items-center justify-between gap-3 rounded-lg px-2 py-2.5"
+                >
+                  <span className="text-sm text-foreground">
                     {c.name} <span className="text-muted-foreground">({c.code})</span>
                   </span>
-                  <span className="flex items-center gap-3 tabular-nums">
-                    <span className="text-muted-foreground">limit {money(c.credit_limit)}</span>
+                  <span className="flex items-center gap-3">
+                    <span className="font-mono text-sm tabular-nums text-muted-foreground">
+                      limit {money(c.credit_limit)}
+                    </span>
                     <Badge tone={statusTone(c.status)}>{c.status}</Badge>
                   </span>
                 </div>
