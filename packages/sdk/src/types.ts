@@ -401,6 +401,25 @@ export interface UnreadCount {
   unread_count: number;
 }
 
+export type JobRunStatus = 'running' | 'success' | 'failure' | 'skipped';
+
+/** One run of a background scheduler job, from the admin job-health endpoint. */
+export interface JobRun {
+  id: string;
+  job_name: string;
+  started_at: string;
+  finished_at?: string;
+  status: JobRunStatus;
+  detail?: string;
+  /** Derived wall-clock run time in ms; absent while a run is in progress. */
+  duration_ms?: number;
+}
+
+export interface JobRunList {
+  items: JobRun[];
+  count: number;
+}
+
 export interface StationOverview {
   station: Station;
   tanks: Tank[];

@@ -44,6 +44,8 @@ tags:
     description: System + tenant role catalogue
   - name: Audit
     description: Append-only sensitive-action log
+  - name: Admin
+    description: Operational/system administration surfaces (scheduler health)
   - name: Platform
     description: Platform-admin operations (tenant provisioning)
   - name: Operating Days
@@ -479,6 +481,33 @@ paths:
                 properties:
                   marked_read: { type: integer }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/admin/jobs:
+    get:
+      tags: [Admin]
+      summary: Latest run of every background scheduler job (admin)
+      description: |
+        Read-only scheduler visibility. Returns the most recent run of each
+        registered background job — name, last run time, terminal status, and
+        derived duration — for the admin System health page. Gated on
+        `audit.read`. The job_runs ledger is cross-tenant system telemetry, so
+        this endpoint takes no paging or filters; a deployment without the
+        ledger table returns an empty list.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count]
+                properties:
+                  count: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/companies:
     get:
@@ -4271,6 +4300,18 @@ components:
         limit:    { type: integer }
         offset:   { type: integer }
         has_more: { type: boolean }
+
+    JobRun:
+      type: object
+      required: [id, job_name, started_at, status]
+      properties:
+        id:          { type: string, format: uuid }
+        job_name:    { type: string, description: Stable scheduler job name (also the metric label). }
+        started_at:  { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, description: Absent while the run is still in progress. }
+        status:      { type: string, enum: [running, success, failure, skipped] }
+        detail:      { type: string, description: Short human-readable run summary or error. }
+        duration_ms: { type: integer, format: int64, description: Derived wall-clock run time in milliseconds; absent while in progress. }
 
     PumpWithNozzles:
       allOf:
