@@ -1,0 +1,38 @@
+package server
+
+import "github.com/go-chi/chi/v5"
+
+// registerReportsStructuredRoutes (REPORTS-STRUCTURED): the structured,
+// insight-bearing report API that returns the drillable ReportEnvelope (not just
+// CSV). Each route is permission-gated by the read permission of the domain it
+// reports on and tenant-scoped by the repos; the station-scoped reports take the
+// station from ?station_id and re-check it in-handler via authorizeStation (so an
+// out-of-scope station 403s, a cross-tenant one 404s). Mounted inside the
+// admin-console group (requireAuth + rateLimitPerTenant) established in
+// registerRoutes. The pre-existing CSV/PDF/XLSX export endpoints stay mounted and
+// authoritative; the unified POST /reports/export only delegates to their URLs.
+func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
+	// Reports landing: categories + live headline metric + alert/DQ count.
+	r.With(s.requirePermissionHeld("finance.read")).
+		Get("/reports/overview", s.handleReportsOverview)
+
+	// Inventory reconciliation waterfall (station-scoped via ?station_id).
+	r.With(s.requirePermissionHeld("reconciliation.read")).
+		Get("/reports/inventory/reconciliation", s.handleReconciliationReport)
+
+	// Daily station close (station-scoped via ?station_id).
+	r.With(s.requirePermissionHeld("revenue.read")).
+		Get("/reports/station-close", s.handleStationCloseReport)
+
+	// Cash reconciliation (station-scoped via ?station_id).
+	r.With(s.requirePermissionHeld("finance.read")).
+		Get("/reports/cash-reconciliation", s.handleCashReconciliationReport)
+
+	// Fuel loss (station-scoped via ?station_id).
+	r.With(s.requirePermissionHeld("reconciliation.read")).
+		Get("/reports/fuel-loss", s.handleFuelLossReport)
+
+	// Unified export entry point — delegates to the existing export endpoints.
+	r.With(s.requirePermissionHeld("finance.read")).
+		Post("/reports/export", s.handleExportReport)
+}

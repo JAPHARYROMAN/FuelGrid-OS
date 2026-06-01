@@ -99,7 +99,23 @@ tags:
   - name: Workforce
     description: Station employees, shift teams, and the daily 3-team rotation
   - name: Reports
-    description: Standard report exports (CSV) over the existing overview data
+    description: >-
+      The reporting surface over the existing overview/service data. It spans
+      three layers: (1) standard file exports — CSV, PDF, and XLSX renderings of
+      the revenue, inventory, reconciliation, financials, and AR-aging reports,
+      each permission-gated and audited as a 'report.exported' event with a
+      content checksum; (2) deterministic, insight-bearing annotations — the
+      `/insights` endpoints attach reusable, transparent data-quality warnings
+      and observations to the signature reports without recomputing any figure;
+      and (3) the structured, permission-aware report API — the `/reports/*`
+      envelope endpoints (overview, inventory reconciliation, station close, cash
+      reconciliation, fuel loss) that return a single drillable ReportEnvelope:
+      headline summary, a report-specific chart payload, a generic table, the
+      deterministic insights + data-quality items, recommended actions, and the
+      drill-down / export affordances. Every money and litre figure is carried as
+      an exact decimal string end-to-end; the unified POST /reports/export
+      delegates to the existing file endpoints (which remain authoritative for
+      the bytes and their own per-station gate) and audits the request.
 
 security:
   - bearerAuth: []
@@ -1826,6 +1842,87 @@ paths:
       summary: Deterministic insights + data-quality warnings for the Customer Aging report
       responses:
         '200': { description: Insights, content: { application/json: { schema: { $ref: '#/components/schemas/ReportInsights' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/reports/overview:
+    get:
+      tags: [Reports]
+      summary: Reports landing — categories with a live headline metric and alert/data-quality count
+      description: Tenant-wide. Gated by finance.read.
+      responses:
+        '200': { description: Report categories, content: { application/json: { schema: { $ref: '#/components/schemas/ReportsOverview' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/inventory/reconciliation:
+    get:
+      tags: [Reports]
+      summary: Structured inventory reconciliation report (per-tank waterfall) as a drillable envelope
+      description: Station-scoped via station_id. Gated by reconciliation.read; an out-of-scope station 403s, a cross-tenant one 404s.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+        - { in: query, name: operating_day_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/station-close:
+    get:
+      tags: [Reports]
+      summary: Structured daily station close report as a drillable envelope
+      description: Station-scoped via station_id. Gated by revenue.read.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: date, required: false, schema: { type: string } }
+        - { in: query, name: operating_day_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/cash-reconciliation:
+    get:
+      tags: [Reports]
+      summary: Structured cash reconciliation report (expected vs submitted vs variance) as a drillable envelope
+      description: Station-scoped via station_id. Gated by finance.read.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/fuel-loss:
+    get:
+      tags: [Reports]
+      summary: Structured fuel-loss report (loss litres/value, variance %, repeated incidents) as a drillable envelope
+      description: Station-scoped via station_id. Gated by reconciliation.read.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/export:
+    post:
+      tags: [Reports]
+      summary: Unified report export — audits the request and returns the existing file endpoint's URL
+      description: >-
+        Delegates to the existing CSV/PDF/XLSX export endpoints (which remain
+        authoritative for the file bytes and enforce their own per-station gate).
+        The export request itself is audited as a 'report.exported' event. Gated
+        by finance.read.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReportExportRequest' }
+      responses:
+        '200': { description: Delegated export URL, content: { application/json: { schema: { $ref: '#/components/schemas/ReportExportResult' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/audit-logs/export:
@@ -3932,6 +4029,112 @@ components:
               message: { type: string }
             required: [message]
       required: [insights, data_quality]
+    # Structured, drillable report envelope returned by the /reports/* endpoints.
+    # Every money/litre figure (summary values, table cells, chart_data) is a
+    # decimal string. chart_data is report-specific so it is left untyped here.
+    ReportEnvelope:
+      type: object
+      properties:
+        metadata:
+          type: object
+          properties:
+            report_key:   { type: string }
+            title:        { type: string }
+            generated_at: { type: string, format: date-time }
+            station_id:   { type: string, format: uuid }
+            period:       { type: string }
+          required: [report_key, title, generated_at, period]
+        filters_used:
+          type: object
+          additionalProperties: { type: string }
+        data_quality:
+          type: array
+          items:
+            type: object
+            properties:
+              level:   { type: string }
+              message: { type: string }
+            required: [level, message]
+        summary:
+          type: array
+          items:
+            type: object
+            properties:
+              label:     { type: string }
+              value:     { type: string, description: Decimal string (money/litre) or a count }
+              unit:      { type: string }
+              delta:     { type: string }
+              direction: { type: string, enum: [up, down, flat] }
+            required: [label, value]
+        chart_data:
+          description: Report-specific chart payload; all numeric figures are decimal strings.
+        table:
+          type: object
+          properties:
+            columns: { type: array, items: { type: string } }
+            rows:    { type: array, items: { type: array, items: { type: string } } }
+          required: [columns, rows]
+        insights:
+          type: array
+          items:
+            type: object
+            properties:
+              severity:           { type: string, enum: [info, warning, critical] }
+              message:            { type: string }
+              recommended_action: { type: string }
+            required: [severity, message]
+        recommended_actions: { type: array, items: { type: string } }
+        drilldown:
+          type: array
+          items:
+            type: object
+            properties:
+              label: { type: string }
+              href:  { type: string }
+            required: [label, href]
+        export_options:
+          type: array
+          items:
+            type: object
+            properties:
+              format: { type: string, enum: [csv, pdf, xlsx] }
+              url:    { type: string }
+            required: [format, url]
+      required: [metadata, filters_used, data_quality, summary, chart_data, table, insights, recommended_actions, drilldown, export_options]
+    ReportsOverview:
+      type: object
+      properties:
+        generated_at: { type: string, format: date-time }
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              key:           { type: string }
+              title:         { type: string }
+              description:   { type: string }
+              headline:      { type: string }
+              headline_unit: { type: string }
+              alert_count:   { type: integer }
+              href:          { type: string }
+            required: [key, title, description, headline, headline_unit, alert_count, href]
+      required: [generated_at, categories]
+    ReportExportRequest:
+      type: object
+      required: [report_key, format]
+      properties:
+        report_key: { type: string }
+        format:     { type: string, enum: [csv, pdf, xlsx] }
+        filters:
+          type: object
+          additionalProperties: { type: string }
+    ReportExportResult:
+      type: object
+      properties:
+        report_key: { type: string }
+        format:     { type: string }
+        url:        { type: string }
+      required: [report_key, format, url]
     # Standard paginated list envelope returned by the paginated list
     # endpoints: {items, count, limit, offset, has_more}. Monetary, litre,
     # and rate values inside items are decimal strings (type: string).
