@@ -1063,6 +1063,22 @@ export interface CustomerBalance {
   balance: string;
 }
 
+// ---- Standard report exports (CSV) ----
+
+/** Reporting window for the financials CSV export. */
+export type ReportPeriod = 'this-month' | 'last-month' | 'ytd' | 'last-30';
+
+/**
+ * Discriminated spec for a standard CSV report. Passed to client.reportUrl /
+ * client.fetchReportBlob to build the same-origin download URL.
+ */
+export type ReportSpec =
+  | { kind: 'revenue'; stationID: string }
+  | { kind: 'inventory'; stationID: string }
+  | { kind: 'reconciliation'; stationID: string; operatingDayID?: string }
+  | { kind: 'financials'; period?: ReportPeriod }
+  | { kind: 'ar-aging' };
+
 // ---- Phase 7: Finance & Accounting Control ----
 
 export interface Account {

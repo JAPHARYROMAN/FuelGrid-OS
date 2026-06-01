@@ -59,6 +59,7 @@ import type {
   Reconciliation,
   ReconciliationOverview,
   Region,
+  ReportSpec,
   Role,
   Sale,
   TankValuation,
@@ -2262,6 +2263,66 @@ export class Client {
 
   listAccountingExports(signal?: AbortSignal): Promise<Paginated<AccountingExport>> {
     return this.request<Paginated<AccountingExport>>('/api/v1/finance/exports', { signal });
+  }
+
+  // ----------- Standard report exports (CSV) -----------
+
+  /**
+   * Build the same-origin URL for a standard CSV report. The endpoints stream
+   * `text/csv` with a Content-Disposition attachment and are gated by the
+   * matching read permission; each export is recorded in the audit log. Callers
+   * fetch this URL (credentials: 'same-origin' through the BFF) and hand the
+   * resulting blob to a browser download — JSON parsing does not apply.
+   */
+  reportUrl(report: ReportSpec): string {
+    switch (report.kind) {
+      case 'revenue':
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/revenue.csv`;
+      case 'inventory':
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/inventory.csv`;
+      case 'reconciliation': {
+        const qs = report.operatingDayID
+          ? `?operating_day_id=${encodeURIComponent(report.operatingDayID)}`
+          : '';
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/reconciliation.csv${qs}`;
+      }
+      case 'financials': {
+        const qs = report.period ? `?period=${encodeURIComponent(report.period)}` : '';
+        return `${this.baseURL}/api/v1/reports/financials.csv${qs}`;
+      }
+      case 'ar-aging':
+        return `${this.baseURL}/api/v1/reports/ar-aging.csv`;
+    }
+  }
+
+  /**
+   * Fetch a standard report's CSV as a Blob (same-origin, cookie-bearing via
+   * the BFF). Throws SdkError on a non-2xx response so callers share the app's
+   * error handling. The caller is responsible for triggering the download.
+   */
+  async fetchReportBlob(report: ReportSpec, signal?: AbortSignal): Promise<Blob> {
+    const res = await this.fetchImpl(this.reportUrl(report), {
+      method: 'GET',
+      headers: { Accept: 'text/csv' },
+      signal,
+      credentials: 'same-origin',
+    });
+    const requestId = res.headers.get('X-Request-Id');
+    if (res.status === 401) this.onUnauthorized?.();
+    if (!res.ok) {
+      let body: unknown = null;
+      try {
+        body = safeParse(await res.text());
+      } catch {
+        body = null;
+      }
+      const message =
+        body && typeof body === 'object' && 'error' in body
+          ? String((body as { error: unknown }).error)
+          : `HTTP ${res.status}`;
+      throw new SdkError(message, res.status, body, requestId);
+    }
+    return res.blob();
   }
 
   // ----------- Cash & banking (Phase 7) -----------

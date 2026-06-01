@@ -94,6 +94,8 @@ tags:
     description: Tank calibrated-volume + dip-to-volume lookups
   - name: Workforce
     description: Station employees, shift teams, and the daily 3-team rotation
+  - name: Reports
+    description: Standard report exports (CSV) over the existing overview data
 
 security:
   - bearerAuth: []
@@ -1547,6 +1549,55 @@ paths:
       summary: General-ledger report
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Reports & exports (standard CSV report library)
+  # ---------------------------------------------------------------------------
+  /api/v1/stations/{stationID}/reports/revenue.csv:
+    get:
+      tags: [Reports]
+      summary: Export a station's recent revenue days as CSV
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reports/inventory.csv:
+    get:
+      tags: [Reports]
+      summary: Export a station's current inventory snapshot as CSV
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reports/reconciliation.csv:
+    get:
+      tags: [Reports]
+      summary: Export a station's day reconciliations as CSV
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: operating_day_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/financials.csv:
+    get:
+      tags: [Reports]
+      summary: Export P&L + balance sheet as CSV
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/ar-aging.csv:
+    get:
+      tags: [Reports]
+      summary: Export accounts-receivable aging as CSV
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/audit-logs/export:
