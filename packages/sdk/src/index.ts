@@ -130,4 +130,11 @@ export type {
   TankValuation,
   UserSummary,
   Delivery,
+  Employee,
+  EmployeeRole,
+  ShiftTeam,
+  RotationAnchor,
+  ScheduledTeam,
+  DayRoster,
+  WorkforceList,
 } from './types';

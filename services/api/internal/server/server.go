@@ -46,6 +46,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/risk"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
+	"github.com/japharyroman/fuelgrid-os/internal/workforce"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
 )
 
@@ -114,6 +115,7 @@ type Server struct {
 	reconciliation *reconciliation.Repo
 	revenue        *revenue.Repo
 	risk           *risk.Repo
+	workforce      *workforce.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
 
@@ -192,6 +194,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
+		s.workforce = workforce.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}

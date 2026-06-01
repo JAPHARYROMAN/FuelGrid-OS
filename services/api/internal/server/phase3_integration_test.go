@@ -80,6 +80,67 @@ func seedAttendant(t *testing.T, ctx context.Context, pool *database.Pool, tenan
 	return id
 }
 
+// seedShiftRotation makes station1 openable for the given slot: it ensures the
+// station has its three rotation teams + a today anchor, and links memberUserID
+// (when non-nil) to an employee on the team that works `slot` on cycle day 0.
+// Opening that slot's shift then resolves a non-empty team and auto-populates
+// the linked attendant — the Phase 11 enforcement ("no shift without its
+// expected employees"). Idempotent within a test's fresh tenant.
+//
+// On cycle day 0: morning = order 0, evening = order 1.
+func seedShiftRotation(t *testing.T, ctx context.Context, pool *database.Pool, tenantID, stationID uuid.UUID, slot string, memberUserID *uuid.UUID) {
+	t.Helper()
+	order := 0
+	if slot == "evening" {
+		order = 1
+	}
+	teamIDs := make([]uuid.UUID, 3)
+	for o := 0; o < 3; o++ {
+		// Idempotent: re-running yields the existing team id.
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO shift_teams (tenant_id, station_id, name, rotation_order)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (tenant_id, station_id, rotation_order) DO UPDATE SET name = EXCLUDED.name
+			RETURNING id`,
+			tenantID, stationID, []string{"Team A", "Team B", "Team C"}[o], o).Scan(&teamIDs[o]); err != nil {
+			t.Fatalf("seed team %d: %v", o, err)
+		}
+	}
+	if memberUserID != nil {
+		var empID uuid.UUID
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO employees (tenant_id, station_id, user_id, full_name, role)
+			VALUES ($1, $2, $3, 'Shift Member', 'pump_attendant')
+			ON CONFLICT (tenant_id, user_id) WHERE user_id IS NOT NULL DO UPDATE SET full_name = EXCLUDED.full_name
+			RETURNING id`,
+			tenantID, stationID, *memberUserID).Scan(&empID); err != nil {
+			t.Fatalf("seed member employee: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO shift_team_members (tenant_id, team_id, employee_id) VALUES ($1, $2, $3)
+			ON CONFLICT (team_id, employee_id) DO NOTHING`,
+			tenantID, teamIDs[order], empID); err != nil {
+			t.Fatalf("seed member: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE stations SET rotation_anchor_date = CURRENT_DATE WHERE tenant_id = $1 AND id = $2`,
+		tenantID, stationID); err != nil {
+		t.Fatalf("seed anchor: %v", err)
+	}
+}
+
+// userID resolves a seeded user's id by email.
+func (h *harness) userID(t *testing.T, ctx context.Context, email string) uuid.UUID {
+	t.Helper()
+	var id uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE tenant_id = $1 AND email = $2`,
+		h.ids.tenantID, email).Scan(&id); err != nil {
+		t.Fatalf("lookup user %s: %v", email, err)
+	}
+	return id
+}
+
 func nozzleFor(t *testing.T, ctx context.Context, pool *database.Pool, tenantID, tankID uuid.UUID) uuid.UUID {
 	t.Helper()
 	var id uuid.UUID
@@ -103,20 +164,20 @@ func (h *harness) openDayShiftWithAttendant(t *testing.T, ctx context.Context, a
 	}
 	dayID = mustID(t, day)
 
+	// The attendant must exist before the shift opens: rotation links them to the
+	// morning team so opening auto-populates them as the shift's attendant.
+	attID = seedAttendant(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, attEmail)
+	nozzleID = nozzleFor(t, ctx, h.pool, h.ids.tenantID, h.ids.tankPMS)
+	seedShiftRotation(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, "morning", &attID)
+
 	code, shift := h.postJSON(t, "/api/v1/stations/"+st+"/shifts", admin,
-		fmt.Sprintf(`{"operating_day_id":%q,"name":"Morning"}`, dayID))
+		fmt.Sprintf(`{"operating_day_id":%q,"name":"Morning","slot":"morning"}`, dayID))
 	if code != http.StatusCreated {
 		t.Fatalf("open shift: %d %v", code, shift)
 	}
 	shiftID = mustID(t, shift)
 
-	attID = seedAttendant(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, attEmail)
-	nozzleID = nozzleFor(t, ctx, h.pool, h.ids.tenantID, h.ids.tankPMS)
-
-	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/attendants", admin,
-		fmt.Sprintf(`{"user_id":%q}`, attID)); code != http.StatusCreated {
-		t.Fatalf("assign attendant: %d %v", code, b)
-	}
+	// The attendant is auto-assigned by the rotation; only the nozzle is manual.
 	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/nozzle-assignments", admin,
 		fmt.Sprintf(`{"nozzle_id":%q,"attendant_id":%q}`, nozzleID, attID)); code != http.StatusCreated {
 		t.Fatalf("assign nozzle: %d %v", code, b)
@@ -296,6 +357,7 @@ func TestPhase3_PostCloseCorrectionLocked(t *testing.T) {
 func TestPhase3_ZeroAssignmentClose(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
+	ctx := context.Background()
 	tenantSlug := slug(h)
 	admin := h.login(t, tenantSlug, h.ids.adminEmail)
 	st := h.ids.station1.String()
@@ -304,8 +366,12 @@ func TestPhase3_ZeroAssignmentClose(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("open day: %d %v", code, day)
 	}
+	// Rotation linking a login-linked member, so the shift opens (then close
+	// fails on the zero *nozzle* assignments guard, not the open guard).
+	adminID := h.userID(t, ctx, h.ids.adminEmail)
+	seedShiftRotation(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, "morning", &adminID)
 	code, shift := h.postJSON(t, "/api/v1/stations/"+st+"/shifts", admin,
-		fmt.Sprintf(`{"operating_day_id":%q,"name":"Empty"}`, mustID(t, day)))
+		fmt.Sprintf(`{"operating_day_id":%q,"name":"Empty","slot":"morning"}`, mustID(t, day)))
 	if code != http.StatusCreated {
 		t.Fatalf("open shift: %d %v", code, shift)
 	}
