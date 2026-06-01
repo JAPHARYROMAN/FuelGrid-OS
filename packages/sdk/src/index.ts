@@ -103,6 +103,8 @@ export type {
   ReconciliationOverviewTank,
   RecentVariance,
   Region,
+  ReportPeriod,
+  ReportSpec,
   RevenueDay,
   RevenueOverview,
   RevenueSummary,
