@@ -65,6 +65,10 @@ import type {
   ReportInsights,
   ReportKey,
   ReportSpec,
+  ReportEnvelope,
+  ReportsOverview,
+  ReportExportRequest,
+  ReportExportResult,
   Role,
   Sale,
   TankValuation,
@@ -2470,6 +2474,103 @@ export class Client {
       `/api/v1/reports/${encodeURIComponent(reportKey)}/insights${qs ? `?${qs}` : ''}`,
       { signal },
     );
+  }
+
+  // ----------- Structured, permission-aware report API (envelope) -----------
+
+  /**
+   * Fetch the reports landing page: the report categories, each with a live
+   * headline metric and an alert/data-quality count. Gated by finance.read.
+   */
+  getReportsOverview(signal?: AbortSignal): Promise<ReportsOverview> {
+    return this.request<ReportsOverview>('/api/v1/reports/overview', { signal });
+  }
+
+  /**
+   * Fetch the per-tank inventory reconciliation waterfall for a station's day as
+   * a structured {@link ReportEnvelope}. Station-scoped (gated by
+   * reconciliation.read); `period`/`operatingDayID` are optional filters.
+   */
+  getReconciliationReport(
+    stationID: string,
+    opts?: { period?: string; operatingDayID?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/inventory/reconciliation${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Fetch the daily station close report (sales, stock variance, cash position,
+   * deliveries, open exceptions, approval status) as a structured envelope.
+   * Station-scoped (gated by revenue.read).
+   */
+  getStationCloseReport(
+    stationID: string,
+    opts?: { date?: string; operatingDayID?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    const params = new URLSearchParams({ station_id: stationID });
+    if (opts?.date) params.set('date', opts.date);
+    if (opts?.operatingDayID) params.set('operating_day_id', opts.operatingDayID);
+    return this.request<ReportEnvelope>(`/api/v1/reports/station-close?${params.toString()}`, {
+      signal,
+    });
+  }
+
+  /**
+   * Fetch the cash reconciliation report (expected vs submitted vs deposited,
+   * shortage/excess by reconciliation) as a structured envelope. Station-scoped
+   * (gated by finance.read).
+   */
+  getCashReconciliationReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/cash-reconciliation${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Fetch the fuel-loss report (loss litres/value, variance %, repeated
+   * incidents, pattern summary) as a structured envelope. Station-scoped (gated
+   * by reconciliation.read).
+   */
+  getFuelLossReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/fuel-loss${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Request a unified report export. The server audits the request and returns
+   * the same-origin URL of the existing CSV/PDF/XLSX endpoint to fetch the file
+   * from (then use {@link fetchReportBlob} or a direct download). Gated by
+   * finance.read.
+   */
+  exportReport(req: ReportExportRequest, signal?: AbortSignal): Promise<ReportExportResult> {
+    return this.request<ReportExportResult>('/api/v1/reports/export', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Build the `?station_id=…&period=…` query for a station-scoped report. */
+  private reportQuery(stationID: string, opts?: { period?: string }): string {
+    const params = new URLSearchParams({ station_id: stationID });
+    if (opts?.period) params.set('period', opts.period);
+    return `?${params.toString()}`;
   }
 
   // ----------- Cash & banking (Phase 7) -----------

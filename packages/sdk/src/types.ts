@@ -1185,6 +1185,107 @@ export interface ReportInsights {
   data_quality: DataQualityWarning[];
 }
 
+// ---- Structured, permission-aware report API (drillable envelope) ----
+
+/** The structured report keys returned by the envelope endpoints. */
+export type StructuredReportKey =
+  | 'inventory-reconciliation'
+  | 'station-close'
+  | 'cash-reconciliation'
+  | 'fuel-loss';
+
+/** Identifies a structured report instance. */
+export interface ReportEnvelopeMetadata {
+  report_key: string;
+  title: string;
+  /** RFC3339 generation timestamp. */
+  generated_at: string;
+  station_id?: string;
+  period: string;
+}
+
+/** One data-quality banner: a severity level and a message. */
+export interface ReportDataQualityItem {
+  level: string;
+  message: string;
+}
+
+/** One headline figure. `value` is always a string (decimal money/litre or count). */
+export interface ReportSummaryMetric {
+  label: string;
+  value: string;
+  unit?: string;
+  delta?: string;
+  direction?: string;
+}
+
+/** The generic, drillable grid. Every cell is a string (decimal-safe). */
+export interface ReportTable {
+  columns: string[];
+  rows: string[][];
+}
+
+/** A link to a deeper view. */
+export interface ReportDrilldownLink {
+  label: string;
+  href: string;
+}
+
+/** A downloadable rendering of the same report. */
+export interface ReportExportOption {
+  format: string;
+  url: string;
+}
+
+/**
+ * The shared, drillable structured-report payload. `chart_data` is
+ * report-specific (always decimal strings, never float money) so it is typed as
+ * `unknown` here — narrow it per `metadata.report_key` at the call site.
+ */
+export interface ReportEnvelope {
+  metadata: ReportEnvelopeMetadata;
+  filters_used: Record<string, string>;
+  data_quality: ReportDataQualityItem[];
+  summary: ReportSummaryMetric[];
+  chart_data: unknown;
+  table: ReportTable;
+  insights: ReportInsight[];
+  recommended_actions: string[];
+  drilldown: ReportDrilldownLink[];
+  export_options: ReportExportOption[];
+}
+
+/** One category card on the reports landing page. */
+export interface ReportCategory {
+  key: string;
+  title: string;
+  description: string;
+  headline: string;
+  headline_unit: string;
+  alert_count: number;
+  href: string;
+}
+
+/** The reports landing payload: categories with live headline metrics. */
+export interface ReportsOverview {
+  generated_at: string;
+  categories: ReportCategory[];
+}
+
+/** The keys + formats accepted by the unified export endpoint. */
+export interface ReportExportRequest {
+  report_key: string;
+  format: 'csv' | 'pdf' | 'xlsx';
+  filters?: Record<string, string>;
+}
+
+/** The unified export response: the same-origin URL to fetch the file from. */
+export interface ReportExportResult {
+  report_key: string;
+  format: string;
+  url: string;
+}
+
 // ---- Phase 7: Finance & Accounting Control ----
 
 export interface Account {

@@ -69,6 +69,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 						s.registerReportsRoutes(r)
 						s.registerReportInsightsRoutes(r)
 						s.registerReportExcelRoutes(r)
+						s.registerReportsStructuredRoutes(r)
 						s.registerAccountingExportRoutes(r)
 						s.registerOperationsRoutes(r)
 						s.registerWorkforceRoutes(r)
