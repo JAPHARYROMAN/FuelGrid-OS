@@ -59,7 +59,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // nonce CSP would block hydration. (The nonce value itself is consumed by
   // Next internally via the request CSP header; reading it here is what makes
   // the render dynamic.)
-  await headers();
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
 
   return (
     <html
@@ -68,7 +68,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       className={`${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="font-sans antialiased">
-        <Providers>{children}</Providers>
+        <Providers nonce={nonce}>{children}</Providers>
       </body>
     </html>
   );

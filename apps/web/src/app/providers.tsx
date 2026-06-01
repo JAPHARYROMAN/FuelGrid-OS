@@ -96,7 +96,19 @@ function getQueryClient() {
   return browserQueryClient;
 }
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  nonce,
+}: {
+  children: React.ReactNode;
+  /**
+   * Per-request CSP nonce (forwarded by middleware on `x-nonce`, read in the
+   * root server layout). next-themes injects an inline anti-flash <script>;
+   * passing the nonce lets that script satisfy the strict `script-src`
+   * `'nonce-…'` policy instead of being blocked and logging a CSP warning.
+   */
+  nonce?: string;
+}) {
   const queryClient = getQueryClient();
 
   // Init Sentry once on first client render. The helper is a no-op when
@@ -106,7 +118,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
+    <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} nonce={nonce}>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </ThemeProvider>
   );
