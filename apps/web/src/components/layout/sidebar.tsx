@@ -102,7 +102,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Setup', href: '/setup', icon: ListChecks },
       { label: 'System', href: '/settings/system', icon: ServerCog },
-      { label: 'AI Assistant', href: '/assistant', icon: Sparkles },
+      { label: 'Automation', href: '/automation', icon: Sparkles },
       { label: 'Settings', href: '/settings', icon: Settings },
     ],
   },
