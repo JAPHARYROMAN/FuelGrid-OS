@@ -2,6 +2,7 @@ package identity
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"log/slog"
@@ -67,6 +68,7 @@ type Service struct {
 	pool      *database.Pool
 	hasher    *password.Hasher
 	users     *repo.UserRepo
+	mfa       *repo.MfaRepo
 	sessions  *repo.SessionRepo
 	store     session.Store
 	limiter   *ratelimit.Limiter
@@ -100,6 +102,7 @@ func NewService(
 		pool:      pool,
 		hasher:    hasher,
 		users:     users,
+		mfa:       repo.NewMfaRepo(pool),
 		sessions:  sessions,
 		store:     store,
 		limiter:   limiter,
@@ -211,7 +214,19 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 		if req.MfaCode == "" {
 			return &LoginResult{MfaRequired: true}, nil
 		}
-		if user.MfaSecret == nil || !s.verifyTOTP(*user.MfaSecret, req.MfaCode) {
+		totpOK := user.MfaSecret != nil && s.verifyTOTP(*user.MfaSecret, req.MfaCode)
+		// Fall back to a one-time backup recovery code when the TOTP code
+		// doesn't match — the same mfa_code field carries either. A matched
+		// backup code is consumed (single-use) inside the success tx below.
+		backupOK := false
+		if !totpOK {
+			if ok, cerr := s.consumeBackupCode(ctx, user.ID, req.MfaCode); cerr != nil {
+				return nil, cerr
+			} else {
+				backupOK = ok
+			}
+		}
+		if !totpOK && !backupOK {
 			// A bad MFA code is a failed authentication: count it toward the
 			// account lockout (AUTH-10) so the second factor can't be
 			// brute-forced once the password is known — the per-IP login rate
@@ -650,6 +665,199 @@ func (s *Service) VerifyMfa(ctx context.Context, userID, tenantID uuid.UUID, cod
 	})
 }
 
+// ConfirmEnroll verifies a freshly enrolled TOTP code, flips mfa_enabled to
+// true, and issues the first set of one-time backup recovery codes. The
+// plaintext codes are returned to the caller exactly once (only their hashes
+// are stored) — the UI must surface them immediately and never again.
+func (s *Service) ConfirmEnroll(ctx context.Context, userID, tenantID uuid.UUID, code string) ([]string, error) {
+	user, err := s.users.FindByID(ctx, tenantID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if user.MfaSecret == nil {
+		return nil, errors.New("identity: no MFA secret enrolled")
+	}
+	if !s.verifyTOTP(*user.MfaSecret, code) {
+		return nil, ErrMfaInvalid
+	}
+	plain, hashes, err := s.newBackupCodes()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.ActivateMfa(ctx, tx, userID); err != nil {
+			return err
+		}
+		if err := s.mfa.SetBackupCodes(ctx, tx, tenantID, userID, hashes); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.mfa_activated", "UserMfaActivated", nil)
+	}); err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+// DisableMfa turns MFA off: clears the stored secret, flips mfa_enabled to
+// false, and removes the backup-code companion row. A current TOTP or backup
+// code is required so a hijacked session can't silently strip the second
+// factor.
+func (s *Service) DisableMfa(ctx context.Context, userID, tenantID uuid.UUID, code string) error {
+	user, err := s.users.FindByID(ctx, tenantID, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	if !user.MfaEnabled {
+		return ErrMfaNotEnabled
+	}
+	totpOK := user.MfaSecret != nil && s.verifyTOTP(*user.MfaSecret, code)
+	if !totpOK {
+		ok, cerr := s.consumeBackupCode(ctx, userID, code)
+		if cerr != nil {
+			return cerr
+		}
+		if !ok {
+			return ErrMfaInvalid
+		}
+	}
+	return s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.users.DisableMfa(ctx, tx, userID); err != nil {
+			return err
+		}
+		if err := s.mfa.Clear(ctx, tx, userID); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.mfa_disabled", "UserMfaDisabled", nil)
+	})
+}
+
+// RegenerateBackupCodes issues a fresh set of one-time backup codes, replacing
+// any existing set, and returns the plaintext codes once. MFA must be enabled.
+func (s *Service) RegenerateBackupCodes(ctx context.Context, userID, tenantID uuid.UUID) ([]string, error) {
+	user, err := s.users.FindByID(ctx, tenantID, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	if !user.MfaEnabled {
+		return nil, ErrMfaNotEnabled
+	}
+	plain, hashes, err := s.newBackupCodes()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.inTx(ctx, func(tx pgx.Tx) error {
+		if err := s.mfa.SetBackupCodes(ctx, tx, tenantID, userID, hashes); err != nil {
+			return err
+		}
+		return s.auditAuth(ctx, tx, tenantID, userID,
+			"user.mfa_backup_codes_regenerated", "UserMfaBackupCodesRegenerated", nil)
+	}); err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+// RemainingBackupCodes returns how many unused backup codes the user has, for
+// the profile UI to nudge a regenerate when the set runs low.
+func (s *Service) RemainingBackupCodes(ctx context.Context, userID uuid.UUID) (int, error) {
+	return s.mfa.RemainingCount(ctx, s.pool, userID)
+}
+
+// MfaStatus is the per-user MFA snapshot the profile + /me surfaces consume.
+type MfaStatus struct {
+	Enabled              bool // a second factor is active on the account
+	RequiredByRole       bool // the user's roles make MFA mandatory
+	BackupCodesRemaining int  // unused recovery codes
+}
+
+// MfaState reports the actor's MFA status: whether it is enabled, whether their
+// roles make it mandatory (admin/finance), and how many backup codes remain.
+// The UI uses RequiredByRole && !Enabled to force enrollment.
+func (s *Service) MfaState(ctx context.Context, tenantID, userID uuid.UUID) (MfaStatus, error) {
+	user, err := s.users.FindByID(ctx, tenantID, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return MfaStatus{}, ErrUserNotFound
+		}
+		return MfaStatus{}, err
+	}
+	roles, err := s.users.ListRoles(ctx, userID)
+	if err != nil {
+		return MfaStatus{}, err
+	}
+	remaining, err := s.mfa.RemainingCount(ctx, s.pool, userID)
+	if err != nil {
+		return MfaStatus{}, err
+	}
+	return MfaStatus{
+		Enabled:              user.MfaEnabled,
+		RequiredByRole:       RoleRequiresMfa(roles),
+		BackupCodesRemaining: remaining,
+	}, nil
+}
+
+// newBackupCodes generates a fresh set of human-typeable single-use codes,
+// returning the plaintext set (shown once) alongside their Argon2id hashes (the
+// only form persisted).
+func (s *Service) newBackupCodes() (plain []string, hashes []string, err error) {
+	const count = 10
+	plain = make([]string, 0, count)
+	hashes = make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		code, err := backupCode()
+		if err != nil {
+			return nil, nil, err
+		}
+		h, err := s.hasher.Hash(normalizeBackupCode(code))
+		if err != nil {
+			return nil, nil, err
+		}
+		plain = append(plain, code)
+		hashes = append(hashes, h)
+	}
+	return plain, hashes, nil
+}
+
+// consumeBackupCode checks code against the user's stored backup-code hashes
+// and, on a match, removes that hash (single-use). Returns (true, nil) when a
+// code was consumed. A user without a companion row simply yields (false, nil).
+func (s *Service) consumeBackupCode(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
+	candidate := normalizeBackupCode(code)
+	if candidate == "" {
+		return false, nil
+	}
+	hashes, err := s.mfa.BackupCodes(ctx, s.pool, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, h := range hashes {
+		match, _, verr := s.hasher.Verify(candidate, h)
+		if verr != nil {
+			continue
+		}
+		if match {
+			if err := s.inTx(ctx, func(tx pgx.Tx) error {
+				return s.mfa.ConsumeBackupCode(ctx, tx, userID, h)
+			}); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // IssueResetToken mints a password-reset token for a known user id and
 // stores it in Redis under the same key scheme as RequestPasswordReset.
 // Used by tenant provisioning so a freshly created admin can set their
@@ -670,4 +878,67 @@ func (s *Service) IssueResetToken(ctx context.Context, userID uuid.UUID) (string
 // for use as a Redis key.
 func base64Hash(b []byte) string {
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// backupCodeAlphabet excludes ambiguous glyphs (0/O, 1/I/L) so a code copied
+// from the one-time display is unambiguous to re-type.
+const backupCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+// backupCode returns a fresh ~50-bit recovery code formatted as XXXX-XXXX for
+// readability. The hyphen is cosmetic — normalizeBackupCode strips it before
+// hash/verify so the user may type it with or without.
+func backupCode() (string, error) {
+	const n = 10
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, 0, n+1)
+	for i, b := range buf {
+		if i == n/2 {
+			out = append(out, '-')
+		}
+		out = append(out, backupCodeAlphabet[int(b)%len(backupCodeAlphabet)])
+	}
+	return string(out), nil
+}
+
+// normalizeBackupCode canonicalizes a user-entered code for matching: strip
+// whitespace and hyphens, upper-case. Keeps "abcd efgh", "ABCD-EFGH" and
+// "abcdefgh" equivalent.
+func normalizeBackupCode(code string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(strings.TrimSpace(code)) {
+		if r == '-' || r == ' ' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// rolesRequiringMfa is the set of role codes for which MFA is mandatory: any
+// principal holding one of these must have MFA enabled (AUTH MFA policy). The
+// privileged tenant roles — full admin and finance — gate the most sensitive
+// surfaces (user management, the ledger, payouts), so a second factor is not
+// optional for them.
+var rolesRequiringMfa = map[string]bool{
+	"system_admin": true,
+	"tenant_admin": true,
+	"admin":        true,
+	"finance":      true,
+	"finance_lead": true,
+	"accountant":   true,
+}
+
+// RoleRequiresMfa reports whether any of the supplied role codes makes MFA
+// mandatory. The HTTP layer uses this (with the policy service's role lookup)
+// to refuse a privileged session that has not enrolled a second factor.
+func RoleRequiresMfa(roleCodes []string) bool {
+	for _, c := range roleCodes {
+		if rolesRequiringMfa[strings.ToLower(c)] {
+			return true
+		}
+	}
+	return false
 }

@@ -37,6 +37,8 @@ import type {
   LoginResponse,
   Me,
   MePermissions,
+  MfaBackupCodes,
+  MfaEnrollment,
   MeterReading,
   MeterReadingList,
   MyShift,
@@ -429,6 +431,36 @@ export class Client {
       body: req,
       signal,
     });
+  }
+
+  // ----------- Me (MFA) -----------
+
+  /** Begin TOTP enrollment; returns the secret + otpauth URI to display. */
+  mfaEnroll(signal?: AbortSignal): Promise<MfaEnrollment> {
+    return this.request<MfaEnrollment>('/api/v1/me/mfa/enroll', { method: 'POST', signal });
+  }
+
+  /** Confirm enrollment with a TOTP code; enables MFA and returns backup codes. */
+  mfaConfirm(code: string, signal?: AbortSignal): Promise<MfaBackupCodes> {
+    return this.request<MfaBackupCodes>('/api/v1/me/mfa/confirm', {
+      method: 'POST',
+      body: { code },
+      signal,
+    });
+  }
+
+  /** Disable MFA. Requires a current TOTP or backup code. */
+  mfaDisable(code: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>('/api/v1/me/mfa/disable', {
+      method: 'POST',
+      body: { code },
+      signal,
+    });
+  }
+
+  /** Regenerate one-time backup recovery codes (returns the fresh set once). */
+  regenerateBackupCodes(signal?: AbortSignal): Promise<MfaBackupCodes> {
+    return this.request<MfaBackupCodes>('/api/v1/me/mfa/backup-codes', { method: 'POST', signal });
   }
 
   // ----------- Companies -----------

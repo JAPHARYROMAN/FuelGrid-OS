@@ -32,6 +32,9 @@ export const meSchema = z.object({
   tenant_id: z.string(),
   session_id: z.string(),
   mfa_satisfied: z.boolean(),
+  mfa_enabled: z.boolean().optional(),
+  mfa_required: z.boolean().optional(),
+  mfa_backup_codes_remaining: z.number().optional(),
 });
 
 export const permissionItemSchema = z.object({

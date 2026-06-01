@@ -22,6 +22,22 @@ export interface Me {
   tenant_id: string;
   session_id: string;
   mfa_satisfied: boolean;
+  /** A second factor is active on the account. */
+  mfa_enabled?: boolean;
+  /** The actor's role makes MFA mandatory (admin/finance). */
+  mfa_required?: boolean;
+  /** Unused backup recovery codes remaining. */
+  mfa_backup_codes_remaining?: number;
+}
+
+/** Returned once by enroll-confirm and backup-code regeneration. */
+export interface MfaEnrollment {
+  secret: string;
+  otpauth_url: string;
+}
+
+export interface MfaBackupCodes {
+  backup_codes: string[];
 }
 
 export interface PermissionItem {
