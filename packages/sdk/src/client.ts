@@ -2292,7 +2292,24 @@ export class Client {
       }
       case 'ar-aging':
         return `${this.baseURL}/api/v1/reports/ar-aging.csv`;
+      case 'daily-close-pdf': {
+        const qs = report.operatingDayID
+          ? `?operating_day_id=${encodeURIComponent(report.operatingDayID)}`
+          : '';
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/daily-close.pdf${qs}`;
+      }
+      case 'financials-pdf': {
+        const qs = report.period ? `?period=${encodeURIComponent(report.period)}` : '';
+        return `${this.baseURL}/api/v1/reports/financials.pdf${qs}`;
+      }
     }
+  }
+
+  /** The HTTP Accept header for a report spec — PDF documents vs CSV data. */
+  private reportAccept(report: ReportSpec): string {
+    return report.kind === 'daily-close-pdf' || report.kind === 'financials-pdf'
+      ? 'application/pdf'
+      : 'text/csv';
   }
 
   /**
@@ -2303,7 +2320,7 @@ export class Client {
   async fetchReportBlob(report: ReportSpec, signal?: AbortSignal): Promise<Blob> {
     const res = await this.fetchImpl(this.reportUrl(report), {
       method: 'GET',
-      headers: { Accept: 'text/csv' },
+      headers: { Accept: this.reportAccept(report) },
       signal,
       credentials: 'same-origin',
     });
