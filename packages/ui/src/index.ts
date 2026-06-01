@@ -49,6 +49,44 @@ export {
 
 export { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './components/table';
 
+export { DataTable } from './components/data-table';
+export type { DataTableColumn, DataTableProps, SortDirection } from './components/data-table';
+
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuGroup,
+  DropdownMenuPortal,
+  DropdownMenuSub,
+  DropdownMenuRadioGroup,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from './components/dropdown-menu';
+
+export {
+  Tooltip,
+  TooltipProvider,
+  TooltipRoot,
+  TooltipTrigger,
+  TooltipContent,
+} from './components/tooltip';
+export type { TooltipProps } from './components/tooltip';
+
+export {
+  Sheet,
+  SheetTrigger,
+  SheetClose,
+  SheetPortal,
+  SheetOverlay,
+  SheetContent,
+  SheetTitle,
+  SheetDescription,
+} from './components/sheet';
+export type { SheetContentProps } from './components/sheet';
+
 export { Badge, badgeVariants } from './components/badge';
 export type { BadgeProps } from './components/badge';
 
