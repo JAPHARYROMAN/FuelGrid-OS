@@ -65,6 +65,34 @@ export function StationSelect({
   );
 }
 
+/** A bare station <select> (no inline label) for use inside a FilterBar field. */
+export function StationSelectBare({
+  items,
+  value,
+  onChange,
+}: {
+  items: Station[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <select
+      className={selectClasses}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label="Station"
+      disabled={items.length === 0}
+    >
+      {items.length === 0 ? <option value="">No stations</option> : null}
+      {items.map((s) => (
+        <option key={s.id} value={s.id}>
+          {s.code} — {s.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function PeriodSelect({
   value,
   onChange,
