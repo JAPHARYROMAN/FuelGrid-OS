@@ -119,11 +119,11 @@
     },
     {
       "id": 5,
-      "title": "DB connection pool (acquired / max)",
+      "title": "DB connection pool (acquired / idle / total / max)",
       "type": "timeseries",
       "datasource": "${DS_PROMETHEUS}",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "description": "Requires the pgx pool stats collector to be registered. See slo.md.",
+      "description": "pgx pool stats sampled on the metrics observe ticker (internal/observability ObservePool).",
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "targets": [
         {
@@ -134,9 +134,21 @@
         },
         {
           "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(pgxpool_idle_conns{job=\"$job\"})",
+          "legendFormat": "idle",
+          "refId": "B"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
+          "expr": "sum(pgxpool_total_conns{job=\"$job\"})",
+          "legendFormat": "total",
+          "refId": "C"
+        },
+        {
+          "datasource": "${DS_PROMETHEUS}",
           "expr": "sum(pgxpool_max_conns{job=\"$job\"})",
           "legendFormat": "max",
-          "refId": "B"
+          "refId": "D"
         }
       ]
     },

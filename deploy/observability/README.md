@@ -110,6 +110,9 @@ Names emitted by `internal/observability/metrics.go` (all `fuelgrid_`-prefixed):
   `fuelgrid_accounting_journal_entries_posted`.
 - Scheduler: `fuelgrid_scheduler_job_runs_total{job,result}`,
   `fuelgrid_scheduler_job_duration_seconds_bucket{job}`.
+- DB pool (bare `pgxpool_`-prefixed, sampled from `pool.Stat()` on the observe
+  ticker — see `Metrics.ObservePool`): `pgxpool_acquired_conns`,
+  `pgxpool_idle_conns`, `pgxpool_total_conns`, `pgxpool_max_conns`.
 
 ### `exported_job` on scheduler metrics
 
@@ -119,12 +122,31 @@ metric's own label is renamed to **`exported_job`**. The scheduler dashboard
 groups by `exported_job` accordingly. Don't confuse it with the `$job`
 template variable, which is the scrape job (`fuelgrid-api`).
 
+## Verifying the DB-pool panels
+
+The `DbPoolSaturation` alert and the DB-pool panel of `grafana-dashboard.json`
+are now backed by live metrics: `Metrics.ObservePool` samples `pool.Stat()` on
+the same observe ticker as the outbox/business gauges and exposes
+`pgxpool_acquired_conns`, `pgxpool_idle_conns`, `pgxpool_total_conns`, and
+`pgxpool_max_conns` (bare-named to match these references verbatim).
+
+To confirm they are live:
+
+```sh
+# With the API running, the four gauges should appear with non-negative values.
+curl -s localhost:8080/metrics | grep '^pgxpool_'
+# pgxpool_acquired_conns 0
+# pgxpool_idle_conns 1
+# pgxpool_total_conns 1
+# pgxpool_max_conns 10
+```
+
+In Prometheus, `pgxpool_max_conns` should equal your configured pool ceiling and
+`pgxpool_acquired_conns / pgxpool_max_conns` is the saturation ratio the
+`DbPoolSaturation` alert evaluates. Drive concurrent traffic and watch
+`pgxpool_acquired_conns` rise.
+
 ## Known gaps
 
-- **DB pool metrics are not yet emitted by the app.** `DbPoolSaturation` and the
-  related panel reference `pgxpool_acquired_conns` / `pgxpool_max_conns`, which
-  require a pgx pool stats collector in `internal/observability/metrics.go`
-  (see `slo.md`). Until then those signals are inert; everything else is backed
-  by metrics that exist today.
 - The `job="fuelgrid-api"` label is set by the scrape config here. If you rename
   the scrape job, update the alert rules and dashboard variables to match.

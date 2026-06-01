@@ -284,6 +284,9 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			if err := metrics.ObserveBusiness(obsCtx, deps.DB); err != nil {
 				logger.Warn("metrics: business observe", "error", err)
 			}
+			// Pool stats are read from in-process bookkeeping (no SQL), so they
+			// refresh even while Postgres is unreachable and never error.
+			metrics.ObservePool(deps.DB)
 		}
 
 		go func() {
