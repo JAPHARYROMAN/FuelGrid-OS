@@ -73,20 +73,42 @@ func subscribeNotifications(
 		}
 	}
 
-	// Revenue recognized — informational confirmation that a shift's sales were
-	// recognized into revenue.
-	bus.Subscribe("RevenueRecognized", handle(func(e events.Event) (notifSpec, bool) {
+	// One handler per event type of interest. The mapping (event type ->
+	// notifSpec) lives in notifSpecFor so it can be unit-tested in isolation
+	// without a database or the bus.
+	for _, et := range subscribedEventTypes {
+		bus.Subscribe(et, handle(notifSpecFor))
+	}
+}
+
+// subscribedEventTypes is the set of domain events that raise an in-app
+// notification. It is the single source of truth the wiring loops over and the
+// mapping test enumerates, so the two can never drift.
+var subscribedEventTypes = []string{
+	"RevenueRecognized",
+	"ShiftClosed",
+	"RiskDetectionRun",
+	"IncidentOpened",
+	"ApprovalRequested",
+}
+
+// notifSpecFor maps a domain event to the notification it should raise. It is a
+// pure function (no DB, no bus) so the event->notification contract is unit
+// tested directly. The bool is false for an event type that raises no
+// notification, so an unexpected type is a silent no-op rather than a bogus
+// feed entry.
+func notifSpecFor(e events.Event) (notifSpec, bool) {
+	switch e.Type {
+	case "RevenueRecognized":
+		// Informational confirmation that a shift's sales were recognized.
 		return notifSpec{
 			notifType: "revenue.recognized",
 			title:     "Revenue recognized",
 			body:      "A shift's sales have been recognized into revenue.",
 			severity:  notifications.SeverityInfo,
 		}, true
-	}))
-
-	// Shift closed — surfaced as a warning when the close carried a cash
-	// variance, otherwise a plain success notice.
-	bus.Subscribe("ShiftClosed", handle(func(e events.Event) (notifSpec, bool) {
+	case "ShiftClosed":
+		// Warning when the close carried a cash variance, else a success notice.
 		sev := notifications.SeveritySuccess
 		body := "A shift has been closed."
 		if shiftClosedHasVariance(e.Payload) {
@@ -99,38 +121,34 @@ func subscribeNotifications(
 			body:      body,
 			severity:  sev,
 		}, true
-	}))
-
-	// Risk alert raised — a detection run produced alerts. Critical so it both
-	// shows in the feed and emails the tenant's users.
-	bus.Subscribe("RiskDetectionRun", handle(func(e events.Event) (notifSpec, bool) {
+	case "RiskDetectionRun":
+		// A detection run produced alerts. Critical so it both shows in the feed
+		// and emails the tenant's users.
 		return notifSpec{
 			notifType: "risk.alert_raised",
 			title:     "Risk alert raised",
 			body:      "Risk detection raised one or more alerts — review the risk queue.",
 			severity:  notifications.SeverityCritical,
 		}, true
-	}))
-
-	// Incident opened — operational issue logged. Critical.
-	bus.Subscribe("IncidentOpened", handle(func(e events.Event) (notifSpec, bool) {
+	case "IncidentOpened":
+		// Operational issue logged. Critical.
 		return notifSpec{
 			notifType: "incident.opened",
 			title:     "Incident opened",
 			body:      "An incident was opened — check the incidents queue.",
 			severity:  notifications.SeverityCritical,
 		}, true
-	}))
-
-	// Approval requested — something needs a decision. Warning severity.
-	bus.Subscribe("ApprovalRequested", handle(func(e events.Event) (notifSpec, bool) {
+	case "ApprovalRequested":
+		// Something needs a decision. Warning severity.
 		return notifSpec{
 			notifType: "approval.requested",
 			title:     "Approval requested",
 			body:      "An approval request is awaiting your decision.",
 			severity:  notifications.SeverityWarning,
 		}, true
-	}))
+	default:
+		return notifSpec{}, false
+	}
 }
 
 // emailTenantUsers sends a notification email to every active user in the

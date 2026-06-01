@@ -46,6 +46,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 	"github.com/japharyroman/fuelgrid-os/internal/risk"
+	"github.com/japharyroman/fuelgrid-os/internal/scheduler"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
 	"github.com/japharyroman/fuelgrid-os/internal/tanks"
 	"github.com/japharyroman/fuelgrid-os/internal/workforce"
@@ -122,6 +123,7 @@ type Server struct {
 	revenue        *revenue.Repo
 	risk           *risk.Repo
 	notifications  *notifications.Repo
+	jobRuns        *scheduler.ReadRepo
 	workforce      *workforce.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
@@ -203,6 +205,9 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
 		s.notifications = notifications.New(deps.DB)
+		// job_runs is an owner-only SYSTEM table (no RLS); the scheduler read
+		// repo always runs on the owner pool (deps.DB), never appDB.
+		s.jobRuns = scheduler.NewReadRepo(deps.DB)
 		s.workforce = workforce.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)

@@ -33,6 +33,7 @@ import type {
   ExpenseCategory,
   Incident,
   InventoryOverview,
+  JobRunList,
   LoginRequest,
   LoginResponse,
   Me,
@@ -3338,6 +3339,17 @@ export class Client {
       method: 'POST',
       signal,
     });
+  }
+
+  // ----------- Admin / system -----------
+
+  /**
+   * Latest run of every background scheduler job (name, last run, status,
+   * duration) for the admin System health page. Requires the `audit.read`
+   * permission.
+   */
+  listJobRuns(signal?: AbortSignal): Promise<JobRunList> {
+    return this.request<JobRunList>('/api/v1/admin/jobs', { signal });
   }
 }
 
