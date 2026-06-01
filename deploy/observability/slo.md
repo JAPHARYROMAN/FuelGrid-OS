@@ -53,12 +53,11 @@ spent rather than as pure burn-rate alerts (kept simple for the current scale):
 
 ## Known gaps (must validate before relying on every panel/alert)
 
-- **DB pool metrics are not yet emitted by the application.** The
-  `DbPoolSaturation` alert and the DB pool dashboard panel reference
-  `pgxpool_acquired_conns` / `pgxpool_max_conns`. These require registering a
-  pgx pool stats collector (e.g. periodically reading `pool.Stat()` into gauges,
-  or a community pgxpool Prometheus collector) in
-  `internal/observability/metrics.go`. Until that exists, those signals are
-  inert. All HTTP and outbox signals are backed by metrics that exist today.
+- **DB pool metrics are live.** `Metrics.ObservePool`
+  (`internal/observability/metrics.go`) reads `pool.Stat()` on the observe
+  ticker and exposes `pgxpool_acquired_conns`, `pgxpool_idle_conns`,
+  `pgxpool_total_conns`, and `pgxpool_max_conns`, so the `DbPoolSaturation`
+  alert and the DB-pool dashboard panel are backed by real metrics. All HTTP,
+  outbox, and pool signals are emitted by the running API.
 - The `job="fuelgrid-api"` label depends on the scrape config naming; adjust
   the rules/dashboard variable if your Grafana Agent uses a different job name.

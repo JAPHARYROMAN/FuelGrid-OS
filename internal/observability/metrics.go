@@ -35,6 +35,16 @@ type Metrics struct {
 	OpenShifts         prometheus.Gauge // shifts currently in the 'open' state across all tenants
 	JournalEntries     prometheus.Gauge // posted journal entries (financial-throughput signal)
 
+	// pgx connection-pool stats, sampled from pool.Stat() on the same observe
+	// ticker. These are deliberately NOT fuelgrid_-prefixed: the names match the
+	// community pgxpool collector convention (pgxpool_*) that the dashboards and
+	// the DbPoolSaturation alert already reference, so wiring them here turns
+	// those previously-inert panels/alerts live without touching the YAML/JSON.
+	PoolAcquiredConns prometheus.Gauge // connections currently checked out (in use)
+	PoolIdleConns     prometheus.Gauge // idle connections held open in the pool
+	PoolTotalConns    prometheus.Gauge // total connections currently established (acquired + idle + constructing)
+	PoolMaxConns      prometheus.Gauge // configured pool ceiling
+
 	// Scheduler (internal/scheduler). The background-jobs runner records one
 	// observation per job execution: a success/failure-labelled counter and a
 	// duration histogram, both keyed by job name. These let operators alert on a
@@ -118,6 +128,24 @@ func NewMetrics() *Metrics {
 			Help:      "Wall-clock duration of background scheduler job executions, in seconds.",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 3, 10),
 		}, []string{"job"}),
+		// Bare pgxpool_* names (no Namespace/Subsystem) to match the dashboard
+		// and DbPoolSaturation alert references verbatim.
+		PoolAcquiredConns: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pgxpool_acquired_conns",
+			Help: "Number of pgx pool connections currently acquired (in use).",
+		}),
+		PoolIdleConns: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pgxpool_idle_conns",
+			Help: "Number of idle pgx pool connections held open.",
+		}),
+		PoolTotalConns: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pgxpool_total_conns",
+			Help: "Total number of pgx pool connections currently established.",
+		}),
+		PoolMaxConns: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "pgxpool_max_conns",
+			Help: "Configured maximum size of the pgx connection pool.",
+		}),
 	}
 
 	reg.MustRegister(
@@ -125,6 +153,7 @@ func NewMetrics() *Metrics {
 		m.OutboxBacklog, m.OutboxLag, m.OutboxDeadLettered,
 		m.OpenShifts, m.JournalEntries,
 		m.SchedulerRuns, m.SchedulerDuration,
+		m.PoolAcquiredConns, m.PoolIdleConns, m.PoolTotalConns, m.PoolMaxConns,
 	)
 	return m
 }
@@ -187,6 +216,22 @@ func (m *Metrics) ObserveBusiness(ctx context.Context, pool *database.Pool) erro
 	m.OpenShifts.Set(float64(openShifts))
 	m.JournalEntries.Set(float64(journalEntries))
 	return nil
+}
+
+// ObservePool snapshots pgxpool.Pool.Stat() into the pgxpool_* gauges. Unlike
+// the other observers it issues no SQL — Stat() reads in-process pool
+// bookkeeping — so it is cheap, always succeeds, and works even while the
+// database is unreachable (acquired/idle drop, total reflects what's left).
+// A nil *Metrics or nil pool is tolerated so callers need not guard.
+func (m *Metrics) ObservePool(pool *database.Pool) {
+	if m == nil || pool == nil || pool.Pool == nil {
+		return
+	}
+	s := pool.Stat()
+	m.PoolAcquiredConns.Set(float64(s.AcquiredConns()))
+	m.PoolIdleConns.Set(float64(s.IdleConns()))
+	m.PoolTotalConns.Set(float64(s.TotalConns()))
+	m.PoolMaxConns.Set(float64(s.MaxConns()))
 }
 
 // inflight is an int64 monotonic counter exposed via the HTTPInflight
