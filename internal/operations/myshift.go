@@ -28,7 +28,7 @@ func (r *Repo) ActiveShiftForAttendant(ctx context.Context, tenantID, userID uui
 	if err := scanShift(r.pool.QueryRow(ctx, `
 		SELECT s.id, s.tenant_id, s.station_id, s.operating_day_id, s.name, s.status,
 		       s.opened_by, s.opened_at, s.closed_by, s.closed_at, s.approved_by, s.approved_at,
-		       s.notes, s.created_at, s.updated_at
+		       s.notes, s.slot, s.team_id, s.created_at, s.updated_at
 		FROM shifts s
 		JOIN shift_attendants a ON a.shift_id = s.id
 		WHERE s.tenant_id = $1 AND a.user_id = $2 AND s.status IN ('open', 'closed')

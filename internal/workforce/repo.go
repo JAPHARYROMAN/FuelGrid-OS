@@ -205,6 +205,21 @@ func (r *Repo) ListTeams(ctx context.Context, tenantID, stationID uuid.UUID) ([]
 	return out, rows.Err()
 }
 
+// GetTeam loads one team by id within the tenant (with its member count).
+func (r *Repo) GetTeam(ctx context.Context, tenantID, id uuid.UUID) (Team, error) {
+	var t Team
+	err := r.pool.QueryRow(ctx, `
+		SELECT t.id, t.tenant_id, t.station_id, t.name, t.rotation_order,
+			(SELECT count(*) FROM shift_team_members m WHERE m.tenant_id = t.tenant_id AND m.team_id = t.id)
+		FROM shift_teams t
+		WHERE t.tenant_id = $1 AND t.id = $2`, tenantID, id).
+		Scan(&t.ID, &t.TenantID, &t.StationID, &t.Name, &t.RotationOrder, &t.MemberCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Team{}, ErrNotFound
+	}
+	return t, err
+}
+
 // EnsureTeams guarantees the station has its three rotation teams (orders
 // 0,1,2). Missing teams are created with the provided names (falling back to
 // "Team A/B/C"); existing teams are left as-is. Returns all three, ordered.

@@ -399,6 +399,102 @@ func run() error {
 		return err
 	}
 
+	// Phase 11 workforce: nine demo employees for MIK-01, three rotation teams
+	// (three members each), and a rotation anchor of today so the demo shows the
+	// rotation working out of the box. The demo operator + admin are linked to
+	// their employee rows (user_id) so opening a slot's shift auto-populates
+	// attendants. Idempotent within this fresh-tenant seed (the whole run is
+	// guarded by the "tenant already present" early return above).
+	//
+	// Team A (order 0): demo operator (linked), + 2 attendants.
+	// Team B (order 1): demo admin (linked), + 2 attendants.
+	// Team C (order 2): 3 attendants (no login — exercises the back-office path).
+	var teamAID, teamBID, teamCID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO shift_teams (tenant_id, station_id, name, rotation_order)
+		VALUES ($1, $2, 'Team A', 0) RETURNING id
+	`, tenantID, station1ID).Scan(&teamAID); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO shift_teams (tenant_id, station_id, name, rotation_order)
+		VALUES ($1, $2, 'Team B', 1) RETURNING id
+	`, tenantID, station1ID).Scan(&teamBID); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO shift_teams (tenant_id, station_id, name, rotation_order)
+		VALUES ($1, $2, 'Team C', 2) RETURNING id
+	`, tenantID, station1ID).Scan(&teamCID); err != nil {
+		return err
+	}
+
+	// The two login-linked employees first (operator -> Team A, admin -> Team B).
+	var empOperatorID, empAdminID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO employees (tenant_id, station_id, user_id, full_name, role, employee_code)
+		VALUES ($1, $2, $3, 'Demo Operator', 'pump_attendant', 'EMP-001') RETURNING id
+	`, tenantID, station1ID, userID).Scan(&empOperatorID); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO employees (tenant_id, station_id, user_id, full_name, role, employee_code)
+		VALUES ($1, $2, $3, 'Demo Admin', 'supervisor', 'EMP-002') RETURNING id
+	`, tenantID, station1ID, adminUserID).Scan(&empAdminID); err != nil {
+		return err
+	}
+
+	// Seven more unlinked employees (no login account), EMP-003..EMP-009.
+	demoEmployees := []struct{ name, role, code string }{
+		{"Asha Mwita", "pump_attendant", "EMP-003"},
+		{"Juma Hassan", "pump_attendant", "EMP-004"},
+		{"Neema Joseph", "cashier", "EMP-005"},
+		{"Baraka Said", "pump_attendant", "EMP-006"},
+		{"Zawadi Kimaro", "pump_attendant", "EMP-007"},
+		{"Frank Massawe", "cashier", "EMP-008"},
+		{"Lucy Mushi", "pump_attendant", "EMP-009"},
+	}
+	empIDs := make([]string, 0, len(demoEmployees))
+	for _, e := range demoEmployees {
+		var id string
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO employees (tenant_id, station_id, full_name, role, employee_code)
+			VALUES ($1, $2, $3, $4, $5) RETURNING id
+		`, tenantID, station1ID, e.name, e.role, e.code).Scan(&id); err != nil {
+			return err
+		}
+		empIDs = append(empIDs, id)
+	}
+
+	// Membership: A = {operator, EMP-003, EMP-004}; B = {admin, EMP-005, EMP-006};
+	// C = {EMP-007, EMP-008, EMP-009}.
+	teamMembers := []struct {
+		teamID    string
+		employees []string
+	}{
+		{teamAID, []string{empOperatorID, empIDs[0], empIDs[1]}},
+		{teamBID, []string{empAdminID, empIDs[2], empIDs[3]}},
+		{teamCID, []string{empIDs[4], empIDs[5], empIDs[6]}},
+	}
+	for _, tm := range teamMembers {
+		for _, empID := range tm.employees {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO shift_team_members (tenant_id, team_id, employee_id)
+				VALUES ($1, $2, $3)
+			`, tenantID, tm.teamID, empID); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Anchor the rotation at today (cycle day 0) so the roster shows live data.
+	if _, err := tx.Exec(ctx, `
+		UPDATE stations SET rotation_anchor_date = CURRENT_DATE
+		WHERE tenant_id = $1 AND id = $2
+	`, tenantID, station1ID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
@@ -422,6 +518,7 @@ func run() error {
 		"shift", "MIK-01: Morning (operator on 2 PMS nozzles)",
 		"meter_readings", "MIK-01 Morning: opening 10000 on 2 nozzles",
 		"dip_reading", "MIK-01 Morning: PMS tank opening 1240mm -> 12400L",
+		"workforce", "MIK-01: 9 employees, 3 teams (3 members each), rotation anchored today",
 		"user_id", userID,
 		"user_email", userEmail,
 		"role_code", roleCode,

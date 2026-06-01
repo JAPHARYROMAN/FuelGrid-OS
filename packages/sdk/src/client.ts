@@ -100,6 +100,13 @@ import type {
   UnreadCount,
   UserSummary,
   Delivery,
+  Employee,
+  EmployeeRole,
+  ShiftTeam,
+  RotationAnchor,
+  ScheduledTeam,
+  DayRoster,
+  WorkforceList,
 } from './types';
 import { loginResponseSchema, meSchema, mePermissionsSchema } from './schemas';
 
@@ -1080,7 +1087,7 @@ export class Client {
 
   openShift(
     stationID: string,
-    req: { operating_day_id: string; name: string; notes?: string },
+    req: { operating_day_id: string; name: string; slot: 'morning' | 'evening'; notes?: string },
     signal?: AbortSignal,
   ): Promise<Shift> {
     return this.request<Shift>(`/api/v1/stations/${encodeURIComponent(stationID)}/shifts`, {
@@ -1120,6 +1127,139 @@ export class Client {
     return this.request<void>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/nozzle-assignments/${encodeURIComponent(assignmentID)}`,
       { method: 'DELETE', signal },
+    );
+  }
+
+  // ----------- Workforce (Phase 11) -----------
+
+  /** A station's employees (station.read). */
+  listEmployees(stationID: string, signal?: AbortSignal): Promise<WorkforceList<Employee>> {
+    return this.request<WorkforceList<Employee>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/employees`,
+      { signal },
+    );
+  }
+
+  /** Add an employee to a station (station.manage). */
+  createEmployee(
+    stationID: string,
+    req: {
+      full_name: string;
+      role?: EmployeeRole;
+      user_id?: string;
+      employee_code?: string;
+      phone?: string;
+      email?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Employee> {
+    return this.request<Employee>(`/api/v1/stations/${encodeURIComponent(stationID)}/employees`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Update an employee (station.manage). */
+  updateEmployee(
+    employeeID: string,
+    req: {
+      full_name?: string;
+      role?: EmployeeRole;
+      status?: 'active' | 'inactive';
+      user_id?: string;
+      employee_code?: string;
+      phone?: string;
+      email?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Employee> {
+    return this.request<Employee>(`/api/v1/employees/${encodeURIComponent(employeeID)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  /** A station's three shift teams (station.read). */
+  listTeams(stationID: string, signal?: AbortSignal): Promise<WorkforceList<ShiftTeam>> {
+    return this.request<WorkforceList<ShiftTeam>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/teams`,
+      { signal },
+    );
+  }
+
+  /** Ensure the station's three rotation teams exist (station.manage). */
+  ensureTeams(
+    stationID: string,
+    req: { names?: string[] } = {},
+    signal?: AbortSignal,
+  ): Promise<WorkforceList<ShiftTeam>> {
+    return this.request<WorkforceList<ShiftTeam>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/teams`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /** Replace a team's membership (station.manage). */
+  setTeamMembers(
+    teamID: string,
+    employeeIDs: string[],
+    signal?: AbortSignal,
+  ): Promise<WorkforceList<Employee>> {
+    return this.request<WorkforceList<Employee>>(
+      `/api/v1/teams/${encodeURIComponent(teamID)}/members`,
+      { method: 'PUT', body: { employee_ids: employeeIDs }, signal },
+    );
+  }
+
+  /** The station's rotation anchor date (station.read). */
+  getRotationAnchor(stationID: string, signal?: AbortSignal): Promise<RotationAnchor> {
+    return this.request<RotationAnchor>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/rotation-anchor`,
+      { signal },
+    );
+  }
+
+  /** Set or clear the station's rotation anchor date (station.manage). */
+  setRotationAnchor(
+    stationID: string,
+    rotationAnchorDate: string | null,
+    signal?: AbortSignal,
+  ): Promise<RotationAnchor> {
+    return this.request<RotationAnchor>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/rotation-anchor`,
+      { method: 'PUT', body: { rotation_anchor_date: rotationAnchorDate }, signal },
+    );
+  }
+
+  /** Forward-looking rotation roster (station.read). */
+  getRoster(
+    stationID: string,
+    opts: { from?: string; days?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<WorkforceList<DayRoster>> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.days != null) qs.set('days', String(opts.days));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<WorkforceList<DayRoster>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/roster${suffix}`,
+      { signal },
+    );
+  }
+
+  /** The team on duty for a date + slot (station.read). */
+  getScheduledTeam(
+    stationID: string,
+    opts: { slot: 'morning' | 'evening'; date?: string },
+    signal?: AbortSignal,
+  ): Promise<ScheduledTeam> {
+    const qs = new URLSearchParams({ slot: opts.slot });
+    if (opts.date) qs.set('date', opts.date);
+    return this.request<ScheduledTeam>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/scheduled-team?${qs.toString()}`,
+      { signal },
     );
   }
 

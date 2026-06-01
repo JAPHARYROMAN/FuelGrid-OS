@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   BarChart3,
   Building2,
+  CalendarClock,
   ClipboardCheck,
   Database,
   DollarSign,
@@ -21,6 +22,7 @@ import {
   Sparkles,
   Truck,
   Users,
+  UserCog,
 } from 'lucide-react';
 
 import { cn } from '@fuelgrid/ui';
@@ -58,6 +60,8 @@ const navGroups: NavGroup[] = [
       { label: 'Stations', href: '/stations', icon: Building2 },
       { label: 'Tanks', href: '/tanks', icon: Database },
       { label: 'Pumps', href: '/pumps', icon: Fuel },
+      { label: 'Employees', href: '/settings/employees', icon: UserCog },
+      { label: 'Teams & Roster', href: '/settings/teams', icon: CalendarClock },
     ],
   },
   {

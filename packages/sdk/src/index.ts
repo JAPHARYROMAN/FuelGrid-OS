@@ -133,4 +133,11 @@ export type {
   UnreadCount,
   UserSummary,
   Delivery,
+  Employee,
+  EmployeeRole,
+  ShiftTeam,
+  RotationAnchor,
+  ScheduledTeam,
+  DayRoster,
+  WorkforceList,
 } from './types';
