@@ -1,10 +1,26 @@
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
+import { Geist, Geist_Mono } from 'next/font/google';
 
 import { Providers } from './providers';
 import './globals.css';
 
 const appName = process.env.NEXT_PUBLIC_APP_NAME ?? 'FuelGrid OS';
+
+// Geist (UI/body) + Geist Mono (numbers, money, litres). Self-hosted by
+// next/font, exposed as CSS variables that globals.css binds to --font-sans /
+// --font-mono. This typeface is a large part of the "high-end" feel.
+const geistSans = Geist({
+  subsets: ['latin'],
+  variable: '--font-geist-sans',
+  display: 'swap',
+});
+
+const geistMono = Geist_Mono({
+  subsets: ['latin'],
+  variable: '--font-geist-mono',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: appName,
@@ -28,7 +44,10 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: '#3b82f6',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#121214' },
+  ],
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -43,7 +62,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   await headers();
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable}`}
+    >
       <body className="font-sans antialiased">
         <Providers>{children}</Providers>
       </body>

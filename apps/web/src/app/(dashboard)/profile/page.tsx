@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { MonitorSmartphone } from 'lucide-react';
+
 import { SdkError } from '@fuelgrid/sdk';
 import {
   Badge,
@@ -16,7 +18,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -58,11 +61,12 @@ export default function ProfilePage() {
   });
 
   return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
-        <p className="text-sm text-muted-foreground">Your session, devices, and password.</p>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Account"
+        title="Profile"
+        description="Your session, devices, and password."
+      />
 
       <Card>
         <CardHeader>
@@ -71,7 +75,7 @@ export default function ProfilePage() {
         </CardHeader>
         <CardContent>
           {me.isPending ? (
-            <LoadingState />
+            <Skeleton className="h-16 rounded-lg" />
           ) : me.isError ? (
             <ErrorState
               title="Couldn't load identity"
@@ -106,7 +110,11 @@ export default function ProfilePage() {
         </CardHeader>
         <CardContent>
           {sessions.isPending ? (
-            <LoadingState />
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-lg" />
+              ))}
+            </div>
           ) : sessions.isError ? (
             <ErrorState
               title="Couldn't load sessions"
@@ -114,7 +122,11 @@ export default function ProfilePage() {
               onRetry={() => sessions.refetch()}
             />
           ) : (sessions.data?.items?.length ?? 0) === 0 ? (
-            <EmptyState title="Just this device" description="No other active sessions." />
+            <EmptyState
+              title="Just this device"
+              description="No other active sessions."
+              icon={<MonitorSmartphone />}
+            />
           ) : (
             <Table>
               <TableHeader>

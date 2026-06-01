@@ -9,6 +9,8 @@ import { SdkError, type Tank } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -19,7 +21,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -172,29 +175,36 @@ export default function TanksPage() {
   const noProducts = (products.data?.items?.length ?? 0) === 0;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="station">Station</Label>
-          <select
-            id="station"
-            className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm"
-            value={effectiveStation}
-            onChange={(e) => setStationID(e.target.value)}
-            disabled={noStations}
-          >
-            {(stations.data?.items ?? []).map((st) => (
-              <option key={st.id} value={st.id}>
-                {st.name} ({st.code})
-              </option>
-            ))}
-          </select>
-        </div>
-        <Button onClick={openCreate} disabled={noStations || noProducts || !effectiveStation}>
-          <Plus className="size-4" />
-          New tank
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Tanks"
+        description="Storage tanks at each station, each bound to a single product with a safe operating band."
+        actions={
+          <>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="station">Station</Label>
+              <select
+                id="station"
+                className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm"
+                value={effectiveStation}
+                onChange={(e) => setStationID(e.target.value)}
+                disabled={noStations}
+              >
+                {(stations.data?.items ?? []).map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name} ({st.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button onClick={openCreate} disabled={noStations || noProducts || !effectiveStation}>
+              <Plus className="size-4" />
+              New tank
+            </Button>
+          </>
+        }
+      />
 
       {noProducts ? (
         <EmptyState
@@ -207,7 +217,13 @@ export default function TanksPage() {
           description="Create a station before installing tanks."
         />
       ) : list.isPending ? (
-        <LoadingState />
+        <Card>
+          <CardContent className="flex flex-col gap-2 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load tanks"
@@ -221,57 +237,63 @@ export default function TanksPage() {
           action={<Button onClick={openCreate}>Create one</Button>}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Code</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Product</TableHead>
-              <TableHead className="text-right">Capacity (L)</TableHead>
-              <TableHead className="text-right">Safe band (L)</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((t) => {
-              const product = productLookup.get(t.product_id);
-              return (
-                <TableRow key={t.id}>
-                  <TableCell className="font-mono text-xs">{t.code}</TableCell>
-                  <TableCell className="font-medium">{t.name}</TableCell>
-                  <TableCell>
-                    <span className="inline-flex items-center gap-2">
-                      <span
-                        className="inline-block size-3 rounded-full border border-border"
-                        style={{ backgroundColor: product?.color ?? '#64748b' }}
-                        aria-hidden
-                      />
-                      {product?.name ?? '—'}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {formatLitres(t.capacity_litres)}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {formatLitres(t.safe_min_litres)} – {formatLitres(t.safe_max_litres)}
-                  </TableCell>
-                  <TableCell>
-                    <Badge tone={t.status === 'active' ? 'success' : 'warning'}>{t.status}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" asChild>
-                      <Link href={`/settings/tanks/${t.id}`}>Calibration</Link>
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(t)}>
-                      Edit
-                    </Button>
-                  </TableCell>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="text-right">Capacity (L)</TableHead>
+                  <TableHead className="text-right">Safe band (L)</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((t) => {
+                  const product = productLookup.get(t.product_id);
+                  return (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-mono text-xs">{t.code}</TableCell>
+                      <TableCell className="font-medium">{t.name}</TableCell>
+                      <TableCell>
+                        <span className="inline-flex items-center gap-2">
+                          <span
+                            className="inline-block size-3 rounded-full border border-border"
+                            style={{ backgroundColor: product?.color ?? '#64748b' }}
+                            aria-hidden
+                          />
+                          {product?.name ?? '—'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums">
+                        {formatLitres(t.capacity_litres)}
+                      </TableCell>
+                      <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                        {formatLitres(t.safe_min_litres)} – {formatLitres(t.safe_max_litres)}
+                      </TableCell>
+                      <TableCell>
+                        <Badge tone={t.status === 'active' ? 'success' : 'warning'}>
+                          {t.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" asChild>
+                          <Link href={`/settings/tanks/${t.id}`}>Calibration</Link>
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(t)}>
+                          Edit
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

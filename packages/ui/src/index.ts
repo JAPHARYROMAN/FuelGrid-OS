@@ -23,6 +23,17 @@ export {
 export { EmptyState, LoadingState, ErrorState } from './components/states';
 export type { ErrorStateProps } from './components/states';
 
+export { Stat } from './components/stat';
+export type { StatProps } from './components/stat';
+
+export { Skeleton } from './components/skeleton';
+
+export { Separator } from './components/separator';
+export type { SeparatorProps } from './components/separator';
+
+export { PageHeader } from './components/page-header';
+export type { PageHeaderProps } from './components/page-header';
+
 export {
   Dialog,
   DialogTrigger,

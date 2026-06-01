@@ -16,7 +16,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
@@ -200,42 +201,47 @@ export default function ReceivingPage() {
   const projectedVariance = selectedLine ? receivedLitres + projectedReceipt - orderedLitres : 0;
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold">Receiving</h1>
-          <p className="text-sm text-muted-foreground">
-            Receive against confirmed orders, capture landed cost, match invoices, and approve
-            payables.
-          </p>
-        </div>
-        {(stations.data?.items?.length ?? 0) > 0 ? (
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Station</span>
-            <select
-              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-              value={stationID}
-              onChange={(e) => {
-                setStationID(e.target.value);
-                setPOID('');
-                setLineID('');
-                setTankID('');
-                setLastReceipt(null);
-                setInvoice(null);
-              }}
-            >
-              {stations.data!.items.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.code})
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Procurement"
+        title="Receiving"
+        description="Receive against confirmed orders, capture landed cost, match invoices, and approve payables."
+        actions={
+          (stations.data?.items?.length ?? 0) > 0 ? (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Station</span>
+              <select
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={stationID}
+                onChange={(e) => {
+                  setStationID(e.target.value);
+                  setPOID('');
+                  setLineID('');
+                  setTankID('');
+                  setLastReceipt(null);
+                  setInvoice(null);
+                }}
+              >
+                {stations.data!.items.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : undefined
+        }
+      />
 
       {stations.isPending || (stationID && orders.isPending) ? (
-        <LoadingState />
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="flex flex-col gap-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-44 rounded-xl" />
+            ))}
+          </div>
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
       ) : stations.isError || orders.isError ? (
         <ErrorState
           title="Couldn't load receiving data"
@@ -255,7 +261,7 @@ export default function ReceivingPage() {
           <div className="flex flex-col gap-4">
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Purchase order</CardTitle>
+                <CardTitle>Purchase order</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
@@ -299,22 +305,24 @@ export default function ReceivingPage() {
                     ))}
                   </select>
                 </div>
-                <div className="rounded-md border border-border p-3 text-sm">
+                <div className="rounded-lg border border-border/80 bg-muted/40 p-3 text-sm">
                   <p className="text-muted-foreground">Ordered</p>
-                  <p className="font-medium tabular-nums">
+                  <p className="font-mono font-medium tabular-nums text-foreground">
                     {selectedLine ? fmtLitres(selectedLine.ordered_litres) : '0'} L
                   </p>
                 </div>
-                <div className="rounded-md border border-border p-3 text-sm">
+                <div className="rounded-lg border border-border/80 bg-muted/40 p-3 text-sm">
                   <p className="text-muted-foreground">Remaining</p>
-                  <p className="font-medium tabular-nums">{fmtLitres(remaining)} L</p>
+                  <p className="font-mono font-medium tabular-nums text-foreground">
+                    {fmtLitres(remaining)} L
+                  </p>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Goods receipt</CardTitle>
+                <CardTitle>Goods receipt</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="flex flex-col gap-1.5">
@@ -357,7 +365,7 @@ export default function ReceivingPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Supplier invoice</CardTitle>
+                <CardTitle>Supplier invoice</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <Field label="Invoice number" value={invoiceNumber} onChange={setInvoiceNumber} />
@@ -393,14 +401,20 @@ export default function ReceivingPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Match result</CardTitle>
+              <CardTitle>Match result</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-4 text-sm">
               {lastReceipt ? (
-                <div className="rounded-md border border-border p-3">
-                  <p className="font-medium">{fmtLitres(lastReceipt.volume_litres)} L received</p>
+                <div className="flex flex-col gap-2 rounded-lg border border-border/80 bg-muted/40 p-3">
+                  <p className="font-mono font-medium tabular-nums text-foreground">
+                    {fmtLitres(lastReceipt.volume_litres)} L received
+                  </p>
                   <p className="text-muted-foreground">
-                    Landed cost {fmtMoney(lastReceipt.landed_cost_per_litre)} / L
+                    Landed cost{' '}
+                    <span className="font-mono tabular-nums text-foreground">
+                      {fmtMoney(lastReceipt.landed_cost_per_litre)}
+                    </span>{' '}
+                    / L
                   </p>
                   <Badge tone={lastReceipt.match_status === 'matched' ? 'success' : 'warning'}>
                     {lastReceipt.match_status}
@@ -414,11 +428,13 @@ export default function ReceivingPage() {
               )}
 
               {invoice ? (
-                <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+                <div className="flex flex-col gap-3 rounded-lg border border-border/80 bg-muted/40 p-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-medium">{invoice.invoice_number}</p>
-                      <p className="text-muted-foreground">{fmtMoney(invoice.total_amount)}</p>
+                      <p className="font-medium text-foreground">{invoice.invoice_number}</p>
+                      <p className="font-mono tabular-nums text-muted-foreground">
+                        {fmtMoney(invoice.total_amount)}
+                      </p>
                     </div>
                     <Badge
                       tone={

@@ -66,7 +66,13 @@ function sentryConnectSrc(): string {
   }
 }
 
-const connectSrc = ["'self'", apiOrigin, sentryConnectSrc()].filter(Boolean).join(' ');
+// In development Next.js uses an HMR websocket and eval-based React Fast
+// Refresh; the strict production CSP would block both. We relax ONLY in dev.
+const isDev = process.env.NODE_ENV !== 'production';
+
+const connectSrc = ["'self'", apiOrigin, sentryConnectSrc(), isDev ? 'ws: http:' : '']
+  .filter(Boolean)
+  .join(' ');
 
 /**
  * Generate a fresh base64 nonce using the Web Crypto API, which is available in
@@ -90,6 +96,14 @@ function generateNonce(): string {
  * injected style tags. The remaining directives mirror the prior static policy.
  */
 function buildCsp(nonce: string): string {
+  // Production: strict nonce + strict-dynamic. Development: also allow
+  // 'unsafe-eval' (React Fast Refresh) and 'unsafe-inline' (dev runtime) so
+  // `next dev` hydrates; these are ignored by browsers when a nonce is present
+  // anyway, but eval is required for HMR.
+  const scriptSrc = isDev
+    ? `script-src 'self' 'unsafe-eval' 'unsafe-inline' 'nonce-${nonce}'`
+    : `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`;
+
   return [
     "default-src 'self'",
     `connect-src ${connectSrc}`,
@@ -97,7 +111,7 @@ function buildCsp(nonce: string): string {
     "manifest-src 'self'",
     "img-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    scriptSrc,
     "font-src 'self' data:",
     "object-src 'none'",
     "frame-ancestors 'none'",

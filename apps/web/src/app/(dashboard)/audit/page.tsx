@@ -2,15 +2,19 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { ScrollText } from 'lucide-react';
 
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   EmptyState,
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -58,13 +62,12 @@ export default function AuditPage() {
   });
 
   return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
-        <p className="text-sm text-muted-foreground">
-          Append-only record of sensitive actions. Filtered by tenant automatically.
-        </p>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Monitor"
+        title="Audit log"
+        description="Append-only record of sensitive actions. Filtered by tenant automatically."
+      />
 
       <form
         className="grid grid-cols-2 gap-3 rounded-xl border border-border bg-card/40 p-4 md:grid-cols-5"
@@ -134,7 +137,11 @@ export default function AuditPage() {
       </form>
 
       {list.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 rounded-lg" />
+          ))}
+        </div>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load audit logs"
@@ -145,42 +152,47 @@ export default function AuditPage() {
         <EmptyState
           title="No matching audit entries"
           description="Sensitive actions show up here as they happen. Try widening the date range or clearing filters."
+          icon={<ScrollText />}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>When</TableHead>
-              <TableHead>Action</TableHead>
-              <TableHead>Entity</TableHead>
-              <TableHead>Entity id</TableHead>
-              <TableHead>Actor</TableHead>
-              <TableHead>Request</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((e) => (
-              <TableRow key={e.id}>
-                <TableCell className="whitespace-nowrap font-mono text-xs">
-                  {new Date(e.occurred_at).toLocaleString()}
-                </TableCell>
-                <TableCell>
-                  <Badge tone="accent">{e.action}</Badge>
-                </TableCell>
-                <TableCell className="text-muted-foreground">{e.entity_type}</TableCell>
-                <TableCell className="font-mono text-[11px] text-muted-foreground">
-                  {e.entity_id ?? '—'}
-                </TableCell>
-                <TableCell className="font-mono text-[11px] text-muted-foreground">
-                  {e.actor_id ?? '—'}
-                </TableCell>
-                <TableCell className="font-mono text-[11px] text-muted-foreground">
-                  {e.request_id ?? '—'}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>When</TableHead>
+                  <TableHead>Action</TableHead>
+                  <TableHead>Entity</TableHead>
+                  <TableHead>Entity id</TableHead>
+                  <TableHead>Actor</TableHead>
+                  <TableHead>Request</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((e) => (
+                  <TableRow key={e.id}>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">
+                      {new Date(e.occurred_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone="accent">{e.action}</Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{e.entity_type}</TableCell>
+                    <TableCell className="font-mono text-[11px] text-muted-foreground">
+                      {e.entity_id ?? '—'}
+                    </TableCell>
+                    <TableCell className="font-mono text-[11px] text-muted-foreground">
+                      {e.actor_id ?? '—'}
+                    </TableCell>
+                    <TableCell className="font-mono text-[11px] text-muted-foreground">
+                      {e.request_id ?? '—'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

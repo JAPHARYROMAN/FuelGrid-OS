@@ -1,93 +1,187 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { LayoutDashboard } from 'lucide-react';
+import { Building2, ChevronRight, Database, Droplet, Package } from 'lucide-react';
 
 import {
+  Badge,
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
-  EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
+  Stat,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
 import { setSentryUser } from '@/lib/sentry';
 
 export default function CommandCenterPage() {
-  const meQuery = useQuery({
-    queryKey: ['me'],
-    queryFn: ({ signal }) => api.me(signal),
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: ({ signal }) => api.me(signal) });
+  const stations = useQuery({
+    queryKey: ['stations'],
+    queryFn: ({ signal }) => api.listStations({}, signal),
+  });
+  const tanks = useQuery({
+    queryKey: ['tanks'],
+    queryFn: ({ signal }) => api.listTanks({}, signal),
+  });
+  const products = useQuery({
+    queryKey: ['products'],
+    queryFn: ({ signal }) => api.listProducts(signal),
   });
 
-  // Associate Sentry events with the signed-in user once /me resolves. No-op
-  // when Sentry is unconfigured. This is the earliest point the app reliably
-  // has the user/tenant id (the login response carries only a token).
   const me = meQuery.data;
   React.useEffect(() => {
     if (me) setSentryUser({ id: me.user_id, tenantId: me.tenant_id });
   }, [me]);
 
-  return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Command Center</h1>
-        <p className="text-sm text-muted-foreground">
-          The flagship surface. KPIs, network map, alerts, AI summary — they all land here as the
-          operations layer comes online.
-        </p>
-      </header>
+  const stationItems = stations.data?.items ?? [];
+  const activeCount = stationItems.filter((s) => s.status === 'active').length;
+  const loading = stations.isPending || tanks.isPending || products.isPending;
 
-      <section>
-        {meQuery.isPending ? (
-          <LoadingState title="Loading your session…" />
-        ) : meQuery.isError ? (
-          <ErrorState
-            title="Couldn't load your session"
-            description={String((meQuery.error as Error).message)}
-            onRetry={() => meQuery.refetch()}
-          />
-        ) : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Session</CardTitle>
-              <CardDescription>
-                You're authenticated. The shell is the work of Stage 8; concrete dashboards arrive
-                with the fuel domain in Phase 2.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-1 gap-4 text-sm md:grid-cols-3">
-                <div className="flex flex-col gap-1">
-                  <dt className="text-xs uppercase tracking-wider text-muted-foreground">User</dt>
-                  <dd className="font-mono text-xs tabular-nums">{meQuery.data.user_id}</dd>
+  const stats = [
+    {
+      label: 'Stations',
+      value: stations.data?.count ?? stationItems.length,
+      hint: `${activeCount} active`,
+      icon: <Building2 />,
+    },
+    {
+      label: 'Tanks',
+      value: tanks.data?.count ?? tanks.data?.items.length ?? 0,
+      hint: 'across the network',
+      icon: <Database />,
+    },
+    {
+      label: 'Products',
+      value: products.data?.count ?? products.data?.items.length ?? 0,
+      hint: 'fuel grades',
+      icon: <Package />,
+    },
+    {
+      label: 'Live inventory',
+      value: tanks.data?.count ?? tanks.data?.items.length ?? 0,
+      hint: 'tanks monitored',
+      icon: <Droplet />,
+    },
+  ];
+
+  return (
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Network overview"
+        title="Command Center"
+        description="A live read on your fuel network — stations, inventory, and the operational signals that need attention."
+      />
+
+      {stations.isError ? (
+        <ErrorState
+          title="Couldn't load the network"
+          description={String((stations.error as Error).message)}
+          onRetry={() => stations.refetch()}
+        />
+      ) : (
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {loading
+            ? Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-[120px] rounded-xl" />
+              ))
+            : stats.map((s) => (
+                <Stat key={s.label} label={s.label} value={s.value} hint={s.hint} icon={s.icon} />
+              ))}
+        </section>
+      )}
+
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Stations list */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <div className="flex flex-col gap-1">
+              <CardTitle>Stations</CardTitle>
+              <p className="text-sm text-muted-foreground">Your sites and their current status.</p>
+            </div>
+            <Link
+              href="/stations"
+              className="inline-flex items-center gap-1 text-sm font-medium text-accent hover:underline"
+            >
+              View all
+              <ChevronRight className="size-4" />
+            </Link>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1">
+            {loading ? (
+              <div className="flex flex-col gap-2">
+                {Array.from({ length: 2 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 rounded-lg" />
+                ))}
+              </div>
+            ) : stationItems.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                No stations yet. Create one under Settings.
+              </p>
+            ) : (
+              stationItems.map((s) => (
+                <Link
+                  key={s.id}
+                  href={`/stations/${s.id}`}
+                  className="group -mx-2 flex items-center gap-3 rounded-lg px-2 py-2.5 transition-colors hover:bg-muted"
+                >
+                  <span className="flex size-9 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+                    <Building2 className="size-4" />
+                  </span>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-sm font-medium text-foreground">{s.name}</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {s.code}
+                      {s.city ? ` · ${s.city}` : ''}
+                    </span>
+                  </div>
+                  <Badge tone={s.status === 'active' ? 'success' : 'warning'}>{s.status}</Badge>
+                  <ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                </Link>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Session / context */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Session</CardTitle>
+            <p className="text-sm text-muted-foreground">Your authenticated context.</p>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            {meQuery.isPending ? (
+              <Skeleton className="h-24 rounded-lg" />
+            ) : meQuery.isError ? (
+              <p className="text-sm text-danger">Couldn&apos;t load your session.</p>
+            ) : (
+              <dl className="flex flex-col gap-3 text-sm">
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-xs font-medium text-muted-foreground">User</dt>
+                  <dd className="truncate font-mono text-xs text-foreground">{me?.user_id}</dd>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <dt className="text-xs uppercase tracking-wider text-muted-foreground">Tenant</dt>
-                  <dd className="font-mono text-xs tabular-nums">{meQuery.data.tenant_id}</dd>
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-xs font-medium text-muted-foreground">Tenant</dt>
+                  <dd className="truncate font-mono text-xs text-foreground">{me?.tenant_id}</dd>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <dt className="text-xs uppercase tracking-wider text-muted-foreground">MFA</dt>
-                  <dd className="text-sm">
-                    {meQuery.data.mfa_satisfied ? 'Satisfied' : 'Not required'}
+                <div className="flex items-center justify-between">
+                  <dt className="text-xs font-medium text-muted-foreground">MFA</dt>
+                  <dd>
+                    <Badge tone={me?.mfa_satisfied ? 'success' : 'neutral'}>
+                      {me?.mfa_satisfied ? 'Satisfied' : 'Not required'}
+                    </Badge>
                   </dd>
                 </div>
               </dl>
-            </CardContent>
-          </Card>
-        )}
-      </section>
-
-      <section>
-        <EmptyState
-          title="No KPIs yet"
-          description="Network revenue, liters sold, reconciliation status, and station ranking arrive once the inventory and finance layers ship."
-          icon={<LayoutDashboard className="size-7" />}
-        />
+            )}
+          </CardContent>
+        </Card>
       </section>
     </div>
   );

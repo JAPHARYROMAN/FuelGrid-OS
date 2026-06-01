@@ -2,12 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { AlertTriangle, Plus } from 'lucide-react';
 
 import { SdkError, type Incident } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -17,7 +19,8 @@ import {
   EmptyState,
   ErrorState,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -137,19 +140,18 @@ export default function IncidentsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Incidents</h1>
-          <p className="text-sm text-muted-foreground">
-            Operational issues raised against stations and their equipment.
-          </p>
-        </div>
-        <Button onClick={openCreate} disabled={(stations.data?.items?.length ?? 0) === 0}>
-          <Plus className="size-4" />
-          Open incident
-        </Button>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Monitor"
+        title="Incidents"
+        description="Operational issues raised against stations and their equipment."
+        actions={
+          <Button onClick={openCreate} disabled={(stations.data?.items?.length ?? 0) === 0}>
+            <Plus className="size-4" />
+            Open incident
+          </Button>
+        }
+      />
 
       <div className="flex flex-wrap gap-3">
         <div className="flex flex-col gap-1.5">
@@ -187,7 +189,11 @@ export default function IncidentsPage() {
       </div>
 
       {list.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 rounded-lg" />
+          ))}
+        </div>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load incidents"
@@ -198,55 +204,62 @@ export default function IncidentsPage() {
         <EmptyState
           title="No incidents"
           description="Nothing matches these filters. Open one if something needs attention."
+          icon={<AlertTriangle />}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Severity</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Station</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((inc: Incident) => {
-              const advance = nextStatus[inc.status];
-              const station = stationLookup.get(inc.station_id);
-              return (
-                <TableRow key={inc.id}>
-                  <TableCell>
-                    <Badge tone={severityTone(inc.severity)}>{inc.severity}</Badge>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground capitalize">{inc.type}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {station ? `${station.name} (${station.code})` : '—'}
-                  </TableCell>
-                  <TableCell className="max-w-md truncate">{inc.description}</TableCell>
-                  <TableCell>
-                    <Badge tone={inc.status === 'open' ? 'warning' : 'neutral'}>{inc.status}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {advance ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => transition.mutate({ id: inc.id, status: advance })}
-                        disabled={transition.isPending}
-                      >
-                        Mark {advance}
-                      </Button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    )}
-                  </TableCell>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Severity</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Station</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((inc: Incident) => {
+                  const advance = nextStatus[inc.status];
+                  const station = stationLookup.get(inc.station_id);
+                  return (
+                    <TableRow key={inc.id}>
+                      <TableCell>
+                        <Badge tone={severityTone(inc.severity)}>{inc.severity}</Badge>
+                      </TableCell>
+                      <TableCell className="capitalize text-muted-foreground">{inc.type}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {station ? `${station.name} (${station.code})` : '—'}
+                      </TableCell>
+                      <TableCell className="max-w-md truncate">{inc.description}</TableCell>
+                      <TableCell>
+                        <Badge tone={inc.status === 'open' ? 'warning' : 'neutral'}>
+                          {inc.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {advance ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => transition.mutate({ id: inc.id, status: advance })}
+                            disabled={transition.isPending}
+                          >
+                            Mark {advance}
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

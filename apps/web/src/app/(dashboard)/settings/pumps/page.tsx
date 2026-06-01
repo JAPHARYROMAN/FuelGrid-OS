@@ -22,7 +22,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
@@ -234,29 +235,36 @@ export default function PumpsPage() {
     : undefined;
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="station">Station</Label>
-          <select
-            id="station"
-            className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm"
-            value={effectiveStation}
-            onChange={(e) => setStationID(e.target.value)}
-            disabled={noStations}
-          >
-            {(stations.data?.items ?? []).map((st) => (
-              <option key={st.id} value={st.id}>
-                {st.name} ({st.code})
-              </option>
-            ))}
-          </select>
-        </div>
-        <Button onClick={openPumpCreate} disabled={noStations || !effectiveStation}>
-          <Plus className="size-4" />
-          New pump
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Pumps"
+        description="Dispensing units at each station and the nozzles that draw from its tanks."
+        actions={
+          <>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="station">Station</Label>
+              <select
+                id="station"
+                className="h-10 min-w-56 rounded-md border border-border bg-background px-3 text-sm"
+                value={effectiveStation}
+                onChange={(e) => setStationID(e.target.value)}
+                disabled={noStations}
+              >
+                {(stations.data?.items ?? []).map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name} ({st.code})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <Button onClick={openPumpCreate} disabled={noStations || !effectiveStation}>
+              <Plus className="size-4" />
+              New pump
+            </Button>
+          </>
+        }
+      />
 
       {noStations ? (
         <EmptyState
@@ -264,7 +272,11 @@ export default function PumpsPage() {
           description="Create a station before installing pumps."
         />
       ) : pumps.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 rounded-xl" />
+          ))}
+        </div>
       ) : pumps.isError ? (
         <ErrorState
           title="Couldn't load pumps"
@@ -361,7 +373,7 @@ export default function PumpsPage() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                  <span className="tabular-nums text-sm">
+                                  <span className="font-mono text-sm tabular-nums">
                                     {formatMoney(n.default_price)}
                                   </span>
                                   <Button

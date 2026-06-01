@@ -135,7 +135,10 @@ function ResetPasswordForm() {
         </form>
       </CardContent>
       <CardFooter>
-        <Link href="/login" className="text-sm text-accent underline">
+        <Link
+          href="/login"
+          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+        >
           Back to sign in
         </Link>
       </CardFooter>

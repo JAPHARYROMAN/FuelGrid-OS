@@ -52,23 +52,23 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
   const isDark = (theme ?? resolvedTheme) === 'dark';
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border bg-card/40 px-4">
-      <div className="flex items-center gap-3">
+    <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-4 border-b border-border bg-background/80 px-4 backdrop-blur-md sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
         <button
           type="button"
           onClick={onOpenCommand}
-          className="group flex items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted"
+          className="group flex h-9 w-56 items-center gap-2 rounded-lg border border-border bg-card/60 px-3 text-sm text-muted-foreground shadow-elev-sm transition-colors hover:border-accent/40 hover:text-foreground"
         >
           <Search className="size-4" />
-          <span>Search…</span>
-          <kbd className="ml-4 inline-flex items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+          <span className="flex-1 text-left">Search…</span>
+          <kbd className="inline-flex items-center gap-0.5 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground">
             <Command className="size-3" />K
           </kbd>
         </button>
 
         {(stations.data?.items?.length ?? 0) > 0 ? (
           <select
-            className="h-9 rounded-md border border-border bg-background px-2 text-xs"
+            className="hidden h-9 rounded-lg border border-border bg-card/60 px-2.5 text-xs text-foreground shadow-elev-sm outline-none transition-colors hover:border-accent/40 focus-visible:border-accent sm:block"
             value={activeStationID ?? ''}
             onChange={(e) => setActiveStation(e.target.value || null)}
             aria-label="Active station"
@@ -83,14 +83,7 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
         ) : null}
       </div>
 
-      <div className="flex items-center gap-1">
-        <Link
-          href="/profile"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Profile"
-        >
-          <UserCircle className="size-4" />
-        </Link>
+      <div className="flex items-center gap-0.5">
         <Button
           variant="ghost"
           size="icon"
@@ -99,6 +92,14 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
         >
           {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </Button>
+        <Link
+          href="/profile"
+          className="inline-flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Profile"
+        >
+          <UserCircle className="size-[18px]" />
+        </Link>
+        <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
         <Button variant="ghost" size="icon" aria-label="Sign out" onClick={handleLogout}>
           <LogOut className="size-4" />
         </Button>
