@@ -23,7 +23,9 @@ import {
   DialogTitle,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
+  TankVisual,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
@@ -67,6 +69,12 @@ export default function TankCalibrationPage() {
   const charts = useQuery({
     queryKey: ['calibration-charts', tankID],
     queryFn: ({ signal }) => api.listCalibrationCharts(tankID, signal),
+  });
+
+  // Read-only lookup so the tank visual can render the product's colour.
+  const products = useQuery({
+    queryKey: ['products'],
+    queryFn: ({ signal }) => api.listProducts(signal),
   });
 
   function selectedFile(): File | null {
@@ -129,74 +137,95 @@ export default function TankCalibrationPage() {
 
   const activeChart: CalibrationChart | null | undefined = active.data;
 
+  const tankProduct = tank.data
+    ? (products.data?.items ?? []).find((p) => p.id === tank.data.product_id)
+    : undefined;
+
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <Button variant="ghost" size="sm" asChild>
-          <Link href="/settings/tanks">
-            <ArrowLeft className="size-4" />
-            Back to tanks
-          </Link>
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings · Tanks"
+        title={`${tank.data ? `${tank.data.name} (${tank.data.code})` : 'Tank'} — calibration`}
+        description="Strapping charts map dipstick millimetres to litres. Replacing a chart keeps the old one as history."
+        actions={
+          <>
+            <Button variant="outline" size="sm" asChild>
+              <Link href="/settings/tanks">
+                <ArrowLeft className="size-4" />
+                Back to tanks
+              </Link>
+            </Button>
+            <Button
+              onClick={() => {
+                setUploadError(null);
+                setPreview(null);
+                setChartName('');
+                setReplaceOpen(true);
+              }}
+            >
+              Replace chart
+            </Button>
+          </>
+        }
+      />
 
-      <header className="flex flex-col gap-1">
-        <h2 className="text-xl font-semibold tracking-tight">
-          {tank.data ? `${tank.data.name} (${tank.data.code})` : 'Tank'} — calibration
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Strapping charts map dipstick millimetres to litres. Replacing a chart keeps the old one
-          as history.
-        </p>
-      </header>
-
-      {/* Active chart */}
-      <Card>
-        <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
-          <div>
+      <section className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Active chart */}
+        <Card className="lg:col-span-2">
+          <CardHeader>
             <CardTitle>Active chart</CardTitle>
             <CardDescription>The chart used for dip-to-volume lookups.</CardDescription>
-          </div>
-          <Button
-            onClick={() => {
-              setUploadError(null);
-              setPreview(null);
-              setChartName('');
-              setReplaceOpen(true);
-            }}
-          >
-            Replace chart
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {active.isPending ? (
-            <LoadingState />
-          ) : activeChart ? (
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-              <div>
-                <dt className="text-muted-foreground">Name</dt>
-                <dd className="font-medium">{activeChart.name}</dd>
+          </CardHeader>
+          <CardContent>
+            {active.isPending ? (
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 rounded-lg" />
+                ))}
               </div>
-              <div>
-                <dt className="text-muted-foreground">Points</dt>
-                <dd className="tabular-nums">{activeChart.entry_count}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Effective from</dt>
-                <dd>{fmtDate(activeChart.effective_from)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Source</dt>
-                <dd>{activeChart.source}</dd>
-              </div>
-            </dl>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              No active chart yet. Use “Replace chart” to upload a strapping CSV.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+            ) : activeChart ? (
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-muted-foreground">Name</dt>
+                  <dd className="font-medium">{activeChart.name}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Points</dt>
+                  <dd className="font-mono tabular-nums">{activeChart.entry_count}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Effective from</dt>
+                  <dd>{fmtDate(activeChart.effective_from)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Source</dt>
+                  <dd>{activeChart.source}</dd>
+                </div>
+              </dl>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                No active chart yet. Use “Replace chart” to upload a strapping CSV.
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Tank visual */}
+        {tank.isPending ? (
+          <Skeleton className="h-[260px] rounded-xl" />
+        ) : tank.data ? (
+          <TankVisual
+            name={tank.data.name}
+            code={tank.data.code}
+            color={tankProduct?.color ?? '#64748b'}
+            capacityLitres={tank.data.capacity_litres}
+            safeMinLitres={tank.data.safe_min_litres}
+            safeMaxLitres={tank.data.safe_max_litres}
+            currentLitres={tank.data.current_litres}
+            status={tank.data.status}
+          />
+        ) : null}
+      </section>
 
       {/* Dip → volume tester */}
       <Card>
@@ -227,7 +256,7 @@ export default function TankCalibrationPage() {
           {lookup.data ? (
             <p className="text-sm">
               <span className="text-muted-foreground">Volume: </span>
-              <span className="font-semibold tabular-nums">
+              <span className="font-mono font-semibold tabular-nums">
                 {lookup.data.volume_litres.toLocaleString(undefined, {
                   maximumFractionDigits: 3,
                 })}{' '}
@@ -250,7 +279,11 @@ export default function TankCalibrationPage() {
         </CardHeader>
         <CardContent>
           {charts.isPending ? (
-            <LoadingState />
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 rounded-lg" />
+              ))}
+            </div>
           ) : (charts.data?.items?.length ?? 0) === 0 ? (
             <p className="text-sm text-muted-foreground">No charts yet.</p>
           ) : (
