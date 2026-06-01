@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { ReportEnvelope } from '@fuelgrid/sdk';
 import {
-  BarChart,
+  AreaChart,
   Card,
   CardContent,
   CardHeader,
@@ -29,56 +29,55 @@ import {
   SummaryGrid,
 } from '../_components/report-envelope';
 
-/** A reconciliation in the cash chart_data payload (decimal strings). */
-interface CashChartRow {
-  created_at: string;
-  expected: string;
-  submitted: string;
-  variance: string;
+/** A day in the station-close chart_data payload (decimal strings). */
+interface CloseChartDay {
+  date: string;
+  gross: string;
+  margin: string;
+  tendered: string;
+  cash_variance: string;
 }
 
 const shortDate = (v: unknown) => {
   const s = String(v ?? '');
-  return s.length >= 10 ? s.slice(0, 10).slice(5) : s;
+  return s.length >= 10 ? s.slice(5) : s;
 };
 
-export default function CashReconciliationPage() {
+export default function StationClosePage() {
   const { stations, items, stationId, setStationId } = useStationSelection();
-  const [period, setPeriod] = React.useState('current');
-  const allowed = usePermission('finance.read', { stationID: stationId });
+  const allowed = usePermission('revenue.read', { stationID: stationId });
 
   const report = useQuery({
-    queryKey: ['report', 'cash-reconciliation', stationId, period],
-    queryFn: ({ signal }) => api.getCashReconciliationReport(stationId, { period }, signal),
+    queryKey: ['report', 'station-close', stationId],
+    queryFn: ({ signal }) => api.getStationCloseReport(stationId, {}, signal),
     enabled: !!stationId,
   });
 
-  const filters = { station_id: stationId, period };
+  const filters = { station_id: stationId };
 
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
-        eyebrow="Reports · Cash"
-        title="Cash Reconciliation"
-        description="Expected vs submitted vs deposited cash by shift, with the resulting shortage or excess. Money figures are exact decimals."
+        eyebrow="Reports · Daily close"
+        title="Daily Station Close"
+        description="Recognized sales and litres, stock variance, cash position, deliveries, open exceptions and approval status for the latest operating day, with a recent-day trend."
       />
 
       <ReportFilterBar
         items={items}
         stationId={stationId}
         onStation={setStationId}
-        period={period}
-        onPeriod={setPeriod}
+        showPeriod={false}
       />
 
       <ReportStates
         stationsPending={stations.isPending}
         noStations={!stations.isPending && items.length === 0}
         query={report}
-        loadingLabel="cash reconciliation report"
+        loadingLabel="station close report"
       >
         {(env: ReportEnvelope) => {
-          const rows = (env.chart_data as CashChartRow[] | null) ?? [];
+          const days = (env.chart_data as CloseChartDay[] | null) ?? [];
           return (
             <div className="flex flex-col gap-6">
               <DataQualityPanel items={env.data_quality} />
@@ -86,26 +85,26 @@ export default function CashReconciliationPage() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle>Expected vs submitted cash</CardTitle>
+                  <CardTitle>Recent-day revenue trend</CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Per reconciliation: the expected cash against what was counted and submitted.
+                    Gross revenue and tendered totals over recent operating days.
                   </p>
                 </CardHeader>
                 <CardContent>
-                  {rows.length === 0 ? (
+                  {days.length < 2 ? (
                     <EmptyState
-                      title="No reconciliations"
-                      description="No cash reconciliations recorded for this station yet."
+                      title="Not enough history"
+                      description="At least two operating days are needed to plot a trend."
                     />
                   ) : (
-                    <BarChart
-                      data={rows}
-                      xKey="created_at"
+                    <AreaChart
+                      data={days}
+                      xKey="date"
                       xFormatter={shortDate}
                       valueFormatter={(v) => formatMoney(v as string)}
                       series={[
-                        { key: 'expected', label: 'Expected', color: chartColors.accent },
-                        { key: 'submitted', label: 'Submitted', color: chartColors.success },
+                        { key: 'gross', label: 'Gross', color: chartColors.accent },
+                        { key: 'tendered', label: 'Tendered', color: chartColors.success },
                       ]}
                       height={260}
                     />
@@ -115,15 +114,15 @@ export default function CashReconciliationPage() {
 
               <InsightPanel insights={env.insights} recommendedActions={env.recommended_actions} />
 
-              <EnvelopeTable table={env.table} caption="Reconciliations" />
+              <EnvelopeTable table={env.table} caption="Operating days" />
 
               <div className="flex flex-col gap-3">
                 <DrilldownLinks links={env.drilldown} />
                 <EnvelopeExports
                   options={env.export_options}
-                  reportKey="cash-reconciliation"
+                  reportKey="station-close"
                   filters={filters}
-                  filenameBase={`cash-reconciliation-${stationId.slice(0, 8)}`}
+                  filenameBase={`station-close-${stationId.slice(0, 8)}`}
                   permitted={allowed}
                 />
               </div>
