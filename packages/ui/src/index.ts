@@ -26,6 +26,45 @@ export type { ErrorStateProps } from './components/states';
 export { Stat } from './components/stat';
 export type { StatProps } from './components/stat';
 
+export { MetricCard } from './components/metric-card';
+export type { MetricCardProps } from './components/metric-card';
+
+export { ReportCategoryCard } from './components/report-category-card';
+export type { ReportCategoryCardProps } from './components/report-category-card';
+
+export { DataQualityCard, DataQualityBanner } from './components/data-quality';
+export type {
+  DataQualityCardProps,
+  DataQualityBannerProps,
+  DataQualityLevel,
+} from './components/data-quality';
+
+export { InsightCard } from './components/insight-card';
+export type { InsightCardProps, InsightSeverity } from './components/insight-card';
+
+export { RiskBadge, riskBadgeVariants } from './components/risk-badge';
+export type { RiskBadgeProps, RiskSeverity } from './components/risk-badge';
+
+export { ReconciliationWaterfall } from './components/reconciliation-waterfall';
+export type { ReconciliationWaterfallProps } from './components/reconciliation-waterfall';
+
+export { ShiftTimeline } from './components/shift-timeline';
+export type {
+  ShiftTimelineProps,
+  ShiftMilestone,
+  MilestoneStatus,
+} from './components/shift-timeline';
+
+export { FilterBar, FilterField } from './components/filter-bar';
+export type { FilterBarProps, FilterFieldProps } from './components/filter-bar';
+
+export { ExportButtonGroup } from './components/export-button-group';
+export type {
+  ExportButtonGroupProps,
+  ExportAction,
+  ExportFormat,
+} from './components/export-button-group';
+
 export { Skeleton } from './components/skeleton';
 
 export { Separator } from './components/separator';
