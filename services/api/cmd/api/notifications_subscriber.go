@@ -77,9 +77,7 @@ func subscribeNotifications(
 	// notifSpec) lives in notifSpecFor so it can be unit-tested in isolation
 	// without a database or the bus.
 	for _, et := range subscribedEventTypes {
-		bus.Subscribe(et, handle(func(e events.Event) (notifSpec, bool) {
-			return notifSpecFor(e)
-		}))
+		bus.Subscribe(et, handle(notifSpecFor))
 	}
 }
 
