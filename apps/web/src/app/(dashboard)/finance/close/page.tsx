@@ -1,6 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarRange, ListChecks } from 'lucide-react';
 
 import { SdkError } from '@fuelgrid/sdk';
 import {
@@ -10,8 +11,16 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
@@ -51,16 +60,18 @@ export default function FinanceClosePage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Period close</h1>
-        <p className="text-sm text-muted-foreground">
-          Resolve blockers, then close and lock the accounting period.
-        </p>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Finance"
+        title="Period close"
+        description="Resolve blockers, then close and lock the accounting period."
+      />
 
       {checklist.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-7">
+          <Skeleton className="h-64 rounded-xl" />
+          <Skeleton className="h-48 rounded-xl" />
+        </div>
       ) : checklist.isError ? (
         (() => {
           const err = checklist.error;
@@ -81,87 +92,136 @@ export default function FinanceClosePage() {
         <>
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-              <CardTitle className="text-base">Close checklist</CardTitle>
+              <div className="flex items-center gap-3">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+                  <ListChecks className="size-4" />
+                </span>
+                <CardTitle>Close checklist</CardTitle>
+              </div>
               <Badge tone={checklist.data.can_close ? 'success' : 'warning'}>
                 {checklist.data.can_close
                   ? 'Ready to close'
                   : `${checklist.data.blockers} blocker(s)`}
               </Badge>
             </CardHeader>
-            <CardContent className="flex flex-col gap-1.5 text-sm">
-              {Object.entries(checklist.data.checks).map(([key, count]) => (
-                <div key={key} className="flex items-center justify-between gap-2">
-                  <span className="text-muted-foreground">{CHECK_LABELS[key] ?? key}</span>
-                  <span className="flex items-center gap-2 tabular-nums">
-                    <span className="font-medium">{count}</span>
-                    {count > 0 && BLOCKING.has(key) ? (
-                      <Badge tone="warning">blocks close</Badge>
-                    ) : null}
-                  </span>
-                </div>
-              ))}
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Check</TableHead>
+                    <TableHead className="text-right">Count</TableHead>
+                    <TableHead className="text-right">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {Object.entries(checklist.data.checks).map(([key, count]) => (
+                    <TableRow key={key}>
+                      <TableCell className="text-muted-foreground">
+                        {CHECK_LABELS[key] ?? key}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-medium tabular-nums">
+                        {count}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {count > 0 && BLOCKING.has(key) ? (
+                          <Badge tone="warning">blocks close</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Accounting periods</CardTitle>
+              <CardTitle>Accounting periods</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Transition periods through close and lock.
+              </p>
             </CardHeader>
-            <CardContent className="flex flex-col gap-2 text-sm">
+            <CardContent className="flex flex-col gap-4">
               {checklist.data.periods.length === 0 ? (
-                <p className="text-muted-foreground">No accounting periods yet.</p>
+                <EmptyState
+                  title="No accounting periods yet"
+                  description="Periods will appear here once the ledger has activity."
+                  icon={<CalendarRange className="size-8" />}
+                />
               ) : (
-                checklist.data.periods.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between gap-2">
-                    <span>
-                      {p.start_date} → {p.end_date}
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <Badge tone={p.status === 'locked' ? 'neutral' : 'warning'}>{p.status}</Badge>
-                      {p.status === 'open' ? (
-                        <PermissionGate permission="period.close">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={transition.isPending && transition.variables?.id === p.id}
-                            onClick={() => transition.mutate({ id: p.id, action: 'start-close' })}
-                          >
-                            Start close
-                          </Button>
-                        </PermissionGate>
-                      ) : null}
-                      {p.status === 'closing' ? (
-                        <PermissionGate permission="period.close">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={transition.isPending && transition.variables?.id === p.id}
-                            onClick={() => transition.mutate({ id: p.id, action: 'close' })}
-                          >
-                            Close
-                          </Button>
-                        </PermissionGate>
-                      ) : null}
-                      {p.status === 'closed' ? (
-                        <PermissionGate permission="period.lock">
-                          <Button
-                            size="sm"
-                            disabled={
-                              (transition.isPending && transition.variables?.id === p.id) ||
-                              !checklist.data.can_close
-                            }
-                            onClick={() => transition.mutate({ id: p.id, action: 'lock' })}
-                          >
-                            Lock
-                          </Button>
-                        </PermissionGate>
-                      ) : null}
-                    </span>
-                  </div>
-                ))
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Period</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {checklist.data.periods.map((p) => (
+                      <TableRow key={p.id}>
+                        <TableCell className="font-mono tabular-nums">
+                          {p.start_date} → {p.end_date}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge tone={p.status === 'locked' ? 'neutral' : 'warning'}>
+                            {p.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {p.status === 'open' ? (
+                            <PermissionGate permission="period.close">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={transition.isPending && transition.variables?.id === p.id}
+                                onClick={() =>
+                                  transition.mutate({ id: p.id, action: 'start-close' })
+                                }
+                              >
+                                Start close
+                              </Button>
+                            </PermissionGate>
+                          ) : null}
+                          {p.status === 'closing' ? (
+                            <PermissionGate permission="period.close">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={transition.isPending && transition.variables?.id === p.id}
+                                onClick={() => transition.mutate({ id: p.id, action: 'close' })}
+                              >
+                                Close
+                              </Button>
+                            </PermissionGate>
+                          ) : null}
+                          {p.status === 'closed' ? (
+                            <PermissionGate permission="period.lock">
+                              <Button
+                                size="sm"
+                                disabled={
+                                  (transition.isPending && transition.variables?.id === p.id) ||
+                                  !checklist.data.can_close
+                                }
+                                onClick={() => transition.mutate({ id: p.id, action: 'lock' })}
+                              >
+                                Lock
+                              </Button>
+                            </PermissionGate>
+                          ) : null}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
               {transition.isError ? (
-                <p className="rounded-md bg-danger/10 px-3 py-2 text-danger" role="alert">
+                <p
+                  className="rounded-md border border-danger/40 bg-danger/5 px-3 py-2 text-sm text-danger"
+                  role="alert"
+                >
                   {transition.error instanceof SdkError
                     ? transition.error.message
                     : 'Could not transition the period'}
