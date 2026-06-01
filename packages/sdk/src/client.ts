@@ -85,6 +85,8 @@ import type {
   Vehicle,
   VehicleConsumption,
   Payment,
+  MpesaTransaction,
+  MpesaStkPushResult,
   RevenueDay,
   RevenueOverview,
   ShiftPaymentReconciliation,
@@ -1583,6 +1585,52 @@ export class Client {
     return this.request<ShiftPaymentReconciliation>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/payment-reconciliation`,
       { signal },
+    );
+  }
+
+  // ----------- M-Pesa (Daraja) collections -----------
+
+  listMpesaTransactions(
+    params: { stationID?: string; status?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<MpesaTransaction>> {
+    const q = new URLSearchParams();
+    if (params.stationID) q.set('station_id', params.stationID);
+    if (params.status) q.set('status', params.status);
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.offset != null) q.set('offset', String(params.offset));
+    const qs = q.toString();
+    return this.request<Paginated<MpesaTransaction>>(
+      `/api/v1/payments/mpesa/transactions${qs ? `?${qs}` : ''}`,
+      { signal },
+    );
+  }
+
+  initiateMpesaStkPush(
+    req: {
+      station_id: string;
+      phone: string;
+      amount: string;
+      account_reference?: string;
+      description?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<MpesaStkPushResult> {
+    return this.request<MpesaStkPushResult>('/api/v1/payments/mpesa/stk-push', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  reconcileMpesaTransaction(
+    id: string,
+    req: { revenue_day_id: string },
+    signal?: AbortSignal,
+  ): Promise<MpesaTransaction> {
+    return this.request<MpesaTransaction>(
+      `/api/v1/payments/mpesa/transactions/${encodeURIComponent(id)}/reconcile`,
+      { method: 'POST', body: req, signal },
     );
   }
 

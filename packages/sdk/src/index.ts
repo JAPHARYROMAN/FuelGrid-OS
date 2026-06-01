@@ -86,6 +86,8 @@ export type {
   Paginated,
   Payable,
   Payment,
+  MpesaTransaction,
+  MpesaStkPushResult,
   PermissionItem,
   PettyCashFloat,
   PettyCashTransaction,
