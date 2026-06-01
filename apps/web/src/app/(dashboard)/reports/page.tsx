@@ -2,7 +2,15 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, Database, Download, FileSpreadsheet, Receipt, Scale } from 'lucide-react';
+import {
+  BarChart3,
+  Database,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  Receipt,
+  Scale,
+} from 'lucide-react';
 
 import { SdkError, type ReportPeriod, type ReportSpec } from '@fuelgrid/sdk';
 import {
@@ -46,15 +54,23 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
+/** What a download button builds when clicked, or null if filters are missing. */
+type BuildFn = () => { spec: ReportSpec; filename: string } | null;
+
 interface ReportRowProps {
   icon: React.ReactNode;
   title: string;
   description: string;
   permission: string;
   stationId?: string | null;
-  /** Builds the report spec + download filename when the button is clicked. */
-  build: () => { spec: ReportSpec; filename: string } | null;
-  /** Extra filter controls rendered before the download button. */
+  /** Builds the CSV report spec + filename. */
+  build: BuildFn;
+  /**
+   * Builds the formal PDF document spec + filename. When provided, a second
+   * "PDF" download button is rendered next to the CSV one (same permission).
+   */
+  buildPdf?: BuildFn;
+  /** Extra filter controls rendered before the download buttons. */
   controls?: React.ReactNode;
 }
 
@@ -65,28 +81,11 @@ function ReportRow({
   permission,
   stationId,
   build,
+  buildPdf,
   controls,
 }: ReportRowProps) {
-  const [busy, setBusy] = React.useState(false);
+  const allowed = usePermission(permission, { stationID: stationId });
   const [error, setError] = React.useState<string | null>(null);
-
-  async function download() {
-    const built = build();
-    if (!built) {
-      setError('Pick the required filters first.');
-      return;
-    }
-    setError(null);
-    setBusy(true);
-    try {
-      const blob = await api.fetchReportBlob(built.spec);
-      triggerDownload(blob, built.filename);
-    } catch (err) {
-      setError(err instanceof SdkError ? err.message : 'Could not generate the export.');
-    } finally {
-      setBusy(false);
-    }
-  }
 
   return (
     <div className="flex flex-col gap-3 border-b border-border px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
@@ -106,43 +105,75 @@ function ReportRow({
       </div>
       <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
         {controls}
-        <PermissionButton
-          permission={permission}
-          stationId={stationId}
-          busy={busy}
-          onClick={download}
+        <DownloadButton
+          icon={<Download className="size-4" />}
+          label="CSV"
+          allowed={allowed}
+          build={build}
+          onError={setError}
         />
+        {buildPdf ? (
+          <DownloadButton
+            icon={<FileText className="size-4" />}
+            label="PDF"
+            allowed={allowed}
+            build={buildPdf}
+            onError={setError}
+          />
+        ) : null}
       </div>
     </div>
   );
 }
 
-// A download button gated on the backend permission via usePermission. Inlined
-// here (rather than wrapping with PermissionGate) so the busy + disabled states
-// compose cleanly with the click handler.
-function PermissionButton({
-  permission,
-  stationId,
-  busy,
-  onClick,
+// A single download button. Resolves its own busy state and fetches the report
+// blob via the BFF, then triggers a browser download. The permission decision
+// (`allowed`) is computed once by the parent ReportRow and shared across the
+// CSV/PDF buttons so they stay in lockstep.
+function DownloadButton({
+  icon,
+  label,
+  allowed,
+  build,
+  onError,
 }: {
-  permission: string;
-  stationId?: string | null;
-  busy: boolean;
-  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  allowed: boolean | null;
+  build: BuildFn;
+  onError: (message: string | null) => void;
 }) {
-  const allowed = usePermission(permission, { stationID: stationId });
+  const [busy, setBusy] = React.useState(false);
   const denied = allowed === false;
+
+  async function download() {
+    const built = build();
+    if (!built) {
+      onError('Pick the required filters first.');
+      return;
+    }
+    onError(null);
+    setBusy(true);
+    try {
+      const blob = await api.fetchReportBlob(built.spec);
+      triggerDownload(blob, built.filename);
+    } catch (err) {
+      onError(err instanceof SdkError ? err.message : 'Could not generate the export.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Button
       size="sm"
       variant="secondary"
       disabled={busy || denied || allowed === null}
       title={denied ? "You don't have permission" : undefined}
-      onClick={onClick}
+      onClick={download}
     >
-      <Download className="size-4" />
-      {busy ? 'Preparing…' : 'CSV'}
+      {icon}
+      {busy ? 'Preparing…' : label}
     </Button>
   );
 }
@@ -187,7 +218,7 @@ export default function ReportsPage() {
       <PageHeader
         eyebrow="Reports & exports"
         title="Reports"
-        description="Download standard operational and financial reports as CSV. Money and litres are exported as exact decimals — open them in any spreadsheet."
+        description="Download standard operational and financial reports as CSV, or the formal documents as branded PDF. Money and litres are exact decimals throughout."
       />
 
       {stations.isError ? (
@@ -226,7 +257,7 @@ export default function ReportsPage() {
                   <ReportRow
                     icon={<BarChart3 className="size-4" />}
                     title="Revenue days"
-                    description="Recent revenue days — gross/net, COGS, margin and the tender split."
+                    description="Recent revenue days — gross/net, COGS, margin and the tender split. PDF renders the formal daily shift/close report."
                     permission="revenue.read"
                     stationId={stationId}
                     build={() =>
@@ -234,6 +265,14 @@ export default function ReportsPage() {
                         ? {
                             spec: { kind: 'revenue', stationID: stationId },
                             filename: `revenue-${stationCode}.csv`,
+                          }
+                        : null
+                    }
+                    buildPdf={() =>
+                      stationId
+                        ? {
+                            spec: { kind: 'daily-close-pdf', stationID: stationId },
+                            filename: `daily-close-${stationCode}.pdf`,
                           }
                         : null
                     }
@@ -284,11 +323,15 @@ export default function ReportsPage() {
                 <ReportRow
                   icon={<FileSpreadsheet className="size-4" />}
                   title="Financial statements"
-                  description="Profit & loss and balance sheet for the chosen period."
+                  description="Profit & loss and balance sheet for the chosen period. PDF renders the formal, branded statement."
                   permission="finance.read"
                   build={() => ({
                     spec: { kind: 'financials', period },
                     filename: `financials-${period}.csv`,
+                  })}
+                  buildPdf={() => ({
+                    spec: { kind: 'financials-pdf', period },
+                    filename: `financials-${period}.pdf`,
                   })}
                   controls={
                     <select

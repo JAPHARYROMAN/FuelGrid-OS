@@ -11,6 +11,10 @@
 //
 //	DATABASE_URL=postgres://... go run ./services/api/cmd/seed
 //
+// Safety: this command REFUSES to run unless NODE_ENV=development (the default)
+// or ALLOW_SEED=true is set explicitly. The demo dataset must never pollute a
+// production database.
+//
 // Environment overrides (all optional):
 //
 //	DEMO_TENANT_SLUG    default "demo"
@@ -23,8 +27,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -62,6 +68,23 @@ func run() error {
 		return errors.New("DATABASE_URL is required")
 	}
 
+	// Environment guard: the demo seed must NEVER run against a real
+	// (production) tenant database. Seeding is only allowed when we're plainly
+	// in a development environment, OR when an operator has explicitly opted in
+	// with ALLOW_SEED=true. This is a hard refusal — it runs before we even
+	// connect to the database — so a misconfigured prod deploy can't be polluted
+	// by the demo dataset.
+	nodeEnv := envOr("NODE_ENV", "development")
+	allowSeed := strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_SEED")), "true")
+	if nodeEnv != "development" && !allowSeed {
+		return fmt.Errorf(
+			"refusing to seed demo data: NODE_ENV is %q (not \"development\") and ALLOW_SEED is not \"true\". "+
+				"The demo seed is for development only and must never touch a production database. "+
+				"If you genuinely need to seed this environment, set ALLOW_SEED=true explicitly",
+			nodeEnv,
+		)
+	}
+
 	tenantSlug := envOr("DEMO_TENANT_SLUG", defaultTenantSlug)
 	userEmail := envOr("DEMO_USER_EMAIL", defaultUserEmail)
 	userPassword := envOr("DEMO_USER_PASSWORD", defaultUserPassword)
@@ -70,11 +93,12 @@ func run() error {
 	adminPassword := envOr("DEMO_ADMIN_PASSWORD", defaultAdminPassword)
 	pepper := os.Getenv("AUTH_PASSWORD_PEPPER")
 
-	// Backdoor guard: outside development, refuse to provision accounts with
-	// the well-known default passwords. Seeding demo data into production is
-	// discouraged; if you must, supply explicit secrets via DEMO_USER_PASSWORD
-	// and DEMO_ADMIN_PASSWORD so no known-password account is ever created.
-	if envOr("NODE_ENV", "development") != "development" {
+	// Backdoor guard (defence in depth): even when seeding is explicitly allowed
+	// via ALLOW_SEED outside development, refuse to provision accounts with the
+	// well-known default passwords. Supply explicit secrets via
+	// DEMO_USER_PASSWORD and DEMO_ADMIN_PASSWORD so no known-password account is
+	// ever created.
+	if nodeEnv != "development" {
 		if userPassword == defaultUserPassword || adminPassword == defaultAdminPassword {
 			return errors.New("refusing to seed default demo passwords outside development: set DEMO_USER_PASSWORD and DEMO_ADMIN_PASSWORD to non-default values (and prefer not seeding demo data in production at all)")
 		}

@@ -22,6 +22,22 @@ export interface Me {
   tenant_id: string;
   session_id: string;
   mfa_satisfied: boolean;
+  /** A second factor is active on the account. */
+  mfa_enabled?: boolean;
+  /** The actor's role makes MFA mandatory (admin/finance). */
+  mfa_required?: boolean;
+  /** Unused backup recovery codes remaining. */
+  mfa_backup_codes_remaining?: number;
+}
+
+/** Returned once by enroll-confirm and backup-code regeneration. */
+export interface MfaEnrollment {
+  secret: string;
+  otpauth_url: string;
+}
+
+export interface MfaBackupCodes {
+  backup_codes: string[];
 }
 
 export interface PermissionItem {
@@ -1063,21 +1079,27 @@ export interface CustomerBalance {
   balance: string;
 }
 
-// ---- Standard report exports (CSV) ----
+// ---- Standard report exports (CSV + PDF) ----
 
-/** Reporting window for the financials CSV export. */
+/** Reporting window for the financials export. */
 export type ReportPeriod = 'this-month' | 'last-month' | 'ytd' | 'last-30';
 
 /**
- * Discriminated spec for a standard CSV report. Passed to client.reportUrl /
+ * Discriminated spec for a standard report. Passed to client.reportUrl /
  * client.fetchReportBlob to build the same-origin download URL.
+ *
+ * CSV specs stream spreadsheet-ready data; the two `*-pdf` specs render the
+ * formal printable documents (a daily shift/close report per station and the
+ * tenant financial statement). Every export is permission-gated and audited.
  */
 export type ReportSpec =
   | { kind: 'revenue'; stationID: string }
   | { kind: 'inventory'; stationID: string }
   | { kind: 'reconciliation'; stationID: string; operatingDayID?: string }
   | { kind: 'financials'; period?: ReportPeriod }
-  | { kind: 'ar-aging' };
+  | { kind: 'ar-aging' }
+  | { kind: 'daily-close-pdf'; stationID: string; operatingDayID?: string }
+  | { kind: 'financials-pdf'; period?: ReportPeriod };
 
 // ---- Phase 7: Finance & Accounting Control ----
 

@@ -3,7 +3,15 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { Building2, ChevronRight, Database, Droplet, Package } from 'lucide-react';
+import {
+  ArrowRight,
+  Building2,
+  ChevronRight,
+  Database,
+  Droplet,
+  Package,
+  Rocket,
+} from 'lucide-react';
 
 import {
   Badge,
@@ -34,6 +42,10 @@ export default function CommandCenterPage() {
     queryKey: ['products'],
     queryFn: ({ signal }) => api.listProducts(signal),
   });
+  const companies = useQuery({
+    queryKey: ['companies'],
+    queryFn: ({ signal }) => api.listCompanies(signal),
+  });
 
   const me = meQuery.data;
   React.useEffect(() => {
@@ -43,6 +55,17 @@ export default function CommandCenterPage() {
   const stationItems = stations.data?.items ?? [];
   const activeCount = stationItems.filter((s) => s.status === 'active').length;
   const loading = stations.isPending || tanks.isPending || products.isPending;
+
+  // Surface a setup CTA until the core entities exist. We only flag once every
+  // count query has resolved, so we never nag during the initial load.
+  const setupResolved =
+    !companies.isPending && !stations.isPending && !tanks.isPending && !products.isPending;
+  const setupIncomplete =
+    setupResolved &&
+    ((companies.data?.count ?? companies.data?.items.length ?? 0) === 0 ||
+      stationItems.length === 0 ||
+      (tanks.data?.count ?? tanks.data?.items.length ?? 0) === 0 ||
+      (products.data?.count ?? products.data?.items.length ?? 0) === 0);
 
   const stats = [
     {
@@ -78,6 +101,28 @@ export default function CommandCenterPage() {
         title="Command Center"
         description="A live read on your fuel network — stations, inventory, and the operational signals that need attention."
       />
+
+      {setupIncomplete ? (
+        <Link
+          href="/setup"
+          className="group flex items-center gap-4 rounded-xl border border-accent/40 bg-accent-muted/40 px-5 py-4 transition-colors hover:bg-accent-muted/60"
+        >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
+            <Rocket className="size-5" />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="font-medium text-foreground">Finish setting up your tenant</span>
+            <span className="text-sm text-muted-foreground">
+              Some core setup is still missing. Walk through the guided checklist to get
+              operational.
+            </span>
+          </div>
+          <span className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-accent">
+            Open setup
+            <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
+          </span>
+        </Link>
+      ) : null}
 
       {stations.isError ? (
         <ErrorState

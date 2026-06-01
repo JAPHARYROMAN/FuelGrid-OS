@@ -7,3 +7,6 @@ coverage
 pnpm-lock.yaml
 .husky/_
 docs
+
+# Agent/workflow worktrees (gitignored copies of the repo)
+.claude/

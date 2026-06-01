@@ -178,6 +178,15 @@ func (r *UserRepo) ActivateMfa(ctx context.Context, q database.Querier, userID u
 	return err
 }
 
+// DisableMfa flips mfa_enabled to false and clears the stored secret, so a
+// later re-enroll starts from a fresh seed. Caller must have already verified
+// the actor's identity (a current TOTP or backup code).
+func (r *UserRepo) DisableMfa(ctx context.Context, q database.Querier, userID uuid.UUID) error {
+	_, err := q.Exec(ctx,
+		`UPDATE users SET mfa_enabled = false, mfa_secret = NULL WHERE id = $1`, userID)
+	return err
+}
+
 // IsNotFound is a small convenience for callers translating to sentinel errors.
 func IsNotFound(err error) bool { return errors.Is(err, pgx.ErrNoRows) }
 

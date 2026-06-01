@@ -136,14 +136,18 @@ export function LoginForm() {
 
           {mfaRequired ? (
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="mfa_code">MFA code</Label>
+              <Label htmlFor="mfa_code">Authentication code</Label>
               <Input
                 id="mfa_code"
-                inputMode="numeric"
                 autoComplete="one-time-code"
-                maxLength={6}
+                autoFocus
+                placeholder="123456 or a backup code"
                 {...register('mfa_code')}
               />
+              <p className="text-xs text-muted-foreground">
+                Enter the 6-digit code from your authenticator app, or one of your one-time backup
+                codes.
+              </p>
             </div>
           ) : null}
 

@@ -335,6 +335,83 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/me/mfa/enroll:
+    post:
+      tags: [Me]
+      summary: Begin TOTP MFA enrollment (returns secret + otpauth URI)
+      responses:
+        '200':
+          description: Enrollment payload — render the secret/URI as a manual key or QR code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  otpauth_url: { type: string, format: uri }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: MFA already enabled }
+
+  /api/v1/me/mfa/confirm:
+    post:
+      tags: [Me]
+      summary: Confirm enrollment with a TOTP code; enables MFA and returns one-time backup codes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, minLength: 6, maxLength: 6 }
+      responses:
+        '200':
+          description: MFA enabled; backup recovery codes shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backup_codes: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/me/mfa/disable:
+    post:
+      tags: [Me]
+      summary: Disable MFA (requires a current TOTP or backup code)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '204': { description: MFA disabled }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: MFA is not enabled }
+
+  /api/v1/me/mfa/backup-codes:
+    post:
+      tags: [Me]
+      summary: Regenerate one-time backup recovery codes (returns the fresh set once)
+      responses:
+        '200':
+          description: Fresh backup recovery codes, shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backup_codes: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: MFA is not enabled }
+
   /api/v1/notifications:
     get:
       tags: [Notifications]
@@ -1583,6 +1660,17 @@ paths:
         '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reports/daily-close.pdf:
+    get:
+      tags: [Reports]
+      summary: Export a station's daily shift/close report as a branded PDF
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: operating_day_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: PDF export, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/reports/financials.csv:
     get:
       tags: [Reports]
@@ -1591,6 +1679,15 @@ paths:
         - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
       responses:
         '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/financials.pdf:
+    get:
+      tags: [Reports]
+      summary: Export the financial statement (P&L + balance sheet) as a branded PDF
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
+      responses:
+        '200': { description: PDF export, content: { application/pdf: { schema: { type: string, format: binary } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/reports/ar-aging.csv:
     get:
@@ -3681,6 +3778,9 @@ components:
         tenant_id:     { type: string, format: uuid }
         session_id:    { type: string, format: uuid }
         mfa_satisfied: { type: boolean }
+        mfa_enabled:   { type: boolean }
+        mfa_required:  { type: boolean }
+        mfa_backup_codes_remaining: { type: integer }
     MePermissions:
       type: object
       properties:

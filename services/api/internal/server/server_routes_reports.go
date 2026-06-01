@@ -18,10 +18,18 @@ func (s *Server) registerReportsRoutes(r chi.Router) {
 	r.With(s.requirePermission("reconciliation.read", stationFromURLParam("stationID"))).
 		Get("/stations/{stationID}/reports/reconciliation.csv", s.handleExportReconciliationCSV)
 
+	// Formal printable documents (PDF), gated and audited identically to their
+	// CSV counterparts: a daily shift/close report per station (revenue.read)
+	// and the tenant financial statement (finance.read).
+	r.With(s.requirePermission("revenue.read", stationFromURLParam("stationID"))).
+		Get("/stations/{stationID}/reports/daily-close.pdf", s.handleExportDailyClosePDF)
+
 	// Tenant-wide financial reports — gated by finance.read / customer.read,
 	// matching the JSON report endpoints they mirror.
 	r.With(s.requirePermissionHeld("finance.read")).
 		Get("/reports/financials.csv", s.handleExportFinancialsCSV)
+	r.With(s.requirePermissionHeld("finance.read")).
+		Get("/reports/financials.pdf", s.handleExportFinancialsPDF)
 	r.With(s.requirePermissionHeld("customer.read")).
 		Get("/reports/ar-aging.csv", s.handleExportARagingCSV)
 }
