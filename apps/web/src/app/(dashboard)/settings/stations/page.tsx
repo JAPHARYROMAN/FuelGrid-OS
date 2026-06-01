@@ -8,6 +8,8 @@ import { SdkError, type Station } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -18,7 +20,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -134,17 +137,27 @@ export default function StationsPage() {
   const regionLookup = new Map((regions.data?.items ?? []).map((r) => [r.id, r.name]));
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{list.data?.count ?? 0} stations</p>
-        <Button onClick={openCreate} disabled={(companies.data?.items?.length ?? 0) === 0}>
-          <Plus className="size-4" />
-          New station
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Stations"
+        description={`Fueling locations under your companies — ${list.data?.count ?? 0} total.`}
+        actions={
+          <Button onClick={openCreate} disabled={(companies.data?.items?.length ?? 0) === 0}>
+            <Plus className="size-4" />
+            New station
+          </Button>
+        }
+      />
 
       {list.isPending ? (
-        <LoadingState />
+        <Card>
+          <CardContent className="flex flex-col gap-2 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load stations"
@@ -158,40 +171,44 @@ export default function StationsPage() {
           action={<Button onClick={openCreate}>Create one</Button>}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Region</TableHead>
-              <TableHead>City / Country</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((s) => (
-              <TableRow key={s.id}>
-                <TableCell className="font-medium">{s.name}</TableCell>
-                <TableCell className="font-mono text-xs">{s.code}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {s.region_id ? (regionLookup.get(s.region_id) ?? '—') : '—'}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {[s.city, s.country].filter(Boolean).join(', ') || '—'}
-                </TableCell>
-                <TableCell>
-                  <Badge tone={s.status === 'active' ? 'success' : 'warning'}>{s.status}</Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
-                    Edit
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Region</TableHead>
+                  <TableHead>City / Country</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="font-medium">{s.name}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">{s.code}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {s.region_id ? (regionLookup.get(s.region_id) ?? '—') : '—'}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {[s.city, s.country].filter(Boolean).join(', ') || '—'}
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone={s.status === 'active' ? 'success' : 'warning'}>{s.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
+                        Edit
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

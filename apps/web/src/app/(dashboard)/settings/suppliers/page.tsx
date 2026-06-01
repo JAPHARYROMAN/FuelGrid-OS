@@ -8,6 +8,8 @@ import { SdkError, type Supplier } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -18,7 +20,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -135,17 +138,27 @@ export default function SuppliersPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{suppliers.data?.count ?? 0} suppliers</p>
-        <Button onClick={openCreate}>
-          <Plus className="size-4" />
-          New supplier
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Suppliers"
+        description={`Supplier records shared across stations — ${suppliers.data?.count ?? 0} total.`}
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="size-4" />
+            New supplier
+          </Button>
+        }
+      />
 
       {suppliers.isPending ? (
-        <LoadingState />
+        <Card>
+          <CardContent className="flex flex-col gap-2 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
       ) : suppliers.isError ? (
         <ErrorState
           title="Couldn't load suppliers"
@@ -159,52 +172,56 @@ export default function SuppliersPage() {
           action={<Button onClick={openCreate}>Create one</Button>}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Products</TableHead>
-              <TableHead className="text-right">Terms</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {suppliers.data!.items.map((s) => (
-              <TableRow key={s.id}>
-                <TableCell className="font-medium">{s.name}</TableCell>
-                <TableCell className="font-mono text-xs">{s.code}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {s.product_ids.length} product{s.product_ids.length === 1 ? '' : 's'}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {s.payment_terms_days} days
-                </TableCell>
-                <TableCell>
-                  <Badge tone={s.status === 'active' ? 'success' : 'warning'}>{s.status}</Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
-                      Edit
-                    </Button>
-                    {s.status !== 'deactivated' ? (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => deactivate.mutate(s.id)}
-                        disabled={deactivate.isPending}
-                      >
-                        Deactivate
-                      </Button>
-                    ) : null}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Products</TableHead>
+                  <TableHead className="text-right">Terms</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {suppliers.data!.items.map((s) => (
+                  <TableRow key={s.id}>
+                    <TableCell className="font-medium">{s.name}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">{s.code}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {s.product_ids.length} product{s.product_ids.length === 1 ? '' : 's'}
+                    </TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">
+                      {s.payment_terms_days} days
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone={s.status === 'active' ? 'success' : 'warning'}>{s.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
+                          Edit
+                        </Button>
+                        {s.status !== 'deactivated' ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deactivate.mutate(s.id)}
+                            disabled={deactivate.isPending}
+                          >
+                            Deactivate
+                          </Button>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
