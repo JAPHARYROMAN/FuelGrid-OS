@@ -29,16 +29,16 @@ test.describe('reports', () => {
     });
 
     await page.goto('/reports');
-    await expect(page.getByRole('heading', { name: 'Reports', exact: true })).toBeVisible();
-    await expect(page.getByText('Revenue days', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Reporting hub', exact: true })).toBeVisible();
+    await expect(page.getByText('Sales Summary', { exact: true })).toBeVisible();
 
-    // The first "CSV" button is the Revenue-days export. The page builds a
-    // synthetic <a download> + clicks it; capture the download event.
+    // The first "CSV" button is the Sales Summary (revenue) export. The page
+    // builds a synthetic <a download> + clicks it; capture the download event.
     const downloadPromise = page.waitForEvent('download');
     await page.getByRole('button', { name: 'CSV' }).first().click();
 
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toBe('revenue-DS1.csv');
+    expect(download.suggestedFilename()).toBe('sales-DS1.csv');
     expect(revenueCalls).toBe(1);
   });
 });

@@ -31,6 +31,10 @@ type Deps struct {
 	Payables    *payables.Repo
 	Enterprise  *enterprise.Repo
 	Logger      *slog.Logger
+	// Report carries the email sender + recipients for the canned scheduled-email
+	// digests (daily station-close, monthly P&L). When it is left zero (no
+	// recipients / no real SMTP) those jobs run as a safe no-op.
+	Report ReportDeps
 }
 
 // Intervals is the per-job cadence (mirrors the SCHEDULER_* config knobs). A
@@ -44,6 +48,12 @@ type Intervals struct {
 	Projection     time.Duration
 	OutboxSweep    time.Duration
 	SessionCleanup time.Duration
+	// ReportDigest is the tick cadence for BOTH canned email digests (daily
+	// station-close, monthly P&L). It is deliberately sub-day (e.g. 1h): the job
+	// bodies gate on a configured send hour and a job_runs ledger guard, so a
+	// frequent tick still produces exactly one daily / one monthly send while
+	// guaranteeing a send lands shortly after the send hour. <= 0 disables both.
+	ReportDigest time.Duration
 
 	// Non-interval tuning the job bodies read.
 	SessionRetention   time.Duration
@@ -55,6 +65,15 @@ type Intervals struct {
 // interval is <= 0 still appear here but are filtered out by scheduler.New, so
 // callers get one obvious place to read the catalog.
 func BuildJobs(d Deps, iv Intervals) []Job {
+	// The report digests share the owner pool + logger with the rest of the job
+	// set, so backfill them onto the ReportDeps the caller supplied (which only
+	// needs to carry the email sender, recipients, and send hour).
+	report := d.Report
+	report.Pool = d.Pool
+	if report.Logger == nil {
+		report.Logger = d.Logger
+	}
+
 	return []Job{
 		{Name: "revenue_compute", Interval: iv.RevenueCompute, Run: d.revenueComputeJob},
 		{Name: "aging_refresh", Interval: iv.AgingRefresh, Run: d.agingRefreshJob},
@@ -62,6 +81,8 @@ func BuildJobs(d Deps, iv Intervals) []Job {
 		{Name: "enterprise_projection", Interval: iv.Projection, Run: d.projectionJob},
 		{Name: "outbox_dead_letter_sweep", Interval: iv.OutboxSweep, Run: outboxSweepJob(d.Pool, iv.OutboxRequeueAfter, iv.JobRunRetention)},
 		{Name: "session_token_cleanup", Interval: iv.SessionCleanup, Run: sessionCleanupJob(d.Pool, iv.SessionRetention)},
+		{Name: "report_daily_close_digest", Interval: iv.ReportDigest, Run: dailyDigestJob(report)},
+		{Name: "report_monthly_pnl", Interval: iv.ReportDigest, Run: monthlyPnLJob(report)},
 	}
 }
 

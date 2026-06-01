@@ -1149,7 +1149,41 @@ export type ReportSpec =
   | { kind: 'ar-aging' }
   | { kind: 'daily-close-pdf'; stationID: string; operatingDayID?: string }
   | { kind: 'financials-pdf'; period?: ReportPeriod }
-  | { kind: 'gl-export'; period?: ReportPeriod; format?: GeneralLedgerFormat };
+  | { kind: 'gl-export'; period?: ReportPeriod; format?: GeneralLedgerFormat }
+  // Excel (XLSX) exports mirroring the revenue/reconciliation/financials CSVs.
+  | { kind: 'revenue-xlsx'; stationID: string }
+  | { kind: 'reconciliation-xlsx'; stationID: string; operatingDayID?: string }
+  | { kind: 'financials-xlsx'; period?: ReportPeriod };
+
+// ---- Deterministic report insights + data-quality (reporting hub) ----
+
+/** The signature reports that expose a deterministic insights endpoint. */
+export type ReportKey =
+  | 'daily-close'
+  | 'stock-reconciliation'
+  | 'sales-summary'
+  | 'cash-reconciliation'
+  | 'customer-aging';
+
+export type InsightSeverity = 'info' | 'warning' | 'critical';
+
+/** A single deterministic observation about a report's already-computed data. */
+export interface ReportInsight {
+  severity: InsightSeverity;
+  message: string;
+  recommended_action?: string;
+}
+
+/** A reason a report's figures may be incomplete or subject to change. */
+export interface DataQualityWarning {
+  message: string;
+}
+
+/** The insights + data-quality annotations for one report view. */
+export interface ReportInsights {
+  insights: ReportInsight[];
+  data_quality: DataQualityWarning[];
+}
 
 // ---- Phase 7: Finance & Accounting Control ----
 
