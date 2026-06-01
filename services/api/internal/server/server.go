@@ -36,6 +36,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
 	"github.com/japharyroman/fuelgrid-os/internal/payables"
 	"github.com/japharyroman/fuelgrid-os/internal/payments"
+	"github.com/japharyroman/fuelgrid-os/internal/payments/mpesa"
 	"github.com/japharyroman/fuelgrid-os/internal/pricing"
 	"github.com/japharyroman/fuelgrid-os/internal/procurement"
 	"github.com/japharyroman/fuelgrid-os/internal/products"
@@ -116,6 +117,7 @@ type Server struct {
 	inventory      *inventory.Repo
 	payables       *payables.Repo
 	payments       *payments.Repo
+	mpesa          *mpesa.Client
 	pricing        *pricing.Repo
 	procurement    *procurement.Repo
 	receivables    *receivables.Repo
@@ -166,6 +168,19 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		tenantLimiter = ratelimit.New(deps.Redis, "ratelimit:tenant:")
 	}
 	s.rateLimit = newRateLimiter(tenantLimiter, cfg.TenantRateLimit, cfg.TenantRateWindow, cfg.MaxInflight)
+
+	// M-Pesa (Daraja) client. Built unconditionally (no DB dependency) so the
+	// payments handlers always have a client to call; when MPESA_CONSUMER_KEY/
+	// SECRET are unset the constructor returns a disabled no-op that fails calls
+	// with ErrDisabled instead of dialing Safaricom — a safe no-op in dev/CI.
+	s.mpesa = mpesa.New(mpesa.Config{
+		ConsumerKey:    cfg.MpesaConsumerKey.Reveal(),
+		ConsumerSecret: cfg.MpesaConsumerSecret.Reveal(),
+		Shortcode:      cfg.MpesaShortcode,
+		Passkey:        cfg.MpesaPasskey.Reveal(),
+		Env:            cfg.MpesaEnv,
+		CallbackURL:    cfg.MpesaCallbackURL,
+	}, logger.With("component", "mpesa"))
 
 	// appDB backs request-scoped queries. When DATABASE_APP_URL is configured
 	// it is the non-owner fuelgrid_app pool and RLS is enforced per request;

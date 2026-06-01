@@ -62,6 +62,8 @@ tags:
     description: Tank + cash reconciliation, adjustments, sealing
   - name: Revenue
     description: Revenue days, sales, payments, payment reconciliation
+  - name: Payments
+    description: M-Pesa (Safaricom Daraja) mobile-money collections + reconciliation
   - name: Procurement
     description: Purchase orders, receipts, suppliers, discrepancies
   - name: Finance
@@ -2525,6 +2527,52 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  # ---------------------------------------------------------------------------
+  # Payments — M-Pesa (Safaricom Daraja) mobile-money collections
+  # ---------------------------------------------------------------------------
+  /api/v1/payments/mpesa/transactions:
+    get:
+      tags: [Payments]
+      summary: List M-Pesa transactions (paginated; ?station_id, ?status filters)
+      parameters:
+        - { in: query, name: station_id, required: false, schema: { type: string, format: uuid } }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [pending, paid, failed, cancelled] } }
+        - { in: query, name: limit, required: false, schema: { type: integer } }
+        - { in: query, name: offset, required: false, schema: { type: integer } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/payments/mpesa/stk-push:
+    post:
+      tags: [Payments]
+      summary: Initiate an M-Pesa STK push (Lipa na M-Pesa Online)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Initiated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502': { description: M-Pesa request failed }
+        '503': { description: M-Pesa not configured }
+  /api/v1/payments/mpesa/transactions/{id}/reconcile:
+    post:
+      tags: [Payments]
+      summary: Reconcile a paid M-Pesa transaction against a revenue day's mobile-money tender
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Reconciled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Transaction not paid, or station mismatch }
+  /api/v1/payments/mpesa/callback:
+    post:
+      tags: [Payments]
+      summary: Safaricom Daraja STK result callback (unauthenticated webhook)
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Acknowledged, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
 
   # ---------------------------------------------------------------------------
   # Pricing — station price boards + agreements

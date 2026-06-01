@@ -778,6 +778,33 @@ export interface ShiftPaymentReconciliation {
   over_threshold: boolean;
 }
 
+/** One M-Pesa (Safaricom Daraja) STK Push collection and its lifecycle. */
+export interface MpesaTransaction {
+  id: string;
+  station_id: string;
+  checkout_request_id: string;
+  merchant_request_id?: string;
+  /** Decimal string (e.g. "150.00"). */
+  amount: string;
+  phone: string;
+  /** pending | paid | failed | cancelled */
+  status: string;
+  result_code?: number;
+  mpesa_receipt?: string;
+  account_reference?: string;
+  description?: string;
+  reconciled_revenue_day_id?: string;
+  reconciled_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response of initiating an STK push: the pending txn + Daraja's prompt msg. */
+export interface MpesaStkPushResult {
+  transaction: MpesaTransaction;
+  customer_message: string;
+}
+
 export interface Customer {
   id: string;
   tenant_id: string;
