@@ -1,24 +1,22 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import {
+  ArrowRight,
   BarChart3,
   BookOpen,
-  Database,
   Download,
   FileSpreadsheet,
   FileText,
   Receipt,
   Scale,
+  ShieldCheck,
+  Users,
 } from 'lucide-react';
 
-import {
-  SdkError,
-  type GeneralLedgerFormat,
-  type ReportPeriod,
-  type ReportSpec,
-} from '@fuelgrid/sdk';
+import { type GeneralLedgerFormat, type ReportPeriod, type ReportSpec } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -26,21 +24,16 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  EmptyState,
   ErrorState,
   PageHeader,
   Skeleton,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatMoney } from '@/lib/money';
 import { usePermission } from '@/hooks/use-permissions';
 
-const PERIODS: { value: ReportPeriod; label: string }[] = [
-  { value: 'this-month', label: 'This month' },
-  { value: 'last-month', label: 'Last month' },
-  { value: 'ytd', label: 'Year to date' },
-  { value: 'last-30', label: 'Last 30 days' },
-];
+import { PeriodSelect, StationSelect, useStationSelection } from './_components/filters';
 
 const GL_FORMATS: { value: GeneralLedgerFormat; label: string }[] = [
   { value: 'csv', label: 'Generic CSV' },
@@ -52,9 +45,6 @@ const selectClasses =
   'h-9 rounded-md border border-border bg-background px-2.5 text-sm text-foreground ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50';
 
-// Parse the download filename out of a Content-Disposition-style attachment,
-// falling back to a sensible default. Browsers don't expose the response
-// headers on a fetched blob unless we read them, so the caller passes a default.
 function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -66,111 +56,35 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-/** What a download button builds when clicked, or null if filters are missing. */
 type BuildFn = () => { spec: ReportSpec; filename: string } | null;
 
-interface ReportRowProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  permission: string;
-  stationId?: string | null;
-  /** Builds the CSV report spec + filename. */
-  build: BuildFn;
-  /**
-   * Builds the formal PDF document spec + filename. When provided, a second
-   * "PDF" download button is rendered next to the CSV one (same permission).
-   */
-  buildPdf?: BuildFn;
-  /** Extra filter controls rendered before the download buttons. */
-  controls?: React.ReactNode;
-}
-
-function ReportRow({
+/** A compact download button used inline on the hub category cards. */
+function HubDownload({
+  label,
   icon,
-  title,
-  description,
   permission,
   stationId,
   build,
-  buildPdf,
-  controls,
-}: ReportRowProps) {
-  const allowed = usePermission(permission, { stationID: stationId });
-  const [error, setError] = React.useState<string | null>(null);
-
-  return (
-    <div className="flex flex-col gap-3 border-b border-border px-4 py-4 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-start gap-3">
-        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
-          {icon}
-        </span>
-        <div className="flex min-w-0 flex-col">
-          <span className="text-sm font-medium text-foreground">{title}</span>
-          <span className="text-xs text-muted-foreground">{description}</span>
-          {error ? (
-            <span className="mt-1 text-xs text-danger" role="alert">
-              {error}
-            </span>
-          ) : null}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
-        {controls}
-        <DownloadButton
-          icon={<Download className="size-4" />}
-          label="CSV"
-          allowed={allowed}
-          build={build}
-          onError={setError}
-        />
-        {buildPdf ? (
-          <DownloadButton
-            icon={<FileText className="size-4" />}
-            label="PDF"
-            allowed={allowed}
-            build={buildPdf}
-            onError={setError}
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-// A single download button. Resolves its own busy state and fetches the report
-// blob via the BFF, then triggers a browser download. The permission decision
-// (`allowed`) is computed once by the parent ReportRow and shared across the
-// CSV/PDF buttons so they stay in lockstep.
-function DownloadButton({
-  icon,
-  label,
-  allowed,
-  build,
-  onError,
 }: {
-  icon: React.ReactNode;
   label: string;
-  allowed: boolean | null;
+  icon: React.ReactNode;
+  permission: string;
+  stationId?: string | null;
   build: BuildFn;
-  onError: (message: string | null) => void;
 }) {
+  const allowed = usePermission(permission, { stationID: stationId });
   const [busy, setBusy] = React.useState(false);
   const denied = allowed === false;
 
   async function download() {
     const built = build();
-    if (!built) {
-      onError('Pick the required filters first.');
-      return;
-    }
-    onError(null);
+    if (!built) return;
     setBusy(true);
     try {
       const blob = await api.fetchReportBlob(built.spec);
       triggerDownload(blob, built.filename);
-    } catch (err) {
-      onError(err instanceof SdkError ? err.message : 'Could not generate the export.');
+    } catch {
+      // Errors surface on the dedicated report view; hub stays quiet.
     } finally {
       setBusy(false);
     }
@@ -185,53 +99,110 @@ function DownloadButton({
       onClick={download}
     >
       {icon}
-      {busy ? 'Preparing…' : label}
+      {busy ? '…' : label}
     </Button>
   );
 }
 
-export default function ReportsPage() {
-  const stations = useQuery({
-    queryKey: ['stations'],
-    queryFn: ({ signal }) => api.listStations({}, signal),
-  });
+interface CategoryCardProps {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  metricLabel: string;
+  metricValue: React.ReactNode;
+  viewHref?: string;
+  children?: React.ReactNode; // download buttons
+}
 
-  const stationItems = stations.data?.items ?? [];
-  const [stationId, setStationId] = React.useState<string>('');
+function CategoryCard({
+  icon,
+  title,
+  description,
+  metricLabel,
+  metricValue,
+  viewHref,
+  children,
+}: CategoryCardProps) {
+  return (
+    <Card className="flex flex-col">
+      <CardHeader className="flex-row items-start gap-3 space-y-0">
+        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+          {icon}
+        </span>
+        <div className="flex min-w-0 flex-col">
+          <CardTitle>{title}</CardTitle>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-1 flex-col justify-between gap-4">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {metricLabel}
+          </span>
+          <span className="font-mono text-2xl font-semibold tabular-nums text-foreground">
+            {metricValue}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {viewHref ? (
+            <Button size="sm" asChild>
+              <Link href={viewHref}>
+                View report
+                <ArrowRight className="size-4" />
+              </Link>
+            </Button>
+          ) : null}
+          {children}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function ReportsPage() {
+  const { stations, items, stationId, setStationId, current } = useStationSelection();
   const [period, setPeriod] = React.useState<ReportPeriod>('this-month');
   const [glFormat, setGlFormat] = React.useState<GeneralLedgerFormat>('csv');
+  const stationCode = current?.code ?? 'station';
 
-  // Default the station filter to the first station once loaded.
-  React.useEffect(() => {
-    const first = stationItems[0];
-    if (!stationId && first) setStationId(first.id);
-  }, [stationId, stationItems]);
+  const revenue = useQuery({
+    queryKey: ['revenue-overview', stationId],
+    queryFn: ({ signal }) => api.getRevenueOverview(stationId, signal),
+    enabled: !!stationId,
+  });
+  const reconciliation = useQuery({
+    queryKey: ['reconciliation-overview', stationId],
+    queryFn: ({ signal }) => api.getReconciliationOverview(stationId, {}, signal),
+    enabled: !!stationId,
+  });
+  const finance = useQuery({
+    queryKey: ['finance-overview'],
+    queryFn: ({ signal }) => api.getFinanceOverview(signal),
+  });
+  const aging = useQuery({
+    queryKey: ['ar-aging'],
+    queryFn: ({ signal }) => api.getARaging(signal),
+  });
 
-  const stationCode = stationItems.find((s) => s.id === stationId)?.code ?? 'station';
+  const metric = (q: { isPending: boolean; isError: boolean }, value: React.ReactNode) =>
+    q.isPending ? <Skeleton className="h-7 w-28 rounded-md" /> : q.isError ? '—' : value;
 
-  const stationSelect = (
-    <select
-      className={selectClasses}
-      value={stationId}
-      onChange={(e) => setStationId(e.target.value)}
-      aria-label="Station"
-      disabled={stationItems.length === 0}
-    >
-      {stationItems.length === 0 ? <option value="">No stations</option> : null}
-      {stationItems.map((s) => (
-        <option key={s.id} value={s.id}>
-          {s.code} — {s.name}
-        </option>
-      ))}
-    </select>
-  );
+  const overCount = (reconciliation.data?.tanks ?? []).filter(
+    (t) => t.reconciliation?.over_tolerance,
+  ).length;
+  const agingTotal = (aging.data?.items ?? []).reduce((a, c) => a + (Number(c.balance) || 0), 0);
 
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
         eyebrow="Reports & exports"
-        title="Reports"
-        description="Download standard operational and financial reports as CSV, or the formal documents as branded PDF. Money and litres are exact decimals throughout."
+        title="Reporting hub"
+        description="Open a signature report on-screen with insights and data-quality checks, or download CSV, Excel, PDF and accountant-ready exports. Money and litres are exact decimals throughout."
+        actions={
+          items.length > 0 ? (
+            <StationSelect items={items} value={stationId} onChange={setStationId} />
+          ) : undefined
+        }
       />
 
       {stations.isError ? (
@@ -241,174 +212,183 @@ export default function ReportsPage() {
           onRetry={() => stations.refetch()}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Station reports */}
-          <Card>
-            <CardHeader className="flex-row items-center justify-between space-y-0">
-              <div className="flex flex-col gap-1">
-                <CardTitle>Station reports</CardTitle>
-                <p className="text-sm text-muted-foreground">Scoped to the selected station.</p>
-              </div>
-              {stations.isPending ? <Skeleton className="h-9 w-40 rounded-md" /> : stationSelect}
-            </CardHeader>
-            <CardContent className="p-0">
-              {stations.isPending ? (
-                <div className="flex flex-col gap-2 p-4">
-                  {Array.from({ length: 3 }).map((_, i) => (
-                    <Skeleton key={i} className="h-16 rounded-lg" />
-                  ))}
-                </div>
-              ) : stationItems.length === 0 ? (
-                <div className="p-4">
-                  <EmptyState
-                    title="No stations yet"
-                    description="Create a station to export its reports."
-                  />
-                </div>
-              ) : (
-                <div className="flex flex-col">
-                  <ReportRow
-                    icon={<BarChart3 className="size-4" />}
-                    title="Revenue days"
-                    description="Recent revenue days — gross/net, COGS, margin and the tender split. PDF renders the formal daily shift/close report."
-                    permission="revenue.read"
-                    stationId={stationId}
-                    build={() =>
-                      stationId
-                        ? {
-                            spec: { kind: 'revenue', stationID: stationId },
-                            filename: `revenue-${stationCode}.csv`,
-                          }
-                        : null
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+          <CategoryCard
+            icon={<BarChart3 className="size-4" />}
+            title="Daily Station Close"
+            description="Recognized revenue, margin and tender split per day."
+            metricLabel="Latest gross"
+            metricValue={metric(revenue, formatMoney(revenue.data?.summary?.gross_revenue))}
+            viewHref="/reports/daily-close"
+          >
+            <HubDownload
+              label="PDF"
+              icon={<FileText className="size-4" />}
+              permission="revenue.read"
+              stationId={stationId}
+              build={() =>
+                stationId
+                  ? {
+                      spec: { kind: 'daily-close-pdf', stationID: stationId },
+                      filename: `daily-close-${stationCode}.pdf`,
                     }
-                    buildPdf={() =>
-                      stationId
-                        ? {
-                            spec: { kind: 'daily-close-pdf', stationID: stationId },
-                            filename: `daily-close-${stationCode}.pdf`,
-                          }
-                        : null
-                    }
-                  />
-                  <ReportRow
-                    icon={<Database className="size-4" />}
-                    title="Inventory snapshot"
-                    description="Per-tank book balance, latest physical dip and last variance."
-                    permission="inventory.read"
-                    stationId={stationId}
-                    build={() =>
-                      stationId
-                        ? {
-                            spec: { kind: 'inventory', stationID: stationId },
-                            filename: `inventory-${stationCode}.csv`,
-                          }
-                        : null
-                    }
-                  />
-                  <ReportRow
-                    icon={<Scale className="size-4" />}
-                    title="Reconciliation"
-                    description="The active day's per-tank book→physical variance breakdown."
-                    permission="reconciliation.read"
-                    stationId={stationId}
-                    build={() =>
-                      stationId
-                        ? {
-                            spec: { kind: 'reconciliation', stationID: stationId },
-                            filename: `reconciliation-${stationCode}.csv`,
-                          }
-                        : null
-                    }
-                  />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+                  : null
+              }
+            />
+          </CategoryCard>
 
-          {/* Financial reports */}
-          <Card>
-            <CardHeader>
-              <CardTitle>Financial reports</CardTitle>
-              <p className="text-sm text-muted-foreground">Tenant-wide, over posted journals.</p>
+          <CategoryCard
+            icon={<BarChart3 className="size-4" />}
+            title="Sales Summary"
+            description="Gross sales, litres and margin trend."
+            metricLabel="Litres sold"
+            metricValue={metric(revenue, revenue.data?.summary?.litres_sold ?? '—')}
+            viewHref="/reports/sales-summary"
+          >
+            <HubDownload
+              label="CSV"
+              icon={<Download className="size-4" />}
+              permission="revenue.read"
+              stationId={stationId}
+              build={() =>
+                stationId
+                  ? {
+                      spec: { kind: 'revenue', stationID: stationId },
+                      filename: `sales-${stationCode}.csv`,
+                    }
+                  : null
+              }
+            />
+          </CategoryCard>
+
+          <CategoryCard
+            icon={<Scale className="size-4" />}
+            title="Fuel Stock Reconciliation"
+            description="Per-tank book→physical variance for the active day."
+            metricLabel="Tanks over tolerance"
+            metricValue={metric(reconciliation, overCount)}
+            viewHref="/reports/stock-reconciliation"
+          >
+            <HubDownload
+              label="CSV"
+              icon={<Download className="size-4" />}
+              permission="reconciliation.read"
+              stationId={stationId}
+              build={() =>
+                stationId
+                  ? {
+                      spec: { kind: 'reconciliation', stationID: stationId },
+                      filename: `reconciliation-${stationCode}.csv`,
+                    }
+                  : null
+              }
+            />
+          </CategoryCard>
+
+          <CategoryCard
+            icon={<Receipt className="size-4" />}
+            title="Cash Reconciliation"
+            description="Expected vs counted cash by operating day."
+            metricLabel="Cash today"
+            metricValue={metric(revenue, formatMoney(revenue.data?.tenders?.cash))}
+            viewHref="/reports/cash-reconciliation"
+          />
+
+          <CategoryCard
+            icon={<Users className="size-4" />}
+            title="Customer Aging"
+            description="Outstanding credit balances by customer."
+            metricLabel="Total receivable"
+            metricValue={metric(aging, formatMoney(agingTotal.toFixed(2)))}
+            viewHref="/reports/customer-aging"
+          >
+            <HubDownload
+              label="CSV"
+              icon={<Download className="size-4" />}
+              permission="customer.read"
+              build={() => ({ spec: { kind: 'ar-aging' }, filename: 'customer-aging.csv' })}
+            />
+          </CategoryCard>
+
+          {/* Finance — downloads only (statements + general ledger). */}
+          <Card className="flex flex-col">
+            <CardHeader className="flex-row items-start gap-3 space-y-0">
+              <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+                <FileSpreadsheet className="size-4" />
+              </span>
+              <div className="flex min-w-0 flex-col">
+                <CardTitle>Finance &amp; Accounting</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  P&amp;L, balance sheet and accountant-ready general ledger.
+                </p>
+              </div>
             </CardHeader>
-            <CardContent className="p-0">
-              <div className="flex flex-col">
-                <ReportRow
-                  icon={<FileSpreadsheet className="size-4" />}
-                  title="Financial statements"
-                  description="Profit & loss and balance sheet for the chosen period. PDF renders the formal, branded statement."
-                  permission="finance.read"
-                  build={() => ({
-                    spec: { kind: 'financials', period },
-                    filename: `financials-${period}.csv`,
-                  })}
-                  buildPdf={() => ({
-                    spec: { kind: 'financials-pdf', period },
-                    filename: `financials-${period}.pdf`,
-                  })}
-                  controls={
-                    <select
-                      className={selectClasses}
-                      value={period}
-                      onChange={(e) => setPeriod(e.target.value as ReportPeriod)}
-                      aria-label="Reporting period"
-                    >
-                      {PERIODS.map((p) => (
-                        <option key={p.value} value={p.value}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  }
-                />
-                <ReportRow
-                  icon={<Receipt className="size-4" />}
-                  title="AR aging"
-                  description="Every credit customer with an outstanding receivable balance."
-                  permission="customer.read"
-                  build={() => ({ spec: { kind: 'ar-aging' }, filename: 'ar-aging.csv' })}
-                />
-                <ReportRow
-                  icon={<BookOpen className="size-4" />}
-                  title="General ledger export"
-                  description="Posted journal entries for the chosen period in an accountant-importable format: generic CSV, QuickBooks (IIF) or Xero CSV. Amounts are exact decimals."
-                  permission="finance.read"
-                  build={() => {
-                    const ext = glFormat === 'iif' ? 'iif' : 'csv';
-                    return {
-                      spec: { kind: 'gl-export', period, format: glFormat },
-                      filename: `general-ledger-${period}-${glFormat}.${ext}`,
-                    };
-                  }}
-                  controls={
-                    <>
-                      <select
-                        className={selectClasses}
-                        value={period}
-                        onChange={(e) => setPeriod(e.target.value as ReportPeriod)}
-                        aria-label="General ledger period"
-                      >
-                        {PERIODS.map((p) => (
-                          <option key={p.value} value={p.value}>
-                            {p.label}
-                          </option>
-                        ))}
-                      </select>
-                      <select
-                        className={selectClasses}
-                        value={glFormat}
-                        onChange={(e) => setGlFormat(e.target.value as GeneralLedgerFormat)}
-                        aria-label="General ledger format"
-                      >
-                        {GL_FORMATS.map((f) => (
-                          <option key={f.value} value={f.value}>
-                            {f.label}
-                          </option>
-                        ))}
-                      </select>
-                    </>
-                  }
-                />
+            <CardContent className="flex flex-1 flex-col justify-between gap-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  Net profit
+                </span>
+                <span className="font-mono text-2xl font-semibold tabular-nums text-foreground">
+                  {metric(finance, formatMoney(finance.data?.income_statement?.net_profit))}
+                </span>
+              </div>
+              <div className="flex flex-col gap-2">
+                <PeriodSelect value={period} onChange={setPeriod} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <HubDownload
+                    label="P&L CSV"
+                    icon={<Download className="size-4" />}
+                    permission="finance.read"
+                    build={() => ({
+                      spec: { kind: 'financials', period },
+                      filename: `financials-${period}.csv`,
+                    })}
+                  />
+                  <HubDownload
+                    label="Excel"
+                    icon={<FileSpreadsheet className="size-4" />}
+                    permission="finance.read"
+                    build={() => ({
+                      spec: { kind: 'financials-xlsx', period },
+                      filename: `financials-${period}.xlsx`,
+                    })}
+                  />
+                  <HubDownload
+                    label="PDF"
+                    icon={<FileText className="size-4" />}
+                    permission="finance.read"
+                    build={() => ({
+                      spec: { kind: 'financials-pdf', period },
+                      filename: `financials-${period}.pdf`,
+                    })}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    className={selectClasses}
+                    value={glFormat}
+                    onChange={(e) => setGlFormat(e.target.value as GeneralLedgerFormat)}
+                    aria-label="General ledger format"
+                  >
+                    {GL_FORMATS.map((f) => (
+                      <option key={f.value} value={f.value}>
+                        {f.label}
+                      </option>
+                    ))}
+                  </select>
+                  <HubDownload
+                    label="GL export"
+                    icon={<BookOpen className="size-4" />}
+                    permission="finance.read"
+                    build={() => {
+                      const ext = glFormat === 'iif' ? 'iif' : 'csv';
+                      return {
+                        spec: { kind: 'gl-export', period, format: glFormat },
+                        filename: `general-ledger-${period}-${glFormat}.${ext}`,
+                      };
+                    }}
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -416,7 +396,11 @@ export default function ReportsPage() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        <Badge tone="neutral">Audited</Badge> Every export is recorded in the audit log.
+        <Badge tone="neutral">
+          <ShieldCheck className="mr-1 inline size-3" />
+          Audited
+        </Badge>{' '}
+        Every export is recorded in the audit log.
       </p>
     </div>
   );
