@@ -40,6 +40,7 @@ import type {
   MeterReading,
   MeterReadingList,
   MyShift,
+  Notification,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
@@ -58,6 +59,7 @@ import type {
   Reconciliation,
   ReconciliationOverview,
   Region,
+  ReportSpec,
   Role,
   Sale,
   TankValuation,
@@ -96,8 +98,16 @@ import type {
   Supplier,
   SupplierInvoice,
   Tank,
+  UnreadCount,
   UserSummary,
   Delivery,
+  Employee,
+  EmployeeRole,
+  ShiftTeam,
+  RotationAnchor,
+  ScheduledTeam,
+  DayRoster,
+  WorkforceList,
 } from './types';
 import { loginResponseSchema, meSchema, mePermissionsSchema } from './schemas';
 
@@ -1078,7 +1088,7 @@ export class Client {
 
   openShift(
     stationID: string,
-    req: { operating_day_id: string; name: string; notes?: string },
+    req: { operating_day_id: string; name: string; slot: 'morning' | 'evening'; notes?: string },
     signal?: AbortSignal,
   ): Promise<Shift> {
     return this.request<Shift>(`/api/v1/stations/${encodeURIComponent(stationID)}/shifts`, {
@@ -1118,6 +1128,139 @@ export class Client {
     return this.request<void>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/nozzle-assignments/${encodeURIComponent(assignmentID)}`,
       { method: 'DELETE', signal },
+    );
+  }
+
+  // ----------- Workforce (Phase 11) -----------
+
+  /** A station's employees (station.read). */
+  listEmployees(stationID: string, signal?: AbortSignal): Promise<WorkforceList<Employee>> {
+    return this.request<WorkforceList<Employee>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/employees`,
+      { signal },
+    );
+  }
+
+  /** Add an employee to a station (station.manage). */
+  createEmployee(
+    stationID: string,
+    req: {
+      full_name: string;
+      role?: EmployeeRole;
+      user_id?: string;
+      employee_code?: string;
+      phone?: string;
+      email?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Employee> {
+    return this.request<Employee>(`/api/v1/stations/${encodeURIComponent(stationID)}/employees`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Update an employee (station.manage). */
+  updateEmployee(
+    employeeID: string,
+    req: {
+      full_name?: string;
+      role?: EmployeeRole;
+      status?: 'active' | 'inactive';
+      user_id?: string;
+      employee_code?: string;
+      phone?: string;
+      email?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<Employee> {
+    return this.request<Employee>(`/api/v1/employees/${encodeURIComponent(employeeID)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  /** A station's three shift teams (station.read). */
+  listTeams(stationID: string, signal?: AbortSignal): Promise<WorkforceList<ShiftTeam>> {
+    return this.request<WorkforceList<ShiftTeam>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/teams`,
+      { signal },
+    );
+  }
+
+  /** Ensure the station's three rotation teams exist (station.manage). */
+  ensureTeams(
+    stationID: string,
+    req: { names?: string[] } = {},
+    signal?: AbortSignal,
+  ): Promise<WorkforceList<ShiftTeam>> {
+    return this.request<WorkforceList<ShiftTeam>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/teams`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /** Replace a team's membership (station.manage). */
+  setTeamMembers(
+    teamID: string,
+    employeeIDs: string[],
+    signal?: AbortSignal,
+  ): Promise<WorkforceList<Employee>> {
+    return this.request<WorkforceList<Employee>>(
+      `/api/v1/teams/${encodeURIComponent(teamID)}/members`,
+      { method: 'PUT', body: { employee_ids: employeeIDs }, signal },
+    );
+  }
+
+  /** The station's rotation anchor date (station.read). */
+  getRotationAnchor(stationID: string, signal?: AbortSignal): Promise<RotationAnchor> {
+    return this.request<RotationAnchor>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/rotation-anchor`,
+      { signal },
+    );
+  }
+
+  /** Set or clear the station's rotation anchor date (station.manage). */
+  setRotationAnchor(
+    stationID: string,
+    rotationAnchorDate: string | null,
+    signal?: AbortSignal,
+  ): Promise<RotationAnchor> {
+    return this.request<RotationAnchor>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/rotation-anchor`,
+      { method: 'PUT', body: { rotation_anchor_date: rotationAnchorDate }, signal },
+    );
+  }
+
+  /** Forward-looking rotation roster (station.read). */
+  getRoster(
+    stationID: string,
+    opts: { from?: string; days?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<WorkforceList<DayRoster>> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.days != null) qs.set('days', String(opts.days));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<WorkforceList<DayRoster>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/roster${suffix}`,
+      { signal },
+    );
+  }
+
+  /** The team on duty for a date + slot (station.read). */
+  getScheduledTeam(
+    stationID: string,
+    opts: { slot: 'morning' | 'evening'; date?: string },
+    signal?: AbortSignal,
+  ): Promise<ScheduledTeam> {
+    const qs = new URLSearchParams({ slot: opts.slot });
+    if (opts.date) qs.set('date', opts.date);
+    return this.request<ScheduledTeam>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/scheduled-team?${qs.toString()}`,
+      { signal },
     );
   }
 
@@ -2122,6 +2265,66 @@ export class Client {
     return this.request<Paginated<AccountingExport>>('/api/v1/finance/exports', { signal });
   }
 
+  // ----------- Standard report exports (CSV) -----------
+
+  /**
+   * Build the same-origin URL for a standard CSV report. The endpoints stream
+   * `text/csv` with a Content-Disposition attachment and are gated by the
+   * matching read permission; each export is recorded in the audit log. Callers
+   * fetch this URL (credentials: 'same-origin' through the BFF) and hand the
+   * resulting blob to a browser download — JSON parsing does not apply.
+   */
+  reportUrl(report: ReportSpec): string {
+    switch (report.kind) {
+      case 'revenue':
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/revenue.csv`;
+      case 'inventory':
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/inventory.csv`;
+      case 'reconciliation': {
+        const qs = report.operatingDayID
+          ? `?operating_day_id=${encodeURIComponent(report.operatingDayID)}`
+          : '';
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/reconciliation.csv${qs}`;
+      }
+      case 'financials': {
+        const qs = report.period ? `?period=${encodeURIComponent(report.period)}` : '';
+        return `${this.baseURL}/api/v1/reports/financials.csv${qs}`;
+      }
+      case 'ar-aging':
+        return `${this.baseURL}/api/v1/reports/ar-aging.csv`;
+    }
+  }
+
+  /**
+   * Fetch a standard report's CSV as a Blob (same-origin, cookie-bearing via
+   * the BFF). Throws SdkError on a non-2xx response so callers share the app's
+   * error handling. The caller is responsible for triggering the download.
+   */
+  async fetchReportBlob(report: ReportSpec, signal?: AbortSignal): Promise<Blob> {
+    const res = await this.fetchImpl(this.reportUrl(report), {
+      method: 'GET',
+      headers: { Accept: 'text/csv' },
+      signal,
+      credentials: 'same-origin',
+    });
+    const requestId = res.headers.get('X-Request-Id');
+    if (res.status === 401) this.onUnauthorized?.();
+    if (!res.ok) {
+      let body: unknown = null;
+      try {
+        body = safeParse(await res.text());
+      } catch {
+        body = null;
+      }
+      const message =
+        body && typeof body === 'object' && 'error' in body
+          ? String((body as { error: unknown }).error)
+          : `HTTP ${res.status}`;
+      throw new SdkError(message, res.status, body, requestId);
+    }
+    return res.blob();
+  }
+
   // ----------- Cash & banking (Phase 7) -----------
 
   listCashReconciliations(
@@ -3043,6 +3246,40 @@ export class Client {
     if (opts.limit) qs.set('limit', String(opts.limit));
     const q = qs.toString();
     return this.request<Paginated<AuditLogEntry>>(`/api/v1/audit-logs${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  // ----------- Notifications -----------
+
+  listNotifications(
+    opts: { unread?: boolean; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Notification>> {
+    const qs = new URLSearchParams();
+    if (opts.unread) qs.set('unread', 'true');
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.offset) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<Notification>>(`/api/v1/notifications${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  notificationUnreadCount(signal?: AbortSignal): Promise<UnreadCount> {
+    return this.request<UnreadCount>('/api/v1/notifications/unread-count', { signal });
+  }
+
+  markNotificationRead(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/notifications/${encodeURIComponent(id)}/read`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  markAllNotificationsRead(signal?: AbortSignal): Promise<{ marked_read: number }> {
+    return this.request<{ marked_read: number }>('/api/v1/notifications/read-all', {
+      method: 'POST',
       signal,
     });
   }

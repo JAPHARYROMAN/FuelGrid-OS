@@ -92,6 +92,10 @@ tags:
     description: Multi-station enterprise overview, groups, scope grants
   - name: Calibrated Volume
     description: Tank calibrated-volume + dip-to-volume lookups
+  - name: Workforce
+    description: Station employees, shift teams, and the daily 3-team rotation
+  - name: Reports
+    description: Standard report exports (CSV) over the existing overview data
 
 security:
   - bearerAuth: []
@@ -329,6 +333,74 @@ paths:
       responses:
         '204': { description: Password changed }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: List the caller's notification feed (own + tenant-wide)
+      parameters:
+        - in: query
+          name: unread
+          required: false
+          schema: { type: string, enum: ['true'] }
+          description: When 'true', return only unread notifications.
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer }
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Unread notification count for the topbar bell badge
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unread_count]
+                properties:
+                  unread_count: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark one notification read (idempotent)
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Marked read }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all of the caller's unread notifications read
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [marked_read]
+                properties:
+                  marked_read: { type: integer }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/v1/companies:
@@ -996,10 +1068,11 @@ paths:
           application/json:
             schema:
               type: object
-              required: [operating_day_id, name]
+              required: [operating_day_id, name, slot]
               properties:
                 operating_day_id: { type: string, format: uuid }
                 name:             { type: string }
+                slot:             { type: string, enum: [morning, evening] }
                 notes:            { type: string }
       responses:
         '201': { description: Opened, content: { application/json: { schema: { $ref: '#/components/schemas/Shift' } } } }
@@ -1476,6 +1549,55 @@ paths:
       summary: General-ledger report
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  # ---------------------------------------------------------------------------
+  # Reports & exports (standard CSV report library)
+  # ---------------------------------------------------------------------------
+  /api/v1/stations/{stationID}/reports/revenue.csv:
+    get:
+      tags: [Reports]
+      summary: Export a station's recent revenue days as CSV
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reports/inventory.csv:
+    get:
+      tags: [Reports]
+      summary: Export a station's current inventory snapshot as CSV
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reports/reconciliation.csv:
+    get:
+      tags: [Reports]
+      summary: Export a station's day reconciliations as CSV
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: operating_day_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/financials.csv:
+    get:
+      tags: [Reports]
+      summary: Export P&L + balance sheet as CSV
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/ar-aging.csv:
+    get:
+      tags: [Reports]
+      summary: Export accounts-receivable aging as CSV
+      responses:
+        '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/audit-logs/export:
@@ -3317,6 +3439,155 @@ paths:
         '202': { description: Rebuild requested, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # ===== Phase 11: Workforce — employees, shift teams, rotation =====
+  /api/v1/stations/{stationID}/employees:
+    parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Workforce]
+      summary: List a station's employees (station.read)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Workforce]
+      summary: Add an employee to the station (station.manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name]
+              properties:
+                full_name:     { type: string }
+                role:          { type: string, enum: [pump_attendant, cashier, supervisor, manager, other] }
+                user_id:       { type: string, format: uuid }
+                employee_code: { type: string }
+                phone:         { type: string }
+                email:         { type: string }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+        '409': { description: An employee is already linked to that user }
+  /api/v1/employees/{employeeID}:
+    patch:
+      tags: [Workforce]
+      summary: Update an employee (station.manage)
+      parameters: [{ in: path, name: employeeID, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:     { type: string }
+                role:          { type: string, enum: [pump_attendant, cashier, supervisor, manager, other] }
+                status:        { type: string, enum: [active, inactive] }
+                user_id:       { type: string, format: uuid }
+                employee_code: { type: string }
+                phone:         { type: string }
+                email:         { type: string }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Employee not found }
+  /api/v1/stations/{stationID}/teams:
+    parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Workforce]
+      summary: List a station's three shift teams (station.read)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Workforce]
+      summary: Ensure the station's three rotation teams exist (station.manage)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                names: { type: array, items: { type: string } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+  /api/v1/teams/{teamID}/members:
+    put:
+      tags: [Workforce]
+      summary: Replace a team's membership (station.manage)
+      parameters: [{ in: path, name: teamID, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employee_ids]
+              properties:
+                employee_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Team not found }
+  /api/v1/stations/{stationID}/rotation-anchor:
+    parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+    get:
+      tags: [Workforce]
+      summary: Get the station's rotation anchor date (station.read)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+    put:
+      tags: [Workforce]
+      summary: Set or clear the station's rotation anchor date (station.manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                rotation_anchor_date: { type: string, format: date, nullable: true }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+  /api/v1/stations/{stationID}/roster:
+    get:
+      tags: [Workforce]
+      summary: Forward-looking rotation roster (station.read)
+      parameters:
+        - { in: path,  name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: from,      schema: { type: string, format: date } }
+        - { in: query, name: days,      schema: { type: integer, minimum: 1, maximum: 60 } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+  /api/v1/stations/{stationID}/scheduled-team:
+    get:
+      tags: [Workforce]
+      summary: The team on duty for a date + slot (station.read)
+      parameters:
+        - { in: path,  name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: date,      schema: { type: string, format: date } }
+        - { in: query, name: slot,      required: true, schema: { type: string, enum: [morning, evening] } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Station not found }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -3879,6 +4150,27 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Incident' } }
         count: { type: integer }
+
+    Notification:
+      type: object
+      properties:
+        id:                  { type: string, format: uuid }
+        type:                { type: string }
+        title:               { type: string }
+        body:                { type: string }
+        severity:            { type: string, enum: [info, success, warning, critical] }
+        related_entity_type: { type: string }
+        related_entity_id:   { type: string }
+        read_at:             { type: string, format: date-time }
+        created_at:          { type: string, format: date-time }
+    NotificationList:
+      type: object
+      properties:
+        items:    { type: array, items: { $ref: '#/components/schemas/Notification' } }
+        count:    { type: integer }
+        limit:    { type: integer }
+        offset:   { type: integer }
+        has_more: { type: boolean }
 
     PumpWithNozzles:
       allOf:

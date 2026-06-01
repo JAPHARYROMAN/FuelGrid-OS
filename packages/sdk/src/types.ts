@@ -367,6 +367,24 @@ export interface PumpWithNozzles extends Pump {
   nozzles: Nozzle[];
 }
 
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical';
+
+export interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  severity: NotificationSeverity;
+  related_entity_type?: string;
+  related_entity_id?: string;
+  read_at?: string;
+  created_at: string;
+}
+
+export interface UnreadCount {
+  unread_count: number;
+}
+
 export interface StationOverview {
   station: Station;
   tanks: Tank[];
@@ -404,6 +422,10 @@ export interface Shift {
   approved_by?: string;
   approved_at?: string;
   notes?: string;
+  /** Rotation window the shift covers, set when the station uses rotation. */
+  slot?: 'morning' | 'evening';
+  /** Team rostered onto the shift, set when the station uses rotation. */
+  team_id?: string;
 }
 
 export interface ShiftAttendant {
@@ -1041,6 +1063,22 @@ export interface CustomerBalance {
   balance: string;
 }
 
+// ---- Standard report exports (CSV) ----
+
+/** Reporting window for the financials CSV export. */
+export type ReportPeriod = 'this-month' | 'last-month' | 'ytd' | 'last-30';
+
+/**
+ * Discriminated spec for a standard CSV report. Passed to client.reportUrl /
+ * client.fetchReportBlob to build the same-origin download URL.
+ */
+export type ReportSpec =
+  | { kind: 'revenue'; stationID: string }
+  | { kind: 'inventory'; stationID: string }
+  | { kind: 'reconciliation'; stationID: string; operatingDayID?: string }
+  | { kind: 'financials'; period?: ReportPeriod }
+  | { kind: 'ar-aging' };
+
 // ---- Phase 7: Finance & Accounting Control ----
 
 export interface Account {
@@ -1350,6 +1388,60 @@ export interface Paginated<T> {
   items: T[];
   count: number;
   limit?: number;
+}
+
+// ----------- Workforce (Phase 11) -----------
+
+export type EmployeeRole = 'pump_attendant' | 'cashier' | 'supervisor' | 'manager' | 'other';
+
+export interface Employee {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  user_id?: string;
+  full_name: string;
+  role: EmployeeRole;
+  employee_code?: string;
+  phone?: string;
+  email?: string;
+  status: 'active' | 'inactive';
+  team_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ShiftTeam {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  name: string;
+  rotation_order: number;
+  member_count: number;
+}
+
+export interface RotationAnchor {
+  station_id: string;
+  rotation_anchor_date: string | null;
+}
+
+export interface ScheduledTeam {
+  date: string;
+  slot: 'morning' | 'evening';
+  team: ShiftTeam | null;
+  members: Employee[];
+}
+
+export interface DayRoster {
+  date: string;
+  morning_team: ShiftTeam | null;
+  evening_team: ShiftTeam | null;
+  resting_team: ShiftTeam | null;
+}
+
+/** The unpaginated `{ items, count }` envelope the workforce list endpoints return. */
+export interface WorkforceList<T> {
+  items: T[];
+  count: number;
 }
 
 export interface ApiError {

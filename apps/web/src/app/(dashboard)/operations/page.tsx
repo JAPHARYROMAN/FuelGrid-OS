@@ -43,6 +43,7 @@ export default function OperationsPage() {
   const [stationID, setStationID] = useState<string>('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [newShiftName, setNewShiftName] = useState('');
+  const [slot, setSlot] = useState<'morning' | 'evening'>('morning');
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -92,9 +93,18 @@ export default function OperationsPage() {
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not open day'),
   });
 
+  // The team scheduled for the selected slot on the active operating day's
+  // business date — shown before opening so the supervisor sees who'll staff it.
+  const businessDate = overview.data?.day?.business_date;
+  const scheduledTeam = useQuery({
+    queryKey: ['scheduled-team', stationID, businessDate, slot],
+    queryFn: ({ signal }) => api.getScheduledTeam(stationID, { slot, date: businessDate }, signal),
+    enabled: !!stationID && !!businessDate,
+  });
+
   const openShift = useMutation({
     mutationFn: (dayID: string) =>
-      api.openShift(stationID, { operating_day_id: dayID, name: newShiftName.trim() }),
+      api.openShift(stationID, { operating_day_id: dayID, name: newShiftName.trim(), slot }),
     onSuccess: () => {
       setActionError(null);
       setNewShiftName('');
@@ -218,22 +228,54 @@ export default function OperationsPage() {
                 {new Date(overview.data.day.opened_at).toLocaleString()}
               </span>
               {overview.data.day.status === 'open' ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    className="h-9 flex-1"
-                    placeholder="New shift name (e.g. Morning)"
-                    value={newShiftName}
-                    onChange={(e) => setNewShiftName(e.target.value)}
-                  />
-                  <PermissionGate permission="shift.open" stationId={stationID}>
-                    <Button
-                      size="sm"
-                      disabled={!newShiftName.trim() || openShift.isPending}
-                      onClick={() => openShift.mutate(overview.data.day!.id)}
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      className="h-9 flex-1 min-w-40"
+                      placeholder="New shift name (e.g. Morning)"
+                      value={newShiftName}
+                      onChange={(e) => setNewShiftName(e.target.value)}
+                    />
+                    <select
+                      className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                      value={slot}
+                      onChange={(e) => setSlot(e.target.value as 'morning' | 'evening')}
                     >
-                      {openShift.isPending ? 'Opening…' : 'Open shift'}
-                    </Button>
-                  </PermissionGate>
+                      <option value="morning">Morning</option>
+                      <option value="evening">Evening</option>
+                    </select>
+                    <PermissionGate permission="shift.open" stationId={stationID}>
+                      <Button
+                        size="sm"
+                        disabled={
+                          !newShiftName.trim() || openShift.isPending || !scheduledTeam.data?.team
+                        }
+                        onClick={() => openShift.mutate(overview.data.day!.id)}
+                      >
+                        {openShift.isPending ? 'Opening…' : 'Open shift'}
+                      </Button>
+                    </PermissionGate>
+                  </div>
+                  <div className="text-xs">
+                    {scheduledTeam.isPending ? (
+                      <span className="text-muted-foreground">Resolving scheduled team…</span>
+                    ) : scheduledTeam.data?.team ? (
+                      <span className="text-muted-foreground">
+                        Scheduled team for {slot}:{' '}
+                        <Badge tone="accent">{scheduledTeam.data.team.name}</Badge>{' '}
+                        {scheduledTeam.data.members.length} member
+                        {scheduledTeam.data.members.length === 1 ? '' : 's'}
+                        {scheduledTeam.data.members.length > 0
+                          ? ` · ${scheduledTeam.data.members.map((m) => m.full_name).join(', ')}`
+                          : ''}
+                      </span>
+                    ) : (
+                      <span className="text-warning">
+                        No team scheduled for {slot}. Configure teams + the rotation anchor under
+                        Teams &amp; Rotation before opening a shift.
+                      </span>
+                    )}
+                  </div>
                 </div>
               ) : null}
             </CardContent>

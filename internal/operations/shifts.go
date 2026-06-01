@@ -25,8 +25,13 @@ type Shift struct {
 	ApprovedBy     *uuid.UUID
 	ApprovedAt     *time.Time
 	Notes          *string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// Slot is the rotation window this shift covers ("morning"|"evening"), and
+	// TeamID is the team rostered onto it. Both are nil for shifts opened
+	// before rotation was configured (or on stations not using rotation).
+	Slot      *string
+	TeamID    *uuid.UUID
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type Attendant struct {
@@ -52,14 +57,14 @@ var (
 const shiftColumns = `
     id, tenant_id, station_id, operating_day_id, name, status,
     opened_by, opened_at, closed_by, closed_at, approved_by, approved_at,
-    notes, created_at, updated_at
+    notes, slot, team_id, created_at, updated_at
 `
 
 func scanShift(row pgx.Row, s *Shift) error {
 	return row.Scan(
 		&s.ID, &s.TenantID, &s.StationID, &s.OperatingDayID, &s.Name, &s.Status,
 		&s.OpenedBy, &s.OpenedAt, &s.ClosedBy, &s.ClosedAt, &s.ApprovedBy, &s.ApprovedAt,
-		&s.Notes, &s.CreatedAt, &s.UpdatedAt,
+		&s.Notes, &s.Slot, &s.TeamID, &s.CreatedAt, &s.UpdatedAt,
 	)
 }
 
@@ -186,13 +191,27 @@ func (r *Repo) LockShiftStatusForShare(ctx context.Context, tx pgx.Tx, tenantID,
 	return status, err
 }
 
-func (r *Repo) OpenShift(ctx context.Context, tx pgx.Tx, tenantID, stationID, dayID, openedBy uuid.UUID, name string, notes *string) (*Shift, error) {
+// OpenShiftInput carries the fields needed to open a shift. Slot and TeamID
+// are set by the rotation integration (the resolved team on duty for the
+// operating day's date + slot); both are nil for a shift opened without
+// rotation (legacy path).
+type OpenShiftInput struct {
+	StationID      uuid.UUID
+	OperatingDayID uuid.UUID
+	OpenedBy       uuid.UUID
+	Name           string
+	Notes          *string
+	Slot           *string
+	TeamID         *uuid.UUID
+}
+
+func (r *Repo) OpenShift(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in OpenShiftInput) (*Shift, error) {
 	var s Shift
 	if err := scanShift(tx.QueryRow(ctx, `
-		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by, notes)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by, notes, slot, team_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING `+shiftColumns,
-		tenantID, stationID, dayID, name, openedBy, notes,
+		tenantID, in.StationID, in.OperatingDayID, in.Name, in.OpenedBy, in.Notes, in.Slot, in.TeamID,
 	), &s); err != nil {
 		return nil, err
 	}

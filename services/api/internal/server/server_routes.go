@@ -59,7 +59,9 @@ func (s *Server) registerRoutes(r chi.Router) {
 						s.registerRiskRoutes(r)
 						s.registerRevenueCloseRoutes(r)
 						s.registerFinanceRoutes(r)
+						s.registerReportsRoutes(r)
 						s.registerOperationsRoutes(r)
+						s.registerWorkforceRoutes(r)
 						s.registerUserAdminRoutes(r)
 					})
 				}
@@ -110,6 +112,11 @@ func (s *Server) registerSelfServiceRoutes(r chi.Router) {
 			r.Get("/me/sessions", s.handleListMySessions)
 			r.Delete("/me/sessions/{sessionID}", s.handleRevokeMySession)
 			r.Post("/me/password", s.handleChangeMyPassword)
+		}
+		if s.notifications != nil {
+			// In-app notification feed — scoped to the caller's user/tenant,
+			// so any authenticated user may read and mark their own feed.
+			s.registerNotificationRoutes(r)
 		}
 	})
 }

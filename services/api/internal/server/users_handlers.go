@@ -105,6 +105,8 @@ func (s *Server) handleInviteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Welcome the invited user by email (best-effort; never blocks the 201).
+	s.sendInviteEmail(ctx, req.Email, req.FullName)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": userID, "email": req.Email, "full_name": req.FullName})
 }
 

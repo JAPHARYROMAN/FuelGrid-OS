@@ -16,6 +16,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/policy"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
+	"github.com/japharyroman/fuelgrid-os/internal/workforce"
 )
 
 type shiftDTO struct {
@@ -32,6 +33,8 @@ type shiftDTO struct {
 	ApprovedBy     *uuid.UUID `json:"approved_by,omitempty"`
 	ApprovedAt     *string    `json:"approved_at,omitempty"`
 	Notes          *string    `json:"notes,omitempty"`
+	Slot           *string    `json:"slot,omitempty"`
+	TeamID         *uuid.UUID `json:"team_id,omitempty"`
 }
 
 type attendantDTO struct {
@@ -62,7 +65,7 @@ func toShiftDTO(s *operations.Shift) shiftDTO {
 		OpenedBy: s.OpenedBy, OpenedAt: s.OpenedAt.Format(time.RFC3339),
 		ClosedBy: s.ClosedBy, ClosedAt: fmtTime(s.ClosedAt),
 		ApprovedBy: s.ApprovedBy, ApprovedAt: fmtTime(s.ApprovedAt),
-		Notes: s.Notes,
+		Notes: s.Notes, Slot: s.Slot, TeamID: s.TeamID,
 	}
 }
 
@@ -124,6 +127,7 @@ func (s *Server) handleListShifts(w http.ResponseWriter, r *http.Request) {
 type openShiftRequest struct {
 	OperatingDayID uuid.UUID `json:"operating_day_id"`
 	Name           string    `json:"name"`
+	Slot           string    `json:"slot"`
 	Notes          *string   `json:"notes,omitempty"`
 }
 
@@ -147,6 +151,11 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "operating_day_id and name are required")
 		return
 	}
+	slot := workforce.Slot(req.Slot)
+	if !slot.Valid() {
+		writeError(w, http.StatusBadRequest, "slot is required and must be morning or evening")
+		return
+	}
 
 	ctx := r.Context()
 	day, err := s.operations.GetDay(ctx, actor.TenantID, req.OperatingDayID)
@@ -164,6 +173,38 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 	}
 	if day.Status != "open" {
 		writeError(w, http.StatusConflict, "operating day is not open")
+		return
+	}
+
+	// Resolve the team rostered onto this slot for the operating day's business
+	// date. A shift never opens without its expected employees: reject when the
+	// station has no rotation anchor/teams or the scheduled team is empty.
+	sched, err := s.workforce.ScheduledTeamFor(ctx, actor.TenantID, stationID, day.BusinessDate, slot)
+	if errors.Is(err, workforce.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "station not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("open shift: scheduled team", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if sched.Team == nil {
+		writeError(w, http.StatusBadRequest,
+			"station has no rotation configured (set the rotation anchor and the three teams first)")
+		return
+	}
+	// Attendants are the team members that have a login account (user_id);
+	// back-office staff without one are simply not auto-assigned.
+	attendantUserIDs := make([]uuid.UUID, 0, len(sched.Members))
+	for i := range sched.Members {
+		if sched.Members[i].UserID != nil {
+			attendantUserIDs = append(attendantUserIDs, *sched.Members[i].UserID)
+		}
+	}
+	if len(attendantUserIDs) == 0 {
+		writeError(w, http.StatusBadRequest,
+			"the scheduled team has no members with a login account — no shift without its expected employees")
 		return
 	}
 
@@ -193,11 +234,25 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shift, err := s.operations.OpenShift(ctx, tx, actor.TenantID, stationID, req.OperatingDayID, actor.UserID, req.Name, req.Notes)
+	slotStr := string(slot)
+	teamID := sched.Team.ID
+	shift, err := s.operations.OpenShift(ctx, tx, actor.TenantID, operations.OpenShiftInput{
+		StationID: stationID, OperatingDayID: req.OperatingDayID, OpenedBy: actor.UserID,
+		Name: req.Name, Notes: req.Notes, Slot: &slotStr, TeamID: &teamID,
+	})
 	if err != nil {
 		s.logger.Error("open shift", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	// Auto-populate the shift's attendants from the scheduled team's members
+	// that have a login account.
+	for _, uid := range attendantUserIDs {
+		if err := s.operations.AssignAttendant(ctx, tx, actor.TenantID, shift.ID, uid, actor.UserID); err != nil {
+			s.logger.Error("open shift: auto-assign attendant", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 	}
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,

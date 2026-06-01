@@ -13,6 +13,8 @@ const nav = [
   { href: '/settings/suppliers', label: 'Suppliers' },
   { href: '/settings/tanks', label: 'Tanks' },
   { href: '/settings/pumps', label: 'Pumps' },
+  { href: '/settings/employees', label: 'Employees' },
+  { href: '/settings/teams', label: 'Teams & Rotation' },
   { href: '/settings/users', label: 'Users' },
   { href: '/settings/roles', label: 'Roles' },
 ];
