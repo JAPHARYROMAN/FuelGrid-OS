@@ -210,12 +210,22 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"user_id":       actor.UserID,
 		"tenant_id":     actor.TenantID,
 		"session_id":    actor.SessionID,
 		"mfa_satisfied": actor.MfaSatisfied,
-	})
+	}
+	// Best-effort MFA snapshot so the profile + login-gate UI can tell whether
+	// a second factor is active and whether the actor's role makes it mandatory
+	// (admin/finance). A lookup failure must not break /me — the core identity
+	// fields above are always returned.
+	if st, err := s.identity.MfaState(r.Context(), actor.TenantID, actor.UserID); err == nil {
+		resp["mfa_enabled"] = st.Enabled
+		resp["mfa_required"] = st.RequiredByRole
+		resp["mfa_backup_codes_remaining"] = st.BackupCodesRemaining
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // mapAuthError translates identity sentinel errors into uniform HTTP
@@ -239,6 +249,8 @@ func mapAuthError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "reset token invalid or expired")
 	case errors.Is(err, identity.ErrMfaAlreadyEnabled):
 		writeError(w, http.StatusConflict, "MFA is already enabled")
+	case errors.Is(err, identity.ErrMfaNotEnabled):
+		writeError(w, http.StatusConflict, "MFA is not enabled")
 	case errors.Is(err, identity.ErrSessionNotFound),
 		errors.Is(err, identity.ErrSessionExpired):
 		writeError(w, http.StatusUnauthorized, "session invalid")

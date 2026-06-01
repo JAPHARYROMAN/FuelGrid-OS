@@ -17,6 +17,7 @@ var (
 	ErrMfaRequired        = errors.New("identity: MFA code required")
 	ErrMfaInvalid         = errors.New("identity: MFA code invalid")
 	ErrMfaAlreadyEnabled  = errors.New("identity: MFA is already enabled")
+	ErrMfaNotEnabled      = errors.New("identity: MFA is not enabled")
 	ErrPasswordWeak       = errors.New("identity: password does not meet requirements")
 	ErrResetTokenInvalid  = errors.New("identity: password reset token invalid or expired")
 	ErrRateLimited        = errors.New("identity: rate limit exceeded")

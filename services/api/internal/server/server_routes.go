@@ -32,6 +32,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 			// Authenticated routes (no specific permission gate beyond
 			// having a session).
 			s.registerSelfServiceRoutes(r)
+			s.registerMfaRoutes(r)
 
 			if s.policy != nil {
 				// Station read (existing Stage-5 endpoint, now backed by

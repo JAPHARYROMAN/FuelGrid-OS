@@ -335,6 +335,83 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/me/mfa/enroll:
+    post:
+      tags: [Me]
+      summary: Begin TOTP MFA enrollment (returns secret + otpauth URI)
+      responses:
+        '200':
+          description: Enrollment payload — render the secret/URI as a manual key or QR code
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                  otpauth_url: { type: string, format: uri }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: MFA already enabled }
+
+  /api/v1/me/mfa/confirm:
+    post:
+      tags: [Me]
+      summary: Confirm enrollment with a TOTP code; enables MFA and returns one-time backup codes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, minLength: 6, maxLength: 6 }
+      responses:
+        '200':
+          description: MFA enabled; backup recovery codes shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backup_codes: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/me/mfa/disable:
+    post:
+      tags: [Me]
+      summary: Disable MFA (requires a current TOTP or backup code)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '204': { description: MFA disabled }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: MFA is not enabled }
+
+  /api/v1/me/mfa/backup-codes:
+    post:
+      tags: [Me]
+      summary: Regenerate one-time backup recovery codes (returns the fresh set once)
+      responses:
+        '200':
+          description: Fresh backup recovery codes, shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  backup_codes: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: MFA is not enabled }
+
   /api/v1/notifications:
     get:
       tags: [Notifications]
@@ -3701,6 +3778,9 @@ components:
         tenant_id:     { type: string, format: uuid }
         session_id:    { type: string, format: uuid }
         mfa_satisfied: { type: boolean }
+        mfa_enabled:   { type: boolean }
+        mfa_required:  { type: boolean }
+        mfa_backup_codes_remaining: { type: integer }
     MePermissions:
       type: object
       properties:
