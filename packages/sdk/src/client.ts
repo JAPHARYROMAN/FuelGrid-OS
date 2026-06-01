@@ -40,6 +40,7 @@ import type {
   MeterReading,
   MeterReadingList,
   MyShift,
+  Notification,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
@@ -96,6 +97,7 @@ import type {
   Supplier,
   SupplierInvoice,
   Tank,
+  UnreadCount,
   UserSummary,
   Delivery,
 } from './types';
@@ -3043,6 +3045,40 @@ export class Client {
     if (opts.limit) qs.set('limit', String(opts.limit));
     const q = qs.toString();
     return this.request<Paginated<AuditLogEntry>>(`/api/v1/audit-logs${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  // ----------- Notifications -----------
+
+  listNotifications(
+    opts: { unread?: boolean; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Notification>> {
+    const qs = new URLSearchParams();
+    if (opts.unread) qs.set('unread', 'true');
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.offset) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<Notification>>(`/api/v1/notifications${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  notificationUnreadCount(signal?: AbortSignal): Promise<UnreadCount> {
+    return this.request<UnreadCount>('/api/v1/notifications/unread-count', { signal });
+  }
+
+  markNotificationRead(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/notifications/${encodeURIComponent(id)}/read`, {
+      method: 'POST',
+      signal,
+    });
+  }
+
+  markAllNotificationsRead(signal?: AbortSignal): Promise<{ marked_read: number }> {
+    return this.request<{ marked_read: number }>('/api/v1/notifications/read-all', {
+      method: 'POST',
       signal,
     });
   }

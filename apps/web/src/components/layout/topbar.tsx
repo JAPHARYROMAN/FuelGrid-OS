@@ -11,6 +11,7 @@ import { Button } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
 import { clearSentryUser } from '@/lib/sentry';
+import { NotificationBell } from './notification-bell';
 import { useAuthStore } from '@/stores/auth-store';
 import { useTenantStore } from '@/stores/tenant-store';
 
@@ -84,6 +85,7 @@ export function Topbar({ onOpenCommand }: TopbarProps) {
       </div>
 
       <div className="flex items-center gap-0.5">
+        <NotificationBell />
         <Button
           variant="ghost"
           size="icon"

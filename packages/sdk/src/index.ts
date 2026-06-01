@@ -75,6 +75,8 @@ export type {
   MyShift,
   MyShiftNozzle,
   MyShiftTank,
+  Notification,
+  NotificationSeverity,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
@@ -128,6 +130,7 @@ export type {
   SupplierInvoiceLine,
   Tank,
   TankValuation,
+  UnreadCount,
   UserSummary,
   Delivery,
 } from './types';

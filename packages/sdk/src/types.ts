@@ -367,6 +367,24 @@ export interface PumpWithNozzles extends Pump {
   nozzles: Nozzle[];
 }
 
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'critical';
+
+export interface Notification {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  severity: NotificationSeverity;
+  related_entity_type?: string;
+  related_entity_id?: string;
+  read_at?: string;
+  created_at: string;
+}
+
+export interface UnreadCount {
+  unread_count: number;
+}
+
 export interface StationOverview {
   station: Station;
   tanks: Tank[];
