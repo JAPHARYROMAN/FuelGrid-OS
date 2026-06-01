@@ -8,6 +8,8 @@ import { SdkError, type Product } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -18,7 +20,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -140,17 +143,27 @@ export default function ProductsPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{list.data?.count ?? 0} products</p>
-        <Button onClick={openCreate}>
-          <Plus className="size-4" />
-          New product
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Products"
+        description={`The fuels and products this tenant sells — ${list.data?.count ?? 0} total.`}
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="size-4" />
+            New product
+          </Button>
+        }
+      />
 
       {list.isPending ? (
-        <LoadingState />
+        <Card>
+          <CardContent className="flex flex-col gap-2 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load products"
@@ -164,49 +177,53 @@ export default function ProductsPage() {
           action={<Button onClick={openCreate}>Create one</Button>}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-10" />
-              <TableHead>Name</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Category</TableHead>
-              <TableHead>Unit</TableHead>
-              <TableHead className="text-right">Default price</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell>
-                  <span
-                    className="inline-block size-4 rounded-full border border-border"
-                    style={{ backgroundColor: p.color }}
-                    title={p.color}
-                    aria-label={`${p.name} colour ${p.color}`}
-                  />
-                </TableCell>
-                <TableCell className="font-medium">{p.name}</TableCell>
-                <TableCell className="font-mono text-xs">{p.code}</TableCell>
-                <TableCell className="text-muted-foreground capitalize">{p.category}</TableCell>
-                <TableCell className="text-muted-foreground">{p.unit}</TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatMoney(p.default_price)}
-                </TableCell>
-                <TableCell>
-                  <Badge tone={p.status === 'active' ? 'success' : 'warning'}>{p.status}</Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
-                    Edit
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10" />
+                  <TableHead>Name</TableHead>
+                  <TableHead>Code</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Unit</TableHead>
+                  <TableHead className="text-right">Default price</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell>
+                      <span
+                        className="inline-block size-4 rounded-full border border-border"
+                        style={{ backgroundColor: p.color }}
+                        title={p.color}
+                        aria-label={`${p.name} colour ${p.color}`}
+                      />
+                    </TableCell>
+                    <TableCell className="font-medium">{p.name}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">{p.code}</TableCell>
+                    <TableCell className="text-muted-foreground capitalize">{p.category}</TableCell>
+                    <TableCell className="text-muted-foreground">{p.unit}</TableCell>
+                    <TableCell className="text-right font-mono tabular-nums">
+                      {formatMoney(p.default_price)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone={p.status === 'active' ? 'success' : 'warning'}>{p.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
+                        Edit
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

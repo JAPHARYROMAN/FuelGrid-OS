@@ -8,6 +8,8 @@ import { SdkError, type UserSummary } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -18,7 +20,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -95,19 +98,29 @@ export default function UsersPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{list.data?.count ?? 0} users</p>
-        <PermissionGate permission="users.invite">
-          <Button onClick={() => setInviteOpen(true)}>
-            <Plus className="size-4" />
-            Invite user
-          </Button>
-        </PermissionGate>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Users"
+        description={`${list.data?.count ?? 0} users — manage roles, station scope, and account status.`}
+        actions={
+          <PermissionGate permission="users.invite">
+            <Button onClick={() => setInviteOpen(true)}>
+              <Plus className="size-4" />
+              Invite user
+            </Button>
+          </PermissionGate>
+        }
+      />
 
       {list.isPending ? (
-        <LoadingState />
+        <Card>
+          <CardContent className="flex flex-col gap-2 p-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load users"
@@ -121,102 +134,110 @@ export default function UsersPage() {
           action={<Button onClick={() => setInviteOpen(true)}>Invite someone</Button>}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>MFA</TableHead>
-              <TableHead>Roles</TableHead>
-              <TableHead>Scope</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((u) => (
-              <TableRow key={u.id}>
-                <TableCell className="font-medium">{u.full_name}</TableCell>
-                <TableCell className="text-muted-foreground">{u.email}</TableCell>
-                <TableCell>
-                  <Badge
-                    tone={
-                      u.status === 'active'
-                        ? 'success'
-                        : u.status === 'invited'
-                          ? 'info'
-                          : 'warning'
-                    }
-                  >
-                    {u.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <Badge tone={u.mfa_enabled ? 'success' : 'neutral'}>
-                    {u.mfa_enabled ? 'on' : 'off'}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <div className="flex flex-wrap gap-1">
-                    {u.roles.length === 0 ? (
-                      <span className="text-xs text-muted-foreground">none</span>
-                    ) : (
-                      u.roles.map((r) => (
-                        <Badge key={r} tone="accent">
-                          {r}
-                        </Badge>
-                      ))
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  {u.tenant_wide ? (
-                    <Badge tone="info">tenant-wide</Badge>
-                  ) : (
-                    <span className="font-mono text-xs">{u.station_ids.length} station(s)</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
-                    <PermissionGate permission="users.assign_roles">
-                      <Button variant="ghost" size="sm" onClick={() => openScope(u)}>
-                        Manage
-                      </Button>
-                    </PermissionGate>
-                    {u.status === 'active' ? (
-                      <PermissionGate permission="users.manage">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={
-                            updateStatus.isPending && updateStatus.variables?.userID === u.id
-                          }
-                          onClick={() => updateStatus.mutate({ userID: u.id, status: 'suspended' })}
-                          title="Suspend user"
-                        >
-                          <ShieldOff className="size-3.5" />
-                        </Button>
-                      </PermissionGate>
-                    ) : u.status === 'suspended' ? (
-                      <PermissionGate permission="users.manage">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={
-                            updateStatus.isPending && updateStatus.variables?.userID === u.id
-                          }
-                          onClick={() => updateStatus.mutate({ userID: u.id, status: 'active' })}
-                        >
-                          Activate
-                        </Button>
-                      </PermissionGate>
-                    ) : null}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>MFA</TableHead>
+                  <TableHead>Roles</TableHead>
+                  <TableHead>Scope</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((u) => (
+                  <TableRow key={u.id}>
+                    <TableCell className="font-medium">{u.full_name}</TableCell>
+                    <TableCell className="text-muted-foreground">{u.email}</TableCell>
+                    <TableCell>
+                      <Badge
+                        tone={
+                          u.status === 'active'
+                            ? 'success'
+                            : u.status === 'invited'
+                              ? 'info'
+                              : 'warning'
+                        }
+                      >
+                        {u.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone={u.mfa_enabled ? 'success' : 'neutral'}>
+                        {u.mfa_enabled ? 'on' : 'off'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        {u.roles.length === 0 ? (
+                          <span className="text-xs text-muted-foreground">none</span>
+                        ) : (
+                          u.roles.map((r) => (
+                            <Badge key={r} tone="accent">
+                              {r}
+                            </Badge>
+                          ))
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {u.tenant_wide ? (
+                        <Badge tone="info">tenant-wide</Badge>
+                      ) : (
+                        <span className="font-mono text-xs">{u.station_ids.length} station(s)</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <PermissionGate permission="users.assign_roles">
+                          <Button variant="ghost" size="sm" onClick={() => openScope(u)}>
+                            Manage
+                          </Button>
+                        </PermissionGate>
+                        {u.status === 'active' ? (
+                          <PermissionGate permission="users.manage">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={
+                                updateStatus.isPending && updateStatus.variables?.userID === u.id
+                              }
+                              onClick={() =>
+                                updateStatus.mutate({ userID: u.id, status: 'suspended' })
+                              }
+                              title="Suspend user"
+                            >
+                              <ShieldOff className="size-3.5" />
+                            </Button>
+                          </PermissionGate>
+                        ) : u.status === 'suspended' ? (
+                          <PermissionGate permission="users.manage">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={
+                                updateStatus.isPending && updateStatus.variables?.userID === u.id
+                              }
+                              onClick={() =>
+                                updateStatus.mutate({ userID: u.id, status: 'active' })
+                              }
+                            >
+                              Activate
+                            </Button>
+                          </PermissionGate>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>

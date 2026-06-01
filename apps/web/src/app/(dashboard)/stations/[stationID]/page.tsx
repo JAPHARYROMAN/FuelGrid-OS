@@ -16,8 +16,9 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
   PumpCard,
+  Skeleton,
   TankVisual,
   Table,
   TableBody,
@@ -69,7 +70,19 @@ export default function StationDashboardPage() {
     return productLookup.get(productID)?.color ?? '#64748b';
   }
 
-  if (overview.isPending) return <LoadingState />;
+  if (overview.isPending) {
+    return (
+      <div className="flex flex-col gap-7">
+        <Skeleton className="h-16 rounded-xl" />
+        <Skeleton className="h-32 rounded-xl" />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-44 rounded-xl" />
+          ))}
+        </div>
+      </div>
+    );
+  }
   if (overview.isError) {
     const err = overview.error;
     const forbidden = err instanceof SdkError && err.status === 403;
@@ -95,26 +108,26 @@ export default function StationDashboardPage() {
     for (const n of p.nozzles) nozzleLabel.set(n.id, `P${p.number}·N${n.number}`);
   }
 
+  const location = [station.city, station.country].filter(Boolean).join(', ');
+
   return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <div className="flex items-center gap-2">
-          <Link href="/stations" className="text-sm text-muted-foreground hover:text-foreground">
-            Stations
-          </Link>
-          <ChevronRight className="size-3 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">{station.code}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{station.name}</h1>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow={
+          <span className="flex items-center gap-2">
+            <Link href="/stations" className="hover:text-foreground">
+              Stations
+            </Link>
+            <ChevronRight className="size-3" />
+            <span className="font-mono">{station.code}</span>
+          </span>
+        }
+        title={station.name}
+        description={location || undefined}
+        actions={
           <Badge tone={station.status === 'active' ? 'success' : 'warning'}>{station.status}</Badge>
-          {[station.city, station.country].filter(Boolean).length ? (
-            <span className="text-sm text-muted-foreground">
-              {[station.city, station.country].filter(Boolean).join(', ')}
-            </span>
-          ) : null}
-        </div>
-      </header>
+        }
+      />
 
       {/* Shifts strip */}
       <section className="flex flex-col gap-3">

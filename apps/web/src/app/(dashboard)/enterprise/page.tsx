@@ -1,6 +1,14 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  CircleDollarSign,
+  ClipboardCheck,
+  TrendingUp,
+} from 'lucide-react';
 
 import { SdkError, type StationRank } from '@fuelgrid/sdk';
 import {
@@ -10,18 +18,22 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
+  EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
+  Stat,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  formatMoney,
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
-
-function money(n?: string) {
-  if (n == null) return '—';
-  const v = Number(n);
-  return Number.isFinite(v) ? v.toLocaleString(undefined, { minimumFractionDigits: 2 }) : n;
-}
 
 export default function EnterprisePage() {
   const qc = useQueryClient();
@@ -42,28 +54,30 @@ export default function EnterprisePage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Enterprise</h1>
-          <p className="text-sm text-muted-foreground">
-            Network revenue, margin, exposure, and station ranking.
-          </p>
-        </div>
-        <PermissionGate permission="enterprise_projection.admin">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={rebuild.isPending}
-            onClick={() => rebuild.mutate()}
-          >
-            {rebuild.isPending ? 'Rebuilding…' : 'Rebuild projections'}
-          </Button>
-        </PermissionGate>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Enterprise"
+        title="Enterprise"
+        description="Network revenue, margin, exposure, and station ranking."
+        actions={
+          <PermissionGate permission="enterprise_projection.admin">
+            <Button
+              variant="secondary"
+              disabled={rebuild.isPending}
+              onClick={() => rebuild.mutate()}
+            >
+              {rebuild.isPending ? 'Rebuilding…' : 'Rebuild projections'}
+            </Button>
+          </PermissionGate>
+        }
+      />
 
       {overview.isPending ? (
-        <LoadingState />
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[120px] rounded-xl" />
+          ))}
+        </section>
       ) : overview.isError ? (
         <ErrorState
           title={
@@ -79,56 +93,94 @@ export default function EnterprisePage() {
           }
         />
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Network overview</CardTitle>
-          </CardHeader>
-          <CardContent className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-            <Metric label="Gross revenue" value={money(overview.data.gross_revenue)} />
-            <Metric label="Margin" value={money(overview.data.margin_total)} />
-            <Metric label="AP outstanding" value={money(overview.data.ap_outstanding)} />
-            <Metric label="AR outstanding" value={money(overview.data.ar_outstanding)} />
-            <Metric label="Open incidents" value={String(overview.data.open_incidents)} />
-            <Metric label="Approvals waiting" value={String(overview.data.approvals_waiting)} />
-          </CardContent>
-        </Card>
+        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <Stat
+            label="Gross revenue"
+            value={formatMoney(overview.data.gross_revenue)}
+            hint="Network"
+            icon={<TrendingUp />}
+          />
+          <Stat
+            label="Margin"
+            value={formatMoney(overview.data.margin_total)}
+            hint="Network"
+            icon={<CircleDollarSign />}
+          />
+          <Stat
+            label="AP outstanding"
+            value={formatMoney(overview.data.ap_outstanding)}
+            hint="Payables"
+            icon={<ArrowUpRight />}
+          />
+          <Stat
+            label="AR outstanding"
+            value={formatMoney(overview.data.ar_outstanding)}
+            hint="Receivables"
+            icon={<ArrowDownLeft />}
+          />
+          <Stat
+            label="Open incidents"
+            value={overview.data.open_incidents}
+            hint="Across the network"
+            icon={<AlertTriangle />}
+          />
+          <Stat
+            label="Approvals waiting"
+            value={overview.data.approvals_waiting}
+            hint="In the queue"
+            icon={<ClipboardCheck />}
+          />
+        </section>
       )}
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Station ranking</CardTitle>
+          <CardTitle>Station ranking</CardTitle>
+          <p className="text-sm text-muted-foreground">Top sites by gross revenue and margin.</p>
         </CardHeader>
-        <CardContent className="text-sm">
+        <CardContent>
           {ranking.isPending ? (
-            <LoadingState />
-          ) : (ranking.data?.items?.length ?? 0) === 0 ? (
-            <p className="text-muted-foreground">No ranked stations yet.</p>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {ranking.data!.items.map((s: StationRank, i: number) => (
-                <div key={s.station_id} className="flex items-center justify-between gap-2">
-                  <span>
-                    <Badge tone="neutral">#{i + 1}</Badge> {s.name}
-                  </span>
-                  <span className="flex items-center gap-3 tabular-nums">
-                    <span>gross {money(s.gross_revenue)}</span>
-                    <span className="text-muted-foreground">margin {money(s.margin_total)}</span>
-                  </span>
-                </div>
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-lg" />
               ))}
             </div>
+          ) : (ranking.data?.items?.length ?? 0) === 0 ? (
+            <EmptyState
+              title="No ranked stations yet"
+              description="Station rankings appear once projections are built."
+              icon={<TrendingUp className="size-8" />}
+            />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Rank</TableHead>
+                  <TableHead>Station</TableHead>
+                  <TableHead className="text-right">Gross</TableHead>
+                  <TableHead className="text-right">Margin</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {ranking.data!.items.map((s: StationRank, i: number) => (
+                  <TableRow key={s.station_id}>
+                    <TableCell>
+                      <Badge tone="neutral">#{i + 1}</Badge>
+                    </TableCell>
+                    <TableCell className="font-medium text-foreground">{s.name}</TableCell>
+                    <TableCell className="text-right font-mono font-medium tabular-nums">
+                      {formatMoney(s.gross_revenue)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono tabular-nums text-muted-foreground">
+                      {formatMoney(s.margin_total)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5 rounded-md bg-muted/40 px-3 py-2">
-      <span className="text-xs uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="font-semibold tabular-nums">{value}</span>
     </div>
   );
 }

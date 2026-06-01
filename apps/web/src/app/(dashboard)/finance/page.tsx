@@ -1,26 +1,32 @@
 'use client';
 
+import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
+import { ArrowRight, FileText, Landmark, Scale, TrendingUp, Users } from 'lucide-react';
 
 import { SdkError, type JournalEntry } from '@fuelgrid/sdk';
 import {
   Badge,
+  Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
+  Stat,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  formatMoney,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
-
-function money(n?: string) {
-  if (n == null) return '—';
-  const v = Number(n);
-  return Number.isFinite(v) ? v.toLocaleString(undefined, { minimumFractionDigits: 2 }) : n;
-}
 
 export default function FinancePage() {
   const overview = useQuery({
@@ -29,24 +35,30 @@ export default function FinancePage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Finance</h1>
-          <p className="text-sm text-muted-foreground">
-            Balance sheet, profit &amp; loss, payables, and recent journal activity.
-          </p>
-        </div>
-        <a
-          href="/finance/close"
-          className="rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted"
-        >
-          Period close →
-        </a>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Finance"
+        title="Finance"
+        description="Balance sheet, profit & loss, payables, and recent journal activity."
+        actions={
+          <Button asChild variant="secondary">
+            <Link href="/finance/close">
+              Period close
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+        }
+      />
 
       {overview.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-7">
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-[120px] rounded-xl" />
+            ))}
+          </section>
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
       ) : overview.isError ? (
         (() => {
           const err = overview.error;
@@ -66,88 +78,116 @@ export default function FinancePage() {
       ) : (
         <>
           {/* Balance sheet */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Balance sheet</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-3 gap-3 text-sm">
-              <Metric label="Assets" value={money(overview.data.balance_sheet.assets)} />
-              <Metric label="Liabilities" value={money(overview.data.balance_sheet.liabilities)} />
-              <Metric label="Equity" value={money(overview.data.balance_sheet.equity)} />
-            </CardContent>
-          </Card>
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Stat
+              label="Assets"
+              value={formatMoney(overview.data.balance_sheet.assets)}
+              hint="Balance sheet"
+              icon={<Scale />}
+            />
+            <Stat
+              label="Liabilities"
+              value={formatMoney(overview.data.balance_sheet.liabilities)}
+              hint="Balance sheet"
+              icon={<Landmark />}
+            />
+            <Stat
+              label="Equity"
+              value={formatMoney(overview.data.balance_sheet.equity)}
+              hint="Balance sheet"
+              icon={<Scale />}
+            />
+          </section>
 
           {/* Profit & loss */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Profit &amp; loss (last 30 days)</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-3 gap-3 text-sm">
-              <Metric label="Revenue" value={money(overview.data.income_statement.revenue)} />
-              <Metric label="Expenses" value={money(overview.data.income_statement.expenses)} />
-              <Metric label="Net profit" value={money(overview.data.income_statement.net_profit)} />
-            </CardContent>
-          </Card>
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Stat
+              label="Revenue"
+              value={formatMoney(overview.data.income_statement.revenue)}
+              hint="Last 30 days"
+              icon={<TrendingUp />}
+            />
+            <Stat
+              label="Expenses"
+              value={formatMoney(overview.data.income_statement.expenses)}
+              hint="Last 30 days"
+              icon={<TrendingUp />}
+            />
+            <Stat
+              label="Net profit"
+              value={formatMoney(overview.data.income_statement.net_profit)}
+              hint="Last 30 days"
+              icon={<TrendingUp />}
+            />
+          </section>
 
           {/* Control counts */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Control</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 gap-3 text-sm">
-              <Metric
-                label="Suppliers with payables"
-                value={String(overview.data.ap_supplier_count)}
-              />
-              <Metric label="Open periods" value={String(overview.data.open_periods)} />
-            </CardContent>
-          </Card>
+          <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Stat
+              label="Suppliers with payables"
+              value={overview.data.ap_supplier_count}
+              hint="Accounts payable"
+              icon={<Users />}
+            />
+            <Stat
+              label="Open periods"
+              value={overview.data.open_periods}
+              hint="Accounting"
+              icon={<FileText />}
+            />
+          </section>
 
           {/* Recent journal entries */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Recent journal entries</CardTitle>
+              <CardTitle>Recent journal entries</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Posted entries as activity is recognized.
+              </p>
             </CardHeader>
-            <CardContent className="text-sm">
+            <CardContent>
               {overview.data.recent_entries.length === 0 ? (
                 <EmptyState
                   title="No journal entries yet"
                   description="Posted entries will appear here as activity is recognized."
+                  icon={<FileText className="size-8" />}
                 />
               ) : (
-                <div className="flex flex-col gap-1.5">
-                  {overview.data.recent_entries.map((e: JournalEntry) => (
-                    <div key={e.id} className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-2">
-                        <span className="text-muted-foreground tabular-nums">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Entry</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {overview.data.recent_entries.map((e: JournalEntry) => (
+                      <TableRow key={e.id}>
+                        <TableCell className="font-mono tabular-nums text-muted-foreground">
                           #{e.entry_number}
-                        </span>
-                        <span>{e.entry_date}</span>
-                        <span className="text-muted-foreground">{e.source_type}</span>
-                      </span>
-                      <span className="flex items-center gap-3 tabular-nums">
-                        <span className="font-medium">{money(e.total)}</span>
-                        <Badge tone={e.status === 'reversed' ? 'warning' : 'neutral'}>
-                          {e.status}
-                        </Badge>
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                        </TableCell>
+                        <TableCell>{e.entry_date}</TableCell>
+                        <TableCell className="text-muted-foreground">{e.source_type}</TableCell>
+                        <TableCell className="text-right font-mono font-medium tabular-nums">
+                          {formatMoney(e.total)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge tone={e.status === 'reversed' ? 'warning' : 'neutral'}>
+                            {e.status}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>
         </>
       )}
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex flex-col gap-0.5 rounded-md bg-muted/40 px-3 py-2">
-      <span className="text-xs uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="font-semibold tabular-nums">{value}</span>
     </div>
   );
 }

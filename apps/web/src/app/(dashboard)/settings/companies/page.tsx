@@ -8,6 +8,8 @@ import { SdkError, type Company } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
+  Card,
+  CardContent,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -18,7 +20,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -119,17 +122,27 @@ export default function CompaniesPage() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{list.data?.count ?? 0} companies</p>
-        <Button onClick={openCreate}>
-          <Plus className="size-4" />
-          New company
-        </Button>
-      </div>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Settings"
+        title="Companies"
+        description={`The legal entities that own your stations — ${list.data?.count ?? 0} total.`}
+        actions={
+          <Button onClick={openCreate}>
+            <Plus className="size-4" />
+            New company
+          </Button>
+        }
+      />
 
       {list.isPending ? (
-        <LoadingState />
+        <Card>
+          <CardContent className="flex flex-col gap-2 p-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-lg" />
+            ))}
+          </CardContent>
+        </Card>
       ) : list.isError ? (
         <ErrorState
           title="Couldn't load companies"
@@ -143,36 +156,40 @@ export default function CompaniesPage() {
           action={<Button onClick={openCreate}>Create one</Button>}
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Legal name</TableHead>
-              <TableHead>Currency</TableHead>
-              <TableHead>Timezone</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.data!.items.map((c) => (
-              <TableRow key={c.id}>
-                <TableCell className="font-medium">{c.name}</TableCell>
-                <TableCell className="text-muted-foreground">{c.legal_name ?? '—'}</TableCell>
-                <TableCell className="font-mono text-xs">{c.currency}</TableCell>
-                <TableCell className="font-mono text-xs">{c.timezone}</TableCell>
-                <TableCell>
-                  <Badge tone={c.status === 'active' ? 'success' : 'warning'}>{c.status}</Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
-                    Edit
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Legal name</TableHead>
+                  <TableHead>Currency</TableHead>
+                  <TableHead>Timezone</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.data!.items.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{c.legal_name ?? '—'}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">{c.currency}</TableCell>
+                    <TableCell className="font-mono text-xs tabular-nums">{c.timezone}</TableCell>
+                    <TableCell>
+                      <Badge tone={c.status === 'active' ? 'success' : 'warning'}>{c.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
+                        Edit
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>

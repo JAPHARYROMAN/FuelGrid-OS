@@ -2,6 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { ShieldAlert } from 'lucide-react';
+
 import { SdkError, type RiskAlert } from '@fuelgrid/sdk';
 import {
   Badge,
@@ -12,7 +14,8 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
@@ -49,28 +52,27 @@ export default function RiskPage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Risk</h1>
-          <p className="text-sm text-muted-foreground">
-            Open alerts, station risk scores, and detection.
-          </p>
-        </div>
-        <PermissionGate permission="risk_alert.manage">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={detect.isPending}
-            onClick={() => detect.mutate()}
-          >
-            {detect.isPending ? 'Running…' : 'Run detection'}
-          </Button>
-        </PermissionGate>
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Monitor"
+        title="Risk"
+        description="Open alerts, station risk scores, and detection."
+        actions={
+          <PermissionGate permission="risk_alert.manage">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={detect.isPending}
+              onClick={() => detect.mutate()}
+            >
+              {detect.isPending ? 'Running…' : 'Run detection'}
+            </Button>
+          </PermissionGate>
+        }
+      />
 
       {overview.isPending ? (
-        <LoadingState />
+        <Skeleton className="h-[120px] rounded-xl" />
       ) : overview.isError ? (
         <ErrorState
           title={
@@ -111,9 +113,17 @@ export default function RiskPage() {
         </CardHeader>
         <CardContent className="text-sm">
           {alerts.isPending ? (
-            <LoadingState />
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 rounded-lg" />
+              ))}
+            </div>
           ) : (alerts.data?.items?.length ?? 0) === 0 ? (
-            <EmptyState title="No open alerts" description="Run detection to surface risk." />
+            <EmptyState
+              title="No open alerts"
+              description="Run detection to surface risk."
+              icon={<ShieldAlert />}
+            />
           ) : (
             <div className="flex flex-col gap-2">
               {alerts.data!.items.map((a: RiskAlert) => (

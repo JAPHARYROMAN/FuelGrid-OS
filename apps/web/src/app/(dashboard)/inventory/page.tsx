@@ -12,7 +12,8 @@ import {
   CardTitle,
   EmptyState,
   ErrorState,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
@@ -49,35 +50,39 @@ export default function InventoryPage() {
     enabled: !!stationID,
   });
 
+  const stationSelect =
+    (stations.data?.items?.length ?? 0) > 0 ? (
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Station</span>
+        <select
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          value={stationID}
+          onChange={(e) => setStationID(e.target.value)}
+        >
+          {stations.data!.items.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.code})
+            </option>
+          ))}
+        </select>
+      </label>
+    ) : null;
+
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Inventory</h1>
-          <p className="text-sm text-muted-foreground">
-            Book stock vs physical, days of stock, and the recent variance trend per tank.
-          </p>
-        </div>
-        {(stations.data?.items?.length ?? 0) > 0 ? (
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Station</span>
-            <select
-              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-              value={stationID}
-              onChange={(e) => setStationID(e.target.value)}
-            >
-              {stations.data!.items.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.code})
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Operations"
+        title="Inventory"
+        description="Book stock vs physical, days of stock, and the recent variance trend per tank."
+        actions={stationSelect}
+      />
 
       {stations.isPending ? (
-        <LoadingState />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-64 rounded-xl" />
+          ))}
+        </div>
       ) : stations.isError ? (
         <ErrorState
           title="Couldn't load stations"
@@ -87,7 +92,11 @@ export default function InventoryPage() {
       ) : (stations.data?.items?.length ?? 0) === 0 ? (
         <EmptyState title="No stations" description="You don't have access to any stations yet." />
       ) : overview.isPending ? (
-        <LoadingState />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-64 rounded-xl" />
+          ))}
+        </div>
       ) : overview.isError ? (
         (() => {
           const err = overview.error;
@@ -214,7 +223,7 @@ function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium tabular-nums">{value}</span>
+      <span className="font-mono text-sm font-medium tabular-nums text-foreground">{value}</span>
     </div>
   );
 }
