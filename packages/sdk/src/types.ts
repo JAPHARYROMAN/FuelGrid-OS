@@ -1081,8 +1081,11 @@ export interface CustomerBalance {
 
 // ---- Standard report exports (CSV + PDF) ----
 
-/** Reporting window for the financials export. */
+/** Reporting window for the financials and general-ledger exports. */
 export type ReportPeriod = 'this-month' | 'last-month' | 'ytd' | 'last-30';
+
+/** Accountant-importable format for the general-ledger export. */
+export type GeneralLedgerFormat = 'csv' | 'iif' | 'xero';
 
 /**
  * Discriminated spec for a standard report. Passed to client.reportUrl /
@@ -1099,7 +1102,8 @@ export type ReportSpec =
   | { kind: 'financials'; period?: ReportPeriod }
   | { kind: 'ar-aging' }
   | { kind: 'daily-close-pdf'; stationID: string; operatingDayID?: string }
-  | { kind: 'financials-pdf'; period?: ReportPeriod };
+  | { kind: 'financials-pdf'; period?: ReportPeriod }
+  | { kind: 'gl-export'; period?: ReportPeriod; format?: GeneralLedgerFormat };
 
 // ---- Phase 7: Finance & Accounting Control ----
 

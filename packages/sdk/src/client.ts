@@ -2334,6 +2334,13 @@ export class Client {
         const qs = report.period ? `?period=${encodeURIComponent(report.period)}` : '';
         return `${this.baseURL}/api/v1/reports/financials.pdf${qs}`;
       }
+      case 'gl-export': {
+        const params = new URLSearchParams();
+        if (report.period) params.set('period', report.period);
+        if (report.format) params.set('format', report.format);
+        const qs = params.toString();
+        return `${this.baseURL}/api/v1/accounting/gl-export.csv${qs ? `?${qs}` : ''}`;
+      }
     }
   }
 

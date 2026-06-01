@@ -1696,6 +1696,21 @@ paths:
       responses:
         '200': { description: CSV export, content: { text/csv: { schema: { type: string } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/accounting/gl-export.csv:
+    get:
+      tags: [Reports]
+      summary: Export the general ledger for a period (CSV / QuickBooks IIF / Xero CSV)
+      description: >-
+        Streams the posted general ledger (journal entries + lines) for the
+        selected period in an accountant-importable format. Money stays an exact
+        decimal string. Permission-gated by finance.read and audited.
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
+        - { in: query, name: format, required: false, schema: { type: string, enum: [csv, iif, xero] } }
+      responses:
+        '200': { description: Ledger export, content: { text/csv: { schema: { type: string } }, application/octet-stream: { schema: { type: string, format: binary } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/audit-logs/export:
     post:

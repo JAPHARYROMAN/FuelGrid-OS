@@ -105,6 +105,7 @@ export type {
   ReconciliationOverviewTank,
   RecentVariance,
   Region,
+  GeneralLedgerFormat,
   ReportPeriod,
   ReportSpec,
   RevenueDay,

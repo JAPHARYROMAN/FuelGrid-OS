@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   BarChart3,
+  BookOpen,
   Database,
   Download,
   FileSpreadsheet,
@@ -12,7 +13,12 @@ import {
   Scale,
 } from 'lucide-react';
 
-import { SdkError, type ReportPeriod, type ReportSpec } from '@fuelgrid/sdk';
+import {
+  SdkError,
+  type GeneralLedgerFormat,
+  type ReportPeriod,
+  type ReportSpec,
+} from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -34,6 +40,12 @@ const PERIODS: { value: ReportPeriod; label: string }[] = [
   { value: 'last-month', label: 'Last month' },
   { value: 'ytd', label: 'Year to date' },
   { value: 'last-30', label: 'Last 30 days' },
+];
+
+const GL_FORMATS: { value: GeneralLedgerFormat; label: string }[] = [
+  { value: 'csv', label: 'Generic CSV' },
+  { value: 'iif', label: 'QuickBooks (IIF)' },
+  { value: 'xero', label: 'Xero CSV' },
 ];
 
 const selectClasses =
@@ -187,6 +199,7 @@ export default function ReportsPage() {
   const stationItems = stations.data?.items ?? [];
   const [stationId, setStationId] = React.useState<string>('');
   const [period, setPeriod] = React.useState<ReportPeriod>('this-month');
+  const [glFormat, setGlFormat] = React.useState<GeneralLedgerFormat>('csv');
 
   // Default the station filter to the first station once loaded.
   React.useEffect(() => {
@@ -354,6 +367,47 @@ export default function ReportsPage() {
                   description="Every credit customer with an outstanding receivable balance."
                   permission="customer.read"
                   build={() => ({ spec: { kind: 'ar-aging' }, filename: 'ar-aging.csv' })}
+                />
+                <ReportRow
+                  icon={<BookOpen className="size-4" />}
+                  title="General ledger export"
+                  description="Posted journal entries for the chosen period in an accountant-importable format: generic CSV, QuickBooks (IIF) or Xero CSV. Amounts are exact decimals."
+                  permission="finance.read"
+                  build={() => {
+                    const ext = glFormat === 'iif' ? 'iif' : 'csv';
+                    return {
+                      spec: { kind: 'gl-export', period, format: glFormat },
+                      filename: `general-ledger-${period}-${glFormat}.${ext}`,
+                    };
+                  }}
+                  controls={
+                    <>
+                      <select
+                        className={selectClasses}
+                        value={period}
+                        onChange={(e) => setPeriod(e.target.value as ReportPeriod)}
+                        aria-label="General ledger period"
+                      >
+                        {PERIODS.map((p) => (
+                          <option key={p.value} value={p.value}>
+                            {p.label}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className={selectClasses}
+                        value={glFormat}
+                        onChange={(e) => setGlFormat(e.target.value as GeneralLedgerFormat)}
+                        aria-label="General ledger format"
+                      >
+                        {GL_FORMATS.map((f) => (
+                          <option key={f.value} value={f.value}>
+                            {f.label}
+                          </option>
+                        ))}
+                      </select>
+                    </>
+                  }
                 />
               </div>
             </CardContent>
