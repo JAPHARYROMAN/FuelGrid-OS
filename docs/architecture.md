@@ -13,7 +13,7 @@
 
 FuelGrid OS is a full-fledged fuel operations operating system designed to support single fuel stations, multi-station chains, depots, fleet operators, distributors, and enterprise fuel organizations.
 
-The architecture must support operational workflows, financial-grade reconciliation, immutable audit trails, offline-capable station operations (planned — see §16; the web app today ships as an installable PWA, with the service worker and offline sync engine scheduled for Phase 14), high-volume analytics, hardware integrations, AI intelligence, multi-tenant security, real-time alerts, mobile workflows, and enterprise extensibility.
+The architecture must support operational workflows, financial-grade reconciliation, immutable audit trails, offline-capable station operations (planned — see §16; the web app today ships as an installable PWA, with the service worker and offline sync engine scheduled for Phase 14), high-volume analytics, hardware integrations, rule-based intelligence, multi-tenant security, real-time alerts, mobile workflows, and enterprise extensibility.
 
 FuelGrid OS should be designed as a modular, event-driven platform. The first implementation can be delivered as a modular monolith with strict domain boundaries, but the architecture must be clean enough to evolve into distributed services as usage grows.
 
@@ -40,7 +40,7 @@ The architecture must provide:
 * Event-driven alerts and integrations
 * High-volume analytics and reporting
 * Hardware integration layer
-* AI assistant with permission-aware data access
+* Automation Engine (rule-based insights) with permission-aware data access
 * Enterprise security and observability
 
 ## 2.2 Non-Goals
@@ -97,18 +97,18 @@ Recommended stack:
 * Docker for packaging
 * Kubernetes-ready deployment design
 
-## 3.3 AI and Intelligence Stack
+## 3.3 Automation & Intelligence Stack
 
 Recommended components:
 
-* AI Gateway service
+* Automation Engine gateway service
 * Permission-aware query planner
 * Data retrieval layer
-* Report generation engine
-* Risk explanation engine
-* Forecast explanation engine
-* Vector search, optional for documents and knowledge base
-* Audit log for AI queries
+* Scheduled report generation engine
+* Risk Rules Engine (variance and risk scoring)
+* Forecasting Engine (forecast formulas)
+* Search index, optional for documents and knowledge base
+* Audit log for insight/report queries
 
 ## 3.4 Mobile Stack Options
 
@@ -138,7 +138,7 @@ FuelGrid OS should be organized into the following major layers:
 5. Data Persistence Layer
 6. Analytics Layer
 7. Integration Layer
-8. AI Intelligence Layer
+8. Rules & Insights Engine
 9. Observability and Security Layer
 
 ## 4.1 Architecture Diagram
@@ -152,7 +152,7 @@ Domain Application Layer
                 ↓
 Transactional Database / Event Bus / Cache / Object Storage
                 ↓
-Analytics Warehouse / Reporting Engine / AI Intelligence Layer
+Analytics Warehouse / Reporting Engine / Rules & Insights Engine
                 ↓
 External Integrations / Hardware Adapters / Webhooks
 ```
@@ -205,7 +205,7 @@ The domain layer contains business logic for:
 * Risk
 * Alerts
 * Reporting
-* AI
+* Automation & Rules
 * Integrations
 * Audit
 
@@ -259,7 +259,7 @@ The codebase should be organized by domain modules with strict boundaries:
   /reporting
   /audit
   /integration
-  /ai
+  /automation
 ```
 
 Each domain should own:
@@ -286,7 +286,7 @@ Domains should be designed so they can later become independent services:
 * risk-service
 * reporting-service
 * integration-service
-* ai-assistant-service
+* automation-engine-service
 
 Service extraction should happen only when required by scale, team structure, or deployment independence.
 
@@ -471,15 +471,15 @@ Owns:
 * Integration events
 * Retry handling
 
-## 6.16 AI Domain
+## 6.16 Automation & Rules Domain
 
 Owns:
 
-* AI query handling
+* Insight query handling
 * Permission-aware data access
-* AI answer generation
-* AI query audit logs
-* AI reports and summaries
+* Rule-based summary generation
+* Insight query audit logs
+* Automated reports and summaries
 
 ---
 
@@ -540,7 +540,7 @@ The system must prevent:
 * Cross-tenant data leakage
 * Cross-tenant reporting
 * Cross-tenant API access
-* Cross-tenant AI retrieval
+* Cross-tenant insight retrieval
 * Cross-tenant webhook delivery
 
 ---
@@ -853,14 +853,14 @@ approval_steps
 record_locks
 ```
 
-## 10.10 AI, Reporting, and Integration Entities
+## 10.10 Automation, Reporting, and Integration Entities
 
 ```text
 reports
 report_templates
 scheduled_reports
-ai_queries
-ai_insight_snapshots
+insight_queries
+insight_snapshots
 forecast_snapshots
 integrations
 integration_events
@@ -1071,7 +1071,7 @@ Events should feed:
 * Reporting projections
 * Webhooks
 * Notifications
-* AI insight snapshots
+* Insight snapshots
 * Analytics warehouse
 
 ## 13.4 Idempotency
@@ -1148,7 +1148,7 @@ Main API groups:
 /reports
 /audit
 /integrations
-/ai
+/automation
 ```
 
 ## 14.4 API Standards
@@ -1191,10 +1191,10 @@ POST /api/v1/inventory/reconciliations
 POST /api/v1/shifts/{shift_id}/cash-submissions
 ```
 
-### Ask AI Assistant
+### Run insight query
 
 ```text
-POST /api/v1/ai/query
+POST /api/v1/insights/query
 ```
 
 ---
@@ -1528,28 +1528,33 @@ An investigation should include:
 
 ---
 
-# 19. AI Assistant Architecture
+# 19. Automation Engine (Rules & Insights) Architecture
 
-## 19.1 AI Gateway
+The Automation Engine is deterministic: every insight, summary, and report is
+produced by code-driven rules and formulas operating on system data. It never
+guesses and never bypasses permissions.
 
-All AI requests should go through an AI Gateway service.
+## 19.1 Automation Engine gateway
 
-The AI Gateway should:
+All insight and report requests should go through the Automation Engine gateway
+service.
+
+The Automation Engine gateway should:
 
 * Authenticate user
 * Resolve tenant and permissions
-* Classify user intent
+* Classify request into a supported insight/report type
 * Select allowed data tools
 * Retrieve relevant data
-* Generate answer
-* Attach source references
+* Apply the matching reporting rules to produce a rule-based summary
+* Attach source references for every figure
 * Log query and response metadata
 
 ## 19.2 Permission-Aware Retrieval
 
-AI must never bypass normal permissions.
+The Rules & Insights Engine must never bypass normal permissions.
 
-Before accessing data, AI must check:
+Before accessing data, the engine must check:
 
 * Tenant access
 * Station access
@@ -1558,23 +1563,23 @@ Before accessing data, AI must check:
 * Audit data permission
 * Customer data permission
 
-## 19.3 AI Query Types
+## 19.3 Insight Query Types
 
 Supported query types:
 
 * Operational summary
-* Variance explanation
+* Variance explanation (variance rules)
 * Station comparison
-* Forecast explanation
-* Report generation
+* Forecast explanation (forecast formulas)
+* Report generation (reporting rules)
 * Investigation assistant
 * Credit customer summary
 * Staff performance summary
 * Executive briefing
 
-## 19.4 AI Data Sources
+## 19.4 Insight Data Sources
 
-AI can retrieve:
+The engine can retrieve:
 
 * Aggregated summaries
 * Approved reports
@@ -1585,17 +1590,17 @@ AI can retrieve:
 * Customer balances, if permitted
 * Station performance data
 
-## 19.5 AI Safety Rules
+## 19.5 Engine Safety Rules
 
-AI must:
+The Rules & Insights Engine must:
 
 * Respect permissions
 * Avoid exposing restricted data
-* Avoid unsupported claims
-* Explain uncertainty
-* Recommend actions rather than directly making sensitive changes
+* Stay evidence-based — every insight must be traceable to system data
+* Make any data-quality caveats explicit
+* Produce code-driven recommendations rather than directly making sensitive changes
 * Log queries for audit
-* Provide source records where possible
+* Provide source records for every figure it reports
 
 ---
 
@@ -1886,7 +1891,7 @@ Use OpenTelemetry to trace:
 * Event flows
 * Background jobs
 * Integration calls
-* AI queries
+* Insight queries
 
 ## 24.4 Business Observability
 
@@ -1936,7 +1941,7 @@ Must test:
 * Audit log creation
 * Record locking
 * Webhook delivery
-* AI permission boundaries
+* Insight-query permission boundaries
 
 ## 25.3 Test Data
 
@@ -2039,7 +2044,7 @@ The system should support configurable retention for:
 * Reports
 * Sensor readings
 * Integration logs
-* AI query logs
+* Insight query logs
 * Attachments
 
 ## 28.2 Data Export
@@ -2172,9 +2177,9 @@ The architecture supports these construction phases:
 * Reorder recommendations
 * Scheduled reports
 
-## Phase 12: AI Assistant
+## Phase 12: Automation Engine (Rules & Insights)
 
-* Permission-aware AI
+* Permission-aware rule-based intelligence
 * Variance explanations
 * Report generation
 * Investigation assistant
@@ -2255,7 +2260,7 @@ The architecture is acceptable when:
 
 # 31. Final Architecture Definition
 
-FuelGrid OS should be built as a modular, event-driven, multi-tenant fuel operations platform with financial-grade traceability, offline-capable station workflows, analytics-ready data pipelines, secure integrations, AI-powered operational intelligence, and enterprise-ready security.
+FuelGrid OS should be built as a modular, event-driven, multi-tenant fuel operations platform with financial-grade traceability, offline-capable station workflows, analytics-ready data pipelines, secure integrations, rule-based operational intelligence, and enterprise-ready security.
 
 The system should begin as a modular monolith with strict domain boundaries and evolve toward distributed services only when required by scale, enterprise needs, or operational complexity.
 

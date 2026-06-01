@@ -6,7 +6,7 @@ FuelGrid OS is a full-fledged fuel business operating system for single
 stations, multi-station chains, depots, fleet operators, distributors, and
 enterprise fuel organizations. It unifies station operations, fuel inventory,
 tank and pump management, sales, payments, finance, procurement, customer
-credit, fleet fueling, risk detection, AI intelligence, reporting, audit, and
+credit, fleet fueling, risk detection, rule-based intelligence, reporting, audit, and
 hardware integrations into one premium command platform.
 
 Its core principle: **every liter and every shilling must be traceable.** Every
