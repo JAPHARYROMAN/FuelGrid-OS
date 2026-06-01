@@ -1,0 +1,47 @@
+# Prometheus scrape + rule configuration for the FuelGrid OS observability stack.
+#
+# Loaded by the prometheus service in docker-compose.observability.yml
+# (mounted at /etc/prometheus/prometheus.yml). It scrapes the FuelGrid API's
+# /metrics endpoint, wires the alert rules from prometheus-alerts.yml, and
+# points Prometheus at Alertmanager for routing.
+#
+# The scrape target host `host.docker.internal` resolves to the host machine
+# from inside the container, so a `go run ./services/api/...` API listening on
+# the host's :8080 is reachable without containerising the API. On Linux this
+# is provided by the `extra_hosts` mapping in the compose file.
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: fuelgrid-observability
+
+# Alert rule files. The job="fuelgrid-api" label these rules assume is
+# attached by the scrape_config below.
+rule_files:
+  - /etc/prometheus/rules/prometheus-alerts.yml
+
+# Route fired alerts to Alertmanager.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # Prometheus scrapes itself so `up{job="prometheus"}` and meta-metrics exist.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+
+  # The FuelGrid Go API. The job name MUST stay "fuelgrid-api" — the alert
+  # rules and Grafana dashboards filter on job="fuelgrid-api".
+  - job_name: fuelgrid-api
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          service: api

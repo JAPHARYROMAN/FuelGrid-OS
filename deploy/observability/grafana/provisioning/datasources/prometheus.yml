@@ -1,0 +1,19 @@
+# Grafana datasource provisioning: the Prometheus instance from the
+# observability compose stack. Mounted at
+# /etc/grafana/provisioning/datasources so Grafana auto-creates the datasource
+# on startup — no manual UI step. The uid "prometheus" is referenced by the
+# provisioned dashboards' ${DS_PROMETHEUS} default.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # Service name + port on the compose network.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
