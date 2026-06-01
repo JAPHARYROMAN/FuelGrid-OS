@@ -1,0 +1,18 @@
+# Grafana dashboard provider: loads every JSON dashboard under the mounted
+# dashboards directory. Mounted at
+# /etc/grafana/provisioning/dashboards. The files themselves are mounted at
+# /var/lib/grafana/dashboards by the compose file.
+apiVersion: 1
+
+providers:
+  - name: fuelgrid
+    orgId: 1
+    folder: FuelGrid OS
+    type: file
+    disableDeletion: false
+    # Pick up edits to the JSON on disk.
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

@@ -1,0 +1,65 @@
+# Alertmanager routing for the FuelGrid OS observability stack.
+#
+# Loaded by the alertmanager service in docker-compose.observability.yml
+# (mounted at /etc/alertmanager/alertmanager.yml). Routes alerts fired by
+# Prometheus to receivers. The receivers below are PLACEHOLDERS: a generic
+# webhook (point it at your own sink) and a Slack incoming-webhook block that
+# is commented until you supply a real SLACK_WEBHOOK_URL.
+#
+# Critical alerts are routed with a tighter group_wait so paging signals
+# (5xx burst, readiness failing, outbox stalled) reach a human faster than
+# warnings.
+global:
+  resolve_timeout: 5m
+
+# Inhibition: when the API is fully down (ApiReadinessFailing critical), the
+# derived latency/pool/5xx warnings are noise — suppress them for the same
+# service so responders see one root-cause page.
+inhibit_rules:
+  - source_matchers:
+      - severity = critical
+      - alertname = ApiReadinessFailing
+    target_matchers:
+      - severity = warning
+      - service = api
+    equal:
+      - service
+
+route:
+  receiver: default-webhook
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Page-worthy: fire fast, repeat more aggressively.
+    - matchers:
+        - severity = critical
+      receiver: critical-webhook
+      group_wait: 10s
+      repeat_interval: 1h
+      continue: true
+
+receivers:
+  - name: default-webhook
+    webhook_configs:
+      # Replace the URL with your own webhook sink (e.g. an internal bridge
+      # that forwards to Slack/PagerDuty/Opsgenie).
+      - url: http://host.docker.internal:5001/alerts
+        send_resolved: true
+
+  - name: critical-webhook
+    webhook_configs:
+      - url: http://host.docker.internal:5001/alerts/critical
+        send_resolved: true
+    # Slack placeholder — uncomment and supply a real incoming-webhook URL.
+    # slack_configs:
+    #   - api_url: '${SLACK_WEBHOOK_URL}'
+    #     channel: '#fuelgrid-alerts'
+    #     send_resolved: true
+    #     title: '{{ .CommonAnnotations.summary }}'
+    #     text: >-
+    #       {{ range .Alerts }}*{{ .Labels.alertname }}* ({{ .Labels.severity }})
+    #       {{ .Annotations.description }}
+    #       {{ if .Annotations.runbook_url }}Runbook: {{ .Annotations.runbook_url }}{{ end }}
+    #       {{ end }}
