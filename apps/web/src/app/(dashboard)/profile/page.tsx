@@ -29,6 +29,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { MfaSection } from '@/components/profile/mfa-section';
 
 export default function ProfilePage() {
   const qc = useQueryClient();
@@ -94,12 +95,16 @@ export default function ProfilePage() {
               </div>
               <div className="flex flex-col gap-1">
                 <dt className="text-xs uppercase tracking-wider text-muted-foreground">MFA</dt>
-                <dd>{me.data.mfa_satisfied ? 'Satisfied' : 'Not required'}</dd>
+                <dd>
+                  {me.data.mfa_enabled ? 'Enabled' : me.data.mfa_required ? 'Required' : 'Off'}
+                </dd>
               </div>
             </dl>
           )}
         </CardContent>
       </Card>
+
+      <MfaSection />
 
       <Card>
         <CardHeader>
