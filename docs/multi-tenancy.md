@@ -4,7 +4,7 @@ How FuelGrid OS guarantees that one customer's data never reaches another custom
 
 ## The threat model
 
-A FuelGrid OS deployment serves many tenants from one database. The data of every tenant is in the same tables; the only thing keeping them apart is the `tenant_id` column on every tenant-owned row. A single missing `WHERE tenant_id = ?` in any handler, repo, report query, AI prompt, or background job is enough to leak data.
+A FuelGrid OS deployment serves many tenants from one database. The data of every tenant is in the same tables; the only thing keeping them apart is the `tenant_id` column on every tenant-owned row. A single missing `WHERE tenant_id = ?` in any handler, repo, report query, insight/automation query, or background job is enough to leak data.
 
 We treat this as a serious, ongoing risk and apply **four independent layers** of defense. A bug in any single layer must not result in cross-tenant access.
 

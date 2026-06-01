@@ -16,7 +16,7 @@
 
 ### Full Positioning Statement
 
-**FuelGrid OS is a full-fledged fuel business operating system for single stations, multi-station chains, depots, fleet operators, distributors, and enterprise fuel organizations. It unifies station operations, fuel inventory, tank and pump management, sales, payments, finance, procurement, customer credit, fleet fueling, risk detection, AI intelligence, reporting, audit, and hardware integrations into one premium command platform.**
+**FuelGrid OS is a full-fledged fuel business operating system for single stations, multi-station chains, depots, fleet operators, distributors, and enterprise fuel organizations. It unifies station operations, fuel inventory, tank and pump management, sales, payments, finance, procurement, customer credit, fleet fueling, risk detection, rule-based intelligence, reporting, audit, and hardware integrations into one premium command platform.**
 
 ### Simple Positioning Statement
 
@@ -231,7 +231,7 @@ Multi-company structures
 Advanced RBAC
 Hardware integrations
 ERP/accounting integrations
-AI analytics
+Automated analytics
 Compliance reporting
 Custom workflows
 API access
@@ -487,7 +487,7 @@ Loss alerts
 Forecasts
 Credit exposure
 Management summaries
-AI insights
+Deterministic insights
 ```
 
 ---
@@ -576,7 +576,7 @@ Includes Chain OS plus:
 
 ```text
 Advanced analytics
-AI assistant
+Automation Engine
 Hardware integrations
 ERP integrations
 Custom workflows
@@ -1263,13 +1263,13 @@ Recommended action:
 
 ---
 
-# Layer 11: AI Assistant & Executive Intelligence OS
+# Layer 11: Automation Engine & Executive Intelligence
 
-The AI assistant should be a native layer, not a side feature.
+The Automation Engine — a deterministic Rules & Insights Engine — should be a native layer, not a side feature. It answers questions by running reporting rules and forecast formulas over system data, never by guessing.
 
-## AI Assistant Capabilities
+## Automation Engine Capabilities
 
-Users should be able to ask:
+Users should be able to run insight queries such as:
 
 ```text
 Why did PMS losses increase this week?
@@ -1284,7 +1284,7 @@ Which delivery had the biggest discrepancy?
 What should I investigate today?
 ```
 
-## AI Assistant Should Access
+## Rules & Insights Engine Should Access
 
 ```text
 Sales data
@@ -1302,7 +1302,7 @@ Reports
 Forecasts
 ```
 
-## AI Should Produce
+## Rules & Insights Engine Should Produce
 
 ```text
 Plain-language explanations
@@ -1315,9 +1315,9 @@ Risk summaries
 Station comparisons
 ```
 
-## AI Must Be Evidence-Based
+## Rules & Insights Engine Must Be Evidence-Based
 
-Every AI answer should be traceable to system data.
+The Rules & Insights Engine must never bypass permissions and must be evidence-based: every deterministic insight should be traceable to system data.
 
 It should say things like:
 
@@ -1452,7 +1452,7 @@ FuelGrid OS should eventually include these modules:
 41. Tax/Compliance Reporting
 42. Audit Trail
 43. Alerts & Notifications
-44. AI Insights Assistant
+44. Rules & Insights Engine
 45. Forecasting Engine
 46. Rule Engine
 47. Risk Scoring Engine
@@ -1770,14 +1770,14 @@ record_locks
 
 ---
 
-## 11.10 AI, Reporting & Integration Entities
+## 11.10 Automation, Reporting & Integration Entities
 
 ```text
 reports
 report_templates
 scheduled_reports
-ai_queries
-ai_insight_snapshots
+insight_queries
+insight_snapshots
 forecast_snapshots
 integrations
 integration_events
@@ -1881,7 +1881,7 @@ Finance
 Procurement
 Reports
 Alerts
-AI Assistant
+Automation
 Audit
 Integrations
 Settings
@@ -1907,7 +1907,7 @@ Contextual recommendations such as:
 Stockout warning
 Variance explanation
 Pending approval
-AI insight
+Deterministic insight
 Related records
 Suggested action
 ```
@@ -1936,7 +1936,7 @@ Station ranking
 Regional performance
 Critical alerts
 Forecasts
-AI executive summary
+Rule-based executive summary
 ```
 
 Example opening message:
@@ -2105,12 +2105,12 @@ Closed investigations
 
 ---
 
-## 13.9 AI Assistant
+## 13.9 Automation Engine
 
 Should have:
 
 ```text
-Chat interface
+Insight query interface
 Suggested questions
 Data-backed answers
 Charts/tables when needed
@@ -2443,7 +2443,7 @@ audit-service
 notification-service
 integration-service
 document-service
-ai-assistant-service
+automation-engine-service
 offline-sync-service
 ```
 
@@ -2487,7 +2487,7 @@ DailyCloseCompleted
 Auditability
 Better reporting
 Real-time alerts
-AI insight generation
+Deterministic insight generation
 Integration webhooks
 Historical replay
 Fraud detection
@@ -2495,14 +2495,14 @@ Fraud detection
 
 ---
 
-# 20. AI Architecture
+# 20. Automation Engine Architecture
 
-The AI assistant should be built safely and carefully.
+The Automation Engine — a deterministic Rules & Insights Engine — should be built safely and carefully.
 
-## AI Components
+## Automation Engine Components
 
 ```text
-Natural language interface
+Insight query interface
 Query interpreter
 Permission-aware data access
 Report generator
@@ -2512,21 +2512,21 @@ Forecast explanation engine
 Investigation assistant
 ```
 
-## AI Rules
+## Rules & Insights Engine Rules
 
-The AI must:
+The Rules & Insights Engine must:
 
 ```text
-Respect user permissions
+Respect user permissions and never bypass them
 Never expose restricted financial data
 Cite system records internally
 Avoid unsupported claims
 Explain uncertainty
 Recommend actions, not make unauthorized changes
-Log AI queries for audit
+Log insight queries for audit
 ```
 
-## AI Example Query
+## Example Insight Query
 
 User asks:
 
@@ -2534,7 +2534,7 @@ User asks:
 Why did diesel losses increase yesterday?
 ```
 
-AI process:
+Engine process:
 
 ```text
 Check user permission
@@ -2976,12 +2976,12 @@ Escalation workflows
 
 ---
 
-## Phase 12: AI Assistant
+## Phase 12: Automation Engine
 
-Build the intelligence interface.
+Build the Rules & Insights Engine interface.
 
 ```text
-AI chat interface
+Insight query interface
 Permission-aware queries
 Variance explanation
 Executive summaries
@@ -3089,7 +3089,7 @@ The system detects abnormal losses.
 The system flags suspicious activity.
 The system recommends actions.
 The system forecasts stock needs.
-The AI assistant explains what is happening.
+The Automation Engine explains what is happening.
 ```
 
 ## Design Success
@@ -3108,7 +3108,7 @@ Enterprises find it scalable.
 
 ## Long Version
 
-**FuelGrid OS is a full-fledged fuel operations operating system designed to manage the complete lifecycle of fuel businesses. It connects stations, tanks, pumps, shifts, deliveries, suppliers, customers, fleets, sales, payments, finance, inventory, risk, reporting, AI intelligence, and hardware integrations into one unified platform. It gives owners, managers, attendants, finance teams, auditors, and executives complete visibility and control over every liter of fuel and every unit of money.**
+**FuelGrid OS is a full-fledged fuel operations operating system designed to manage the complete lifecycle of fuel businesses. It connects stations, tanks, pumps, shifts, deliveries, suppliers, customers, fleets, sales, payments, finance, inventory, risk, reporting, rule-based intelligence, and hardware integrations into one unified platform. It gives owners, managers, attendants, finance teams, auditors, and executives complete visibility and control over every liter of fuel and every unit of money.**
 
 ## Short Version
 
