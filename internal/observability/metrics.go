@@ -8,6 +8,7 @@ package observability
 import (
 	"context"
 	"sync/atomic"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -33,6 +34,14 @@ type Metrics struct {
 	OutboxDeadLettered prometheus.Gauge // outbox rows parked after exhausting the retry budget
 	OpenShifts         prometheus.Gauge // shifts currently in the 'open' state across all tenants
 	JournalEntries     prometheus.Gauge // posted journal entries (financial-throughput signal)
+
+	// Scheduler (internal/scheduler). The background-jobs runner records one
+	// observation per job execution: a success/failure-labelled counter and a
+	// duration histogram, both keyed by job name. These let operators alert on a
+	// job that has stopped succeeding (or has started taking too long) without
+	// scraping the job_runs ledger.
+	SchedulerRuns     *prometheus.CounterVec   // labels: job, result(success|failure|skipped)
+	SchedulerDuration *prometheus.HistogramVec // labels: job
 }
 
 // NewMetrics builds the registry with the Go runtime + process collectors
@@ -96,14 +105,40 @@ func NewMetrics() *Metrics {
 			Name:      "journal_entries_posted",
 			Help:      "Count of journal_entries rows in the 'posted' state across all tenants.",
 		}),
+		SchedulerRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "fuelgrid",
+			Subsystem: "scheduler",
+			Name:      "job_runs_total",
+			Help:      "Count of background scheduler job executions by job and result.",
+		}, []string{"job", "result"}),
+		SchedulerDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Namespace: "fuelgrid",
+			Subsystem: "scheduler",
+			Name:      "job_duration_seconds",
+			Help:      "Wall-clock duration of background scheduler job executions, in seconds.",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 3, 10),
+		}, []string{"job"}),
 	}
 
 	reg.MustRegister(
 		m.HTTPRequests, m.HTTPLatency, m.HTTPInflight,
 		m.OutboxBacklog, m.OutboxLag, m.OutboxDeadLettered,
 		m.OpenShifts, m.JournalEntries,
+		m.SchedulerRuns, m.SchedulerDuration,
 	)
 	return m
+}
+
+// ObserveJob records one scheduler job execution: it increments the
+// result-labelled run counter and observes the run's duration. result is one of
+// "success", "failure", or "skipped". Safe to call from the runner goroutine;
+// a nil *Metrics is tolerated so the scheduler can run without metrics wired.
+func (m *Metrics) ObserveJob(job, result string, d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.SchedulerRuns.WithLabelValues(job, result).Inc()
+	m.SchedulerDuration.WithLabelValues(job).Observe(d.Seconds())
 }
 
 // ObserveOutbox reads outbox stats and updates the gauges. Safe to call

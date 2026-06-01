@@ -152,6 +152,36 @@ type Config struct {
 	OutboxPollInterval time.Duration `envconfig:"OUTBOX_POLL_INTERVAL" default:"2s"`
 	OutboxBatchSize    int           `envconfig:"OUTBOX_BATCH_SIZE" default:"100"`
 
+	// Background scheduler (internal/scheduler). Each knob is the interval
+	// between runs of one recurring job; the runner is multi-instance-safe via a
+	// per-job Postgres advisory lock so only one API replica runs a given job per
+	// tick. A non-positive interval DISABLES that job — which is exactly what a
+	// Config built without Load() (the integration harness, or a test that
+	// constructs config.Config{} directly) gets, so the harness runs no jobs.
+	// envconfig only applies these `default` tags on the Load() (production)
+	// path. The defaults below are tuned for production cadence, not test
+	// latency. SchedulerEnabled is a master switch: false leaves the whole runner
+	// unstarted regardless of the per-job intervals.
+	SchedulerEnabled                bool          `envconfig:"SCHEDULER_ENABLED" default:"true"`
+	SchedulerRevenueComputeInterval time.Duration `envconfig:"SCHEDULER_REVENUE_COMPUTE_INTERVAL" default:"1h"`
+	SchedulerAgingRefreshInterval   time.Duration `envconfig:"SCHEDULER_AGING_REFRESH_INTERVAL" default:"1h"`
+	SchedulerRiskDetectInterval     time.Duration `envconfig:"SCHEDULER_RISK_DETECT_INTERVAL" default:"30m"`
+	SchedulerProjectionInterval     time.Duration `envconfig:"SCHEDULER_PROJECTION_INTERVAL" default:"15m"`
+	SchedulerOutboxSweepInterval    time.Duration `envconfig:"SCHEDULER_OUTBOX_SWEEP_INTERVAL" default:"5m"`
+	SchedulerSessionCleanupInterval time.Duration `envconfig:"SCHEDULER_SESSION_CLEANUP_INTERVAL" default:"1h"`
+	// SchedulerSessionRetention is how long a session row is kept after it
+	// expires or is revoked before the cleanup job prunes it; the durable
+	// sessions table is an audit trail, so we keep terminated rows for a window
+	// rather than deleting on expiry. SchedulerOutboxRequeueAfter is how long a
+	// dead-lettered outbox row must have been parked before the sweep requeues it
+	// for one more drain attempt; SchedulerJobRunRetention prunes old job_runs
+	// ledger rows. SchedulerLockTimeout bounds any single job's work so a stuck
+	// job can't hold its advisory lock forever.
+	SchedulerSessionRetention   time.Duration `envconfig:"SCHEDULER_SESSION_RETENTION" default:"720h"`
+	SchedulerOutboxRequeueAfter time.Duration `envconfig:"SCHEDULER_OUTBOX_REQUEUE_AFTER" default:"1h"`
+	SchedulerJobRunRetention    time.Duration `envconfig:"SCHEDULER_JOB_RUN_RETENTION" default:"720h"`
+	SchedulerLockTimeout        time.Duration `envconfig:"SCHEDULER_LOCK_TIMEOUT" default:"10m"`
+
 	// Observability.
 	MetricsObserveInterval time.Duration `envconfig:"METRICS_OBSERVE_INTERVAL" default:"15s"`
 	OtelExporter           string        `envconfig:"OTEL_EXPORTER" default:"none"`

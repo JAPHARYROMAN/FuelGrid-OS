@@ -17,6 +17,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/enterprise"
 	"github.com/japharyroman/fuelgrid-os/internal/events"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
@@ -25,7 +26,11 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/session"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
+	"github.com/japharyroman/fuelgrid-os/internal/payables"
+	"github.com/japharyroman/fuelgrid-os/internal/receivables"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
+	"github.com/japharyroman/fuelgrid-os/internal/risk"
+	"github.com/japharyroman/fuelgrid-os/internal/scheduler"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/config"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/logging"
 	"github.com/japharyroman/fuelgrid-os/services/api/internal/server"
@@ -348,6 +353,47 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			defer stopCancel()
 			if err := publisher.Stop(stopCtx); err != nil {
 				logger.Warn("publisher stop", "error", err)
+			}
+		})
+	}
+
+	// Background scheduler. Runs recurring business processes (revenue compute,
+	// AR/AP aging refresh, risk detection + scoring, enterprise projection
+	// rebuild, outbox dead-letter sweep, expired-session cleanup) on their own
+	// timers alongside the API, the same way the outbox publisher does. It is
+	// multi-instance-safe via a per-job Postgres advisory lock, so running
+	// several API replicas runs each job once per tick. Needs Postgres only;
+	// jobs call the existing domain repos on the owner pool (cross-tenant).
+	// SCHEDULER_ENABLED=false (or every SCHEDULER_*_INTERVAL <= 0) leaves it
+	// effectively idle — the integration harness, which constructs Config{},
+	// gets zero-value intervals and therefore no jobs.
+	if deps.DB != nil && cfg.SchedulerEnabled {
+		jobs := scheduler.BuildJobs(scheduler.Deps{
+			Pool:        deps.DB,
+			Revenue:     revenue.New(deps.DB),
+			Risk:        risk.New(deps.DB),
+			Receivables: receivables.New(deps.DB),
+			Payables:    payables.New(deps.DB),
+			Enterprise:  enterprise.New(deps.DB),
+			Logger:      logger.With("component", "scheduler"),
+		}, scheduler.Intervals{
+			RevenueCompute:     cfg.SchedulerRevenueComputeInterval,
+			AgingRefresh:       cfg.SchedulerAgingRefreshInterval,
+			RiskDetect:         cfg.SchedulerRiskDetectInterval,
+			Projection:         cfg.SchedulerProjectionInterval,
+			OutboxSweep:        cfg.SchedulerOutboxSweepInterval,
+			SessionCleanup:     cfg.SchedulerSessionCleanupInterval,
+			SessionRetention:   cfg.SchedulerSessionRetention,
+			OutboxRequeueAfter: cfg.SchedulerOutboxRequeueAfter,
+			JobRunRetention:    cfg.SchedulerJobRunRetention,
+		})
+		sched := scheduler.New(deps.DB, metrics, logger.With("component", "scheduler"), cfg.SchedulerLockTimeout, jobs...)
+		sched.Start()
+		cleanups = append(cleanups, func() {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stopCancel()
+			if err := sched.Stop(stopCtx); err != nil {
+				logger.Warn("scheduler stop", "error", err)
 			}
 		})
 	}
