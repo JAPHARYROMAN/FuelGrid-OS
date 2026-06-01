@@ -84,3 +84,6 @@ tmp/
 .tmp/
 *.bak
 *.swp
+
+# Agent/workflow git worktrees — never track
+.claude/worktrees/

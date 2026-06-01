@@ -17,6 +17,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/email"
 	"github.com/japharyroman/fuelgrid-os/internal/enterprise"
 	"github.com/japharyroman/fuelgrid-os/internal/events"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
@@ -25,6 +26,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/identity/session"
+	"github.com/japharyroman/fuelgrid-os/internal/notifications"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/payables"
 	"github.com/japharyroman/fuelgrid-os/internal/receivables"
@@ -251,6 +253,17 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
 	}
 
+	// Transactional email sender. Falls back to the console (no-op) driver when
+	// SMTP_HOST is unset, so dev/CI never send real mail. Always wired (no DB
+	// dependency) so the password-reset / invite handlers have a Sender.
+	deps.Email = email.New(email.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUsername,
+		Password: cfg.SMTPPassword.Reveal(),
+		From:     cfg.SMTPFrom,
+	}, logger.With("component", "email"))
+
 	// Metrics observe worker. Refreshes the DB-sampled gauges — outbox
 	// backlog + oldest-unpublished-age + dead-letter count, plus the
 	// business gauges (open shifts, posted journal entries) — on a timer so
@@ -342,6 +355,17 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			logger.Info("revenue journal posted", "shift_id", shiftID, "entry_id", entry.ID)
 			return nil
 		})
+
+		// In-app notification subscriber. Subscribes to the domain events the
+		// operator cares about and turns each into a tenant-wide notification
+		// row; for critical-severity events it also emails the tenant's active
+		// users (best-effort — failures are logged, never block delivery). The
+		// handler is idempotent-friendly: a missed run re-creates at most a
+		// duplicate notification, which is acceptable for an alert feed.
+		notifRepo := notifications.New(deps.DB)
+		userRepo := repo.NewUserRepo(deps.DB)
+		notifLogger := logger.With("component", "notifications.subscriber")
+		subscribeNotifications(bus, notifRepo, userRepo, deps.Email, notifLogger)
 
 		publisher := events.NewPublisher(deps.DB, bus, events.PublisherConfig{
 			PollInterval: cfg.OutboxPollInterval,

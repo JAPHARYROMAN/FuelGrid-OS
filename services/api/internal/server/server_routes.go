@@ -111,6 +111,11 @@ func (s *Server) registerSelfServiceRoutes(r chi.Router) {
 			r.Delete("/me/sessions/{sessionID}", s.handleRevokeMySession)
 			r.Post("/me/password", s.handleChangeMyPassword)
 		}
+		if s.notifications != nil {
+			// In-app notification feed — scoped to the caller's user/tenant,
+			// so any authenticated user may read and mark their own feed.
+			s.registerNotificationRoutes(r)
+		}
 	})
 }
 

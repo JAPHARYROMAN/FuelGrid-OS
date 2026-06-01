@@ -181,6 +181,18 @@ type Config struct {
 	SchedulerOutboxRequeueAfter time.Duration `envconfig:"SCHEDULER_OUTBOX_REQUEUE_AFTER" default:"1h"`
 	SchedulerJobRunRetention    time.Duration `envconfig:"SCHEDULER_JOB_RUN_RETENTION" default:"720h"`
 	SchedulerLockTimeout        time.Duration `envconfig:"SCHEDULER_LOCK_TIMEOUT" default:"10m"`
+	// Transactional email. When SMTP_HOST is empty the email package falls back
+	// to a console (log-only) sender so local development never sends real mail.
+	// SMTP_PASSWORD is a Secret so it never reaches a log line. SMTP_FROM is the
+	// envelope/header From; it defaults inside the email package when blank.
+	SMTPHost     string `envconfig:"SMTP_HOST"`
+	SMTPPort     int    `envconfig:"SMTP_PORT" default:"587"`
+	SMTPUsername string `envconfig:"SMTP_USERNAME"`
+	SMTPPassword Secret `envconfig:"SMTP_PASSWORD"`
+	SMTPFrom     string `envconfig:"SMTP_FROM"`
+	// AppBaseURL is the public web origin used to build links in transactional
+	// email (e.g. the password-reset URL). Falls back to localhost in dev.
+	AppBaseURL string `envconfig:"APP_BASE_URL" default:"http://localhost:3000"`
 
 	// Observability.
 	MetricsObserveInterval time.Duration `envconfig:"METRICS_OBSERVE_INTERVAL" default:"15s"`

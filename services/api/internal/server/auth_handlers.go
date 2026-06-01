@@ -119,10 +119,10 @@ func (s *Server) handlePasswordResetRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if delivered {
-		// Production wires an email here. The raw reset token is a
-		// bearer credential — never log it outside development (log access
-		// would otherwise equal account takeover). In dev only, log it so a
-		// developer can copy it into /password-reset/confirm.
+		// Deliver the reset token by email (best-effort — never block the
+		// request). The raw token is a bearer credential, so it goes only into
+		// the email body and (in dev) a log line; never logged outside dev.
+		s.sendPasswordResetEmail(r.Context(), req.Email, token)
 		if s.cfg.Env == "development" {
 			s.logger.Info("password reset token issued (dev only; deliver via email in prod)",
 				"tenant", req.TenantSlug,

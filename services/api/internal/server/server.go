@@ -20,6 +20,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
 	"github.com/japharyroman/fuelgrid-os/internal/database"
+	"github.com/japharyroman/fuelgrid-os/internal/email"
 	"github.com/japharyroman/fuelgrid-os/internal/enterprise"
 	"github.com/japharyroman/fuelgrid-os/internal/expenses"
 	"github.com/japharyroman/fuelgrid-os/internal/fleet"
@@ -29,6 +30,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity/repo"
 	"github.com/japharyroman/fuelgrid-os/internal/incidents"
 	"github.com/japharyroman/fuelgrid-os/internal/inventory"
+	"github.com/japharyroman/fuelgrid-os/internal/notifications"
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
 	"github.com/japharyroman/fuelgrid-os/internal/observability"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
@@ -65,6 +67,9 @@ type Deps struct {
 	Identity *identity.Service
 	Policy   *policy.Service
 	Metrics  *observability.Metrics
+	// Email delivers transactional mail (password reset, invite). May be nil in
+	// thin smoke tests; the handlers treat it as best-effort and skip when nil.
+	Email email.Sender
 }
 
 // Server owns the chi router and the embedded *http.Server. It is the
@@ -78,6 +83,7 @@ type Server struct {
 	identity   *identity.Service
 	policy     *policy.Service
 	metrics    *observability.Metrics
+	email      email.Sender
 	rateLimit  *rateLimiter
 
 	// Readiness-aware load shedding (REL-5). dbHealthy is the cached DB health
@@ -114,6 +120,7 @@ type Server struct {
 	reconciliation *reconciliation.Repo
 	revenue        *revenue.Repo
 	risk           *risk.Repo
+	notifications  *notifications.Repo
 	userRepo       *repo.UserRepo
 	sessionRepo    *repo.SessionRepo
 
@@ -135,6 +142,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		identity: deps.Identity,
 		policy:   deps.Policy,
 		metrics:  deps.Metrics,
+		email:    deps.Email,
 	}
 
 	// Default to healthy so the load-shedding middleware (REL-5) passes traffic
@@ -192,6 +200,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
+		s.notifications = notifications.New(deps.DB)
 		s.userRepo = repo.NewUserRepo(deps.DB)
 		s.sessionRepo = repo.NewSessionRepo(deps.DB)
 	}
