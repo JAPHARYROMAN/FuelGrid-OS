@@ -194,6 +194,20 @@ type Config struct {
 	// email (e.g. the password-reset URL). Falls back to localhost in dev.
 	AppBaseURL string `envconfig:"APP_BASE_URL" default:"http://localhost:3000"`
 
+	// M-Pesa (Safaricom Daraja) mobile-money collections. When
+	// MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET are unset the client is a
+	// disabled no-op (like SMTP/Sentry): the endpoints mount but initiating a
+	// push returns 503 rather than dialing Safaricom — so dev/CI never need
+	// credentials. The key + secret are Secrets so they never reach a log line.
+	// MPESA_ENV selects sandbox|production; MPESA_SHORTCODE / MPESA_PASSKEY /
+	// MPESA_CALLBACK_URL are needed only to actually initiate an STK push.
+	MpesaConsumerKey    Secret `envconfig:"MPESA_CONSUMER_KEY"`
+	MpesaConsumerSecret Secret `envconfig:"MPESA_CONSUMER_SECRET"`
+	MpesaShortcode      string `envconfig:"MPESA_SHORTCODE"`
+	MpesaPasskey        Secret `envconfig:"MPESA_PASSKEY"`
+	MpesaEnv            string `envconfig:"MPESA_ENV" default:"sandbox"`
+	MpesaCallbackURL    string `envconfig:"MPESA_CALLBACK_URL"`
+
 	// Observability.
 	MetricsObserveInterval time.Duration `envconfig:"METRICS_OBSERVE_INTERVAL" default:"15s"`
 	OtelExporter           string        `envconfig:"OTEL_EXPORTER" default:"none"`
