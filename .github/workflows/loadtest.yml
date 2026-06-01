@@ -1,0 +1,123 @@
+name: Load test (manual)
+
+# OPT-IN ONLY. This workflow is `workflow_dispatch` (manual) — it never runs on
+# push or pull_request, so it does not gate or slow normal CI. Trigger it by
+# hand from the Actions tab (or `gh workflow run loadtest.yml`) when you want to
+# exercise the k6 harness against a fresh, seeded stack.
+#
+# It boots Postgres + Redis (the same service pattern as the CI `migrations`
+# job), applies migrations, seeds the demo tenant, boots the API, installs k6,
+# and runs the k6 SMOKE scenario with its thresholds as a hard gate: if
+# http_req_failed >= 1% or any per-endpoint p95 budget is breached, k6 exits
+# non-zero and the job fails.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'k6 scenario to run (smoke is the gated default).'
+        type: choice
+        default: smoke
+        options:
+          - smoke
+          - read_heavy
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  k6:
+    name: k6 — ${{ inputs.scenario }} against seeded stack
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fuelgrid
+          POSTGRES_PASSWORD: fuelgrid
+          POSTGRES_DB: fuelgrid
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fuelgrid -d fuelgrid"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable
+      REDIS_URL: redis://localhost:6379/0
+      AUTH_PASSWORD_PEPPER: ci-test-pepper
+      BASE_URL: http://127.0.0.1:8080
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Apply migrations
+        run: go run ./services/api/cmd/migrate up
+
+      - name: Seed demo data
+        run: go run ./services/api/cmd/seed
+
+      - name: Build api binary
+        run: go build -o /tmp/api ./services/api/cmd/api
+
+      - name: Boot api and wait for readiness
+        run: |
+          /tmp/api &
+          echo "API_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -sS -f http://127.0.0.1:8080/healthz > /dev/null; then
+              echo "API is up"
+              break
+            fi
+            sleep 0.5
+          done
+          # /readyz must report ready (postgres + redis ok) before we load it.
+          body=$(curl -sS http://127.0.0.1:8080/readyz)
+          echo "readyz: $body"
+          echo "$body" | grep -q '"status":"ready"'
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+          k6 version
+
+      - name: Run k6 ${{ inputs.scenario }} (thresholds gate the job)
+        # k6 exits non-zero when a threshold is breached, which fails this step.
+        # --summary-export writes a machine-readable summary for the artifact.
+        run: |
+          k6 run \
+            --summary-export=loadtest-summary.json \
+            "loadtest/k6/${{ inputs.scenario }}.js"
+
+      - name: Stop api
+        if: always()
+        run: kill "${API_PID}" 2>/dev/null || true
+
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-${{ inputs.scenario }}-summary
+          path: loadtest-summary.json
+          retention-days: 14
