@@ -15,7 +15,7 @@ interface CommandPaletteProps {
 /**
  * Skeleton command palette. It opens, it accepts text, it shows an
  * empty state. Concrete commands (jump-to-station, run-report,
- * ask-AI-assistant) plug in once those features exist.
+ * run-insight-query) plug in once those features exist.
  */
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   // Ctrl/Cmd+K toggles the palette from anywhere in the app.
