@@ -1,106 +1,230 @@
 @import 'tailwindcss';
 
 /*
- * Design tokens. Variables drive both light and dark themes; the `.dark`
- * class on <html> flips them. Names follow shadcn/ui conventions so any
- * future component we copy in from there picks up the right tokens.
+ * FuelGrid OS — design tokens (v2, "Refined Console").
  *
- * Brand surfaces (navy, electric blue, fuel product colors) come from
- * docs/ui-ux.md §5.
+ * A restrained, high-end system: neutral greys (no navy), a single confident
+ * indigo accent, and semantic status colors reserved STRICTLY for state.
+ * Variables hold HSL triplets so the `.dark` class can flip the whole system;
+ * @theme binds them to Tailwind utilities (bg-background, text-muted-foreground…).
+ *
+ * Both themes are first-class. Light is calm and paper-white; dark is a true
+ * neutral near-black (not blue-black) so the accent and data read cleanly.
  */
 
 @layer base {
   :root {
-    /* Surface */
+    /* Surfaces — light */
     --color-background: 0 0% 100%;
-    --color-foreground: 222 47% 11%;
+    --color-surface: 240 20% 99%;
+    --color-foreground: 240 10% 9%;
     --color-card: 0 0% 100%;
-    --color-card-foreground: 222 47% 11%;
-    --color-muted: 220 14% 96%;
-    --color-muted-foreground: 215 16% 47%;
-    --color-border: 220 13% 91%;
-    --color-ring: 217 91% 60%;
+    --color-card-foreground: 240 10% 9%;
+    --color-popover: 0 0% 100%;
+    --color-popover-foreground: 240 10% 9%;
+    --color-muted: 240 6% 96%;
+    --color-muted-foreground: 240 4% 44%;
+    --color-border: 240 6% 90%;
+    --color-input: 240 6% 88%;
+    --color-ring: 243 75% 59%;
 
-    /* Brand */
-    --color-accent: 217 91% 60%;
+    /* Brand — one confident indigo */
+    --color-accent: 243 75% 59%;
     --color-accent-foreground: 0 0% 100%;
-    --color-secondary: 220 14% 96%;
-    --color-secondary-foreground: 222 47% 11%;
+    --color-accent-muted: 243 75% 96%;
+    --color-secondary: 240 6% 96%;
+    --color-secondary-foreground: 240 10% 9%;
 
-    /* Status */
-    --color-success: 158 64% 40%;
-    --color-warning: 38 92% 50%;
-    --color-danger: 0 72% 51%;
+    /* Status — reserved for state only */
+    --color-success: 152 56% 38%;
+    --color-success-foreground: 0 0% 100%;
+    --color-warning: 33 92% 45%;
+    --color-warning-foreground: 0 0% 100%;
+    --color-danger: 0 72% 50%;
     --color-danger-foreground: 0 0% 100%;
-    --color-info: 199 89% 48%;
+    --color-info: 217 80% 54%;
+    --color-info-foreground: 0 0% 100%;
+
+    /* Elevation — soft, layered (tuned for light) */
+    --shadow-xs: 0 1px 2px 0 hsl(240 10% 9% / 0.04);
+    --shadow-sm: 0 1px 3px 0 hsl(240 10% 9% / 0.06), 0 1px 2px -1px hsl(240 10% 9% / 0.05);
+    --shadow-md: 0 4px 12px -2px hsl(240 10% 9% / 0.08), 0 2px 6px -2px hsl(240 10% 9% / 0.05);
+    --shadow-lg: 0 12px 32px -8px hsl(240 10% 9% / 0.12), 0 6px 12px -6px hsl(240 10% 9% / 0.08);
   }
 
   .dark {
-    /* Deep navy command-center palette per docs/ui-ux.md §5.4 */
-    --color-background: 222 47% 7%;
-    --color-foreground: 210 40% 96%;
-    --color-card: 220 39% 11%;
-    --color-card-foreground: 210 40% 96%;
-    --color-muted: 217 33% 17%;
-    --color-muted-foreground: 215 20% 65%;
-    --color-border: 217 33% 20%;
-    --color-ring: 217 91% 60%;
+    /* Surfaces — true neutral near-black, layered */
+    --color-background: 240 6% 7%;
+    --color-surface: 240 6% 9%;
+    --color-foreground: 0 0% 98%;
+    --color-card: 240 5% 10%;
+    --color-card-foreground: 0 0% 98%;
+    --color-popover: 240 5% 11%;
+    --color-popover-foreground: 0 0% 98%;
+    --color-muted: 240 5% 14%;
+    --color-muted-foreground: 240 5% 64%;
+    --color-border: 240 5% 17%;
+    --color-input: 240 5% 20%;
+    --color-ring: 243 90% 72%;
 
-    --color-accent: 217 91% 60%;
-    --color-accent-foreground: 0 0% 100%;
-    --color-secondary: 217 33% 17%;
-    --color-secondary-foreground: 210 40% 96%;
+    --color-accent: 243 90% 70%;
+    --color-accent-foreground: 240 30% 8%;
+    --color-accent-muted: 243 60% 16%;
+    --color-secondary: 240 5% 14%;
+    --color-secondary-foreground: 0 0% 98%;
 
-    --color-success: 158 64% 52%;
-    --color-warning: 38 92% 50%;
-    --color-danger: 0 72% 51%;
+    --color-success: 152 58% 50%;
+    --color-success-foreground: 152 60% 8%;
+    --color-warning: 38 92% 56%;
+    --color-warning-foreground: 38 70% 8%;
+    --color-danger: 0 72% 60%;
     --color-danger-foreground: 0 0% 100%;
-    --color-info: 199 89% 48%;
+    --color-info: 217 90% 66%;
+    --color-info-foreground: 217 60% 8%;
+
+    /* Elevation — depth from darkness + faint light borders, soft shadows */
+    --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.4);
+    --shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.5), 0 1px 2px -1px hsl(0 0% 0% / 0.4);
+    --shadow-md: 0 4px 16px -4px hsl(0 0% 0% / 0.6), 0 2px 6px -2px hsl(0 0% 0% / 0.5);
+    --shadow-lg: 0 16px 40px -8px hsl(0 0% 0% / 0.7), 0 6px 16px -6px hsl(0 0% 0% / 0.55);
   }
 }
 
-@theme {
-  /* Bind CSS variables to Tailwind utility classes. */
+@theme inline {
+  /* Bind CSS variables to Tailwind utilities. */
   --color-background: hsl(var(--color-background));
+  --color-surface: hsl(var(--color-surface));
   --color-foreground: hsl(var(--color-foreground));
   --color-card: hsl(var(--color-card));
   --color-card-foreground: hsl(var(--color-card-foreground));
+  --color-popover: hsl(var(--color-popover));
+  --color-popover-foreground: hsl(var(--color-popover-foreground));
   --color-muted: hsl(var(--color-muted));
   --color-muted-foreground: hsl(var(--color-muted-foreground));
   --color-border: hsl(var(--color-border));
+  --color-input: hsl(var(--color-input));
   --color-ring: hsl(var(--color-ring));
+
   --color-accent: hsl(var(--color-accent));
   --color-accent-foreground: hsl(var(--color-accent-foreground));
+  --color-accent-muted: hsl(var(--color-accent-muted));
   --color-secondary: hsl(var(--color-secondary));
   --color-secondary-foreground: hsl(var(--color-secondary-foreground));
+
   --color-success: hsl(var(--color-success));
+  --color-success-foreground: hsl(var(--color-success-foreground));
   --color-warning: hsl(var(--color-warning));
+  --color-warning-foreground: hsl(var(--color-warning-foreground));
   --color-danger: hsl(var(--color-danger));
   --color-danger-foreground: hsl(var(--color-danger-foreground));
   --color-info: hsl(var(--color-info));
+  --color-info-foreground: hsl(var(--color-info-foreground));
 
+  /* Radii — softer, consistent */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+
+  /* Elevation */
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  /* Typography — Geist via next/font (vars set on <html>) */
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+    var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New',
-    monospace;
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
 }
 
 @layer base {
+  * {
+    border-color: hsl(var(--color-border));
+  }
+
   html,
   body {
     height: 100%;
+  }
+
+  html {
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   body {
     background-color: hsl(var(--color-background));
     color: hsl(var(--color-foreground));
+    font-feature-settings: 'cv11', 'ss01';
+    font-synthesis-weight: none;
   }
 
-  /* Tabular numerals for any numeric class — money/liters per UI/UX §6.3. */
+  /* Refined headings — tight tracking, balanced wrapping. */
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  /* Tabular numerals for any numeric class — money/litres always align. */
   .tabular-nums {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Selection picks up the brand accent. */
+  ::selection {
+    background-color: hsl(var(--color-accent) / 0.25);
+  }
+
+  /* Quiet, theme-aware scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-border)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--color-border));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--color-muted-foreground) / 0.5);
+  }
+}
+
+@layer utilities {
+  /* Subtle ambient grid/glow used on marketing-grade surfaces (login). */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--color-border) / 0.5) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--color-border) / 0.5) 1px, transparent 1px);
+    background-size: 56px 56px;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Card elevation helpers mapped to the tokens above. */
+  .shadow-elev-sm {
+    box-shadow: var(--shadow-sm);
+  }
+  .shadow-elev-md {
+    box-shadow: var(--shadow-md);
+  }
+  .shadow-elev-lg {
+    box-shadow: var(--shadow-lg);
   }
 }

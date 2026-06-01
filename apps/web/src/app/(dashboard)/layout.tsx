@@ -4,7 +4,6 @@ import { useState } from 'react';
 
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { CommandPalette } from '@/components/layout/command-palette';
-import { RightPanel } from '@/components/layout/right-panel';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Topbar } from '@/components/layout/topbar';
 import { Toaster } from '@/components/toaster';
@@ -18,10 +17,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar onOpenCommand={() => setCommandOpen(true)} />
-          <div className="flex flex-1 overflow-hidden">
-            <main className="flex-1 overflow-y-auto p-6">{children}</main>
-            <RightPanel />
-          </div>
+          <main className="flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+              {children}
+            </div>
+          </main>
         </div>
       </div>
       <CommandPalette open={commandOpen} onOpenChange={setCommandOpen} />

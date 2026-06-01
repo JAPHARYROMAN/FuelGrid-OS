@@ -31,66 +31,128 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
 }
 
-const navItems: NavItem[] = [
-  { label: 'Command Center', href: '/command-center', icon: LayoutDashboard },
-  { label: 'Enterprise', href: '/enterprise', icon: Building2 },
-  { label: 'My Shift', href: '/my-shift', icon: Gauge },
-  { label: 'Operations', href: '/operations', icon: ClipboardCheck },
-  { label: 'Stations', href: '/stations', icon: Building2 },
-  { label: 'Tanks', href: '/tanks', icon: Database },
-  { label: 'Pumps', href: '/pumps', icon: Fuel },
-  { label: 'Sales', href: '/sales', icon: BarChart3 },
-  { label: 'Revenue', href: '/revenue', icon: Receipt },
-  { label: 'Inventory', href: '/inventory', icon: Droplet },
-  { label: 'Reconciliation', href: '/reconciliation', icon: Scale },
-  { label: 'Procurement', href: '/procurement', icon: Truck },
-  { label: 'Incidents', href: '/incidents', icon: AlertTriangle },
-  { label: 'Customers', href: '/customers', icon: Users },
-  { label: 'Finance', href: '/finance', icon: DollarSign },
-  { label: 'Reports', href: '/reports', icon: BarChart3 },
-  { label: 'Alerts', href: '/alerts', icon: AlertCircle },
-  { label: 'Risk', href: '/risk', icon: ShieldCheck },
-  { label: 'AI Assistant', href: '/assistant', icon: Sparkles },
-  { label: 'Audit', href: '/audit', icon: ShieldCheck },
-  { label: 'Settings', href: '/settings', icon: Settings },
-];
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
 
 /**
- * Sidebar nav. Most entries are visual placeholders for Phase-2+ work —
- * clicking them lands on a 404 today, which is intentional: the shell is
- * how operators will eventually navigate the OS, and seeing the full
- * surface early keeps the design honest.
+ * Grouped navigation. Sections give the 20+ destinations a legible hierarchy
+ * instead of one long flat list — the single biggest "clutter" fix in the
+ * shell. Most entries are Phase-2+ placeholders; seeing the full surface keeps
+ * the information architecture honest.
  */
+const navGroups: NavGroup[] = [
+  {
+    label: 'Overview',
+    items: [
+      { label: 'Command Center', href: '/command-center', icon: LayoutDashboard },
+      { label: 'Enterprise', href: '/enterprise', icon: Building2 },
+    ],
+  },
+  {
+    label: 'Operations',
+    items: [
+      { label: 'My Shift', href: '/my-shift', icon: Gauge },
+      { label: 'Operations', href: '/operations', icon: ClipboardCheck },
+      { label: 'Stations', href: '/stations', icon: Building2 },
+      { label: 'Tanks', href: '/tanks', icon: Database },
+      { label: 'Pumps', href: '/pumps', icon: Fuel },
+    ],
+  },
+  {
+    label: 'Commerce',
+    items: [
+      { label: 'Sales', href: '/sales', icon: BarChart3 },
+      { label: 'Revenue', href: '/revenue', icon: Receipt },
+      { label: 'Inventory', href: '/inventory', icon: Droplet },
+      { label: 'Reconciliation', href: '/reconciliation', icon: Scale },
+      { label: 'Procurement', href: '/procurement', icon: Truck },
+      { label: 'Customers', href: '/customers', icon: Users },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { label: 'Finance', href: '/finance', icon: DollarSign },
+      { label: 'Reports', href: '/reports', icon: BarChart3 },
+    ],
+  },
+  {
+    label: 'Monitoring',
+    items: [
+      { label: 'Incidents', href: '/incidents', icon: AlertTriangle },
+      { label: 'Alerts', href: '/alerts', icon: AlertCircle },
+      { label: 'Risk', href: '/risk', icon: ShieldCheck },
+      { label: 'Audit', href: '/audit', icon: ShieldCheck },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { label: 'AI Assistant', href: '/assistant', icon: Sparkles },
+      { label: 'Settings', href: '/settings', icon: Settings },
+    ],
+  },
+];
+
 export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-60 shrink-0 flex-col gap-1 border-r border-border bg-card/40 p-3 lg:flex">
-      <div className="px-3 py-4">
-        <span className="text-sm font-semibold tracking-tight text-foreground">FuelGrid OS</span>
-        <p className="text-[11px] uppercase tracking-wider text-muted-foreground">command center</p>
+    <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface lg:flex">
+      {/* Brand */}
+      <div className="flex h-16 items-center gap-2.5 px-5">
+        <span className="flex size-8 items-center justify-center rounded-lg bg-accent text-accent-foreground shadow-elev-sm">
+          <Fuel className="size-4" />
+        </span>
+        <div className="flex flex-col leading-none">
+          <span className="text-[15px] font-semibold tracking-tight text-foreground">FuelGrid</span>
+          <span className="text-[11px] text-muted-foreground">Operations</span>
+        </div>
       </div>
 
-      <nav className="flex flex-col gap-0.5">
-        {navItems.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + '/');
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors',
-                active
-                  ? 'bg-accent/15 text-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-            >
-              <Icon className="size-4" />
-              <span>{item.label}</span>
-            </Link>
-          );
-        })}
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 pb-6">
+        {navGroups.map((group) => (
+          <div key={group.label} className="mb-5">
+            <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              {group.label}
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {group.items.map((item) => {
+                const active = pathname === item.href || pathname.startsWith(item.href + '/');
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                      active
+                        ? 'bg-accent-muted/70 font-medium text-foreground'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    )}
+                  >
+                    {active ? (
+                      <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+                    ) : null}
+                    <Icon
+                      className={cn(
+                        'size-[18px] shrink-0 transition-colors',
+                        active
+                          ? 'text-accent'
+                          : 'text-muted-foreground group-hover:text-foreground',
+                      )}
+                    />
+                    <span className="truncate">{item.label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
     </aside>
   );
