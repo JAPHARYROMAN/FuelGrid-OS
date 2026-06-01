@@ -14,8 +14,10 @@ import {
   EmptyState,
   ErrorState,
   Input,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
+import { CalendarClock } from 'lucide-react';
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
@@ -110,32 +112,32 @@ export default function OperationsPage() {
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not close shift'),
   });
 
+  const stationSelect =
+    (stations.data?.items?.length ?? 0) > 0 ? (
+      <label className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">Station</span>
+        <select
+          className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+          value={stationID}
+          onChange={(e) => setStationID(e.target.value)}
+        >
+          {stations.data!.items.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.code})
+            </option>
+          ))}
+        </select>
+      </label>
+    ) : null;
+
   return (
-    <div className="flex flex-col gap-5">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Operations</h1>
-          <p className="text-sm text-muted-foreground">
-            Run the day: active shifts, cash status, approvals, and exceptions.
-          </p>
-        </div>
-        {(stations.data?.items?.length ?? 0) > 0 ? (
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">Station</span>
-            <select
-              className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-              value={stationID}
-              onChange={(e) => setStationID(e.target.value)}
-            >
-              {stations.data!.items.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} ({s.code})
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </header>
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow="Operations"
+        title="Operations"
+        description="Run the day: active shifts, cash status, approvals, and exceptions."
+        actions={stationSelect}
+      />
 
       {actionError ? (
         <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
@@ -144,7 +146,13 @@ export default function OperationsPage() {
       ) : null}
 
       {stations.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-28 rounded-xl" />
+          <div className="grid gap-4 md:grid-cols-2">
+            <Skeleton className="h-64 rounded-xl" />
+            <Skeleton className="h-64 rounded-xl" />
+          </div>
+        </div>
       ) : stations.isError ? (
         <ErrorState
           title="Couldn't load stations"
@@ -154,7 +162,13 @@ export default function OperationsPage() {
       ) : (stations.data?.items?.length ?? 0) === 0 ? (
         <EmptyState title="No stations" description="You don't have access to any stations yet." />
       ) : overview.isPending ? (
-        <LoadingState />
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-28 rounded-xl" />
+          <div className="grid gap-4 md:grid-cols-2">
+            <Skeleton className="h-64 rounded-xl" />
+            <Skeleton className="h-64 rounded-xl" />
+          </div>
+        </div>
       ) : overview.isError ? (
         (() => {
           const err = overview.error;
@@ -187,7 +201,10 @@ export default function OperationsPage() {
         <>
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-              <CardTitle className="text-base">
+              <CardTitle className="flex items-center gap-2.5 text-base">
+                <span className="flex size-9 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+                  <CalendarClock className="size-4" />
+                </span>
                 Operating day · {overview.data.day.business_date}
               </CardTitle>
               <Badge tone={overview.data.day.status === 'open' ? 'success' : 'warning'}>
@@ -387,7 +404,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={
-          'font-medium tabular-nums' +
+          'font-mono text-sm font-medium tabular-nums' +
           (tone === 'danger' ? ' text-danger' : tone === 'success' ? ' text-success' : '')
         }
       >

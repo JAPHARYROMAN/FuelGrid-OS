@@ -17,7 +17,8 @@ import {
   CardTitle,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
@@ -96,29 +97,27 @@ export default function PumpDetailPage() {
   });
 
   return (
-    <div className="flex flex-col gap-5">
-      <div>
-        <Button variant="ghost" size="sm" asChild>
-          <Link href="/settings/pumps">
-            <ArrowLeft className="size-4" />
+    <div className="flex flex-col gap-7">
+      <PageHeader
+        eyebrow={
+          <Link
+            href="/settings/pumps"
+            className="inline-flex items-center gap-1 hover:text-foreground"
+          >
+            <ArrowLeft className="size-3.5" />
             Back to pumps
           </Link>
-        </Button>
-      </div>
-
-      <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          {pump.data ? `Pump ${pump.data.number}` : 'Pump'}
-        </h1>
-        {pump.data ? (
-          <Badge tone={pump.data.status === 'active' ? 'success' : 'warning'}>
-            {pump.data.status}
-          </Badge>
-        ) : null}
-        {pump.data?.name ? (
-          <span className="text-sm text-muted-foreground">{pump.data.name}</span>
-        ) : null}
-      </header>
+        }
+        title={pump.data ? `Pump ${pump.data.number}` : 'Pump'}
+        description={pump.data?.name || undefined}
+        actions={
+          pump.data ? (
+            <Badge tone={pump.data.status === 'active' ? 'success' : 'warning'}>
+              {pump.data.status}
+            </Badge>
+          ) : null
+        }
+      />
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* Status toggle */}
@@ -254,7 +253,11 @@ export default function PumpDetailPage() {
         </CardHeader>
         <CardContent>
           {calibrations.isPending ? (
-            <LoadingState />
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 rounded-lg" />
+              ))}
+            </div>
           ) : (calibrations.data?.items?.length ?? 0) === 0 ? (
             <p className="text-sm text-muted-foreground">No calibrations recorded yet.</p>
           ) : (
@@ -274,7 +277,7 @@ export default function PumpDetailPage() {
                     <TableCell>
                       <Badge tone={calTone(c.status)}>{c.status}</Badge>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="text-right font-mono tabular-nums">
                       {c.tolerance_percent != null ? c.tolerance_percent.toFixed(2) : '—'}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{c.notes ?? '—'}</TableCell>

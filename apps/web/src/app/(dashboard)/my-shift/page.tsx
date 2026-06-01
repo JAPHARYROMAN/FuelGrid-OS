@@ -15,7 +15,8 @@ import {
   ErrorState,
   Input,
   Label,
-  LoadingState,
+  PageHeader,
+  Skeleton,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
@@ -94,7 +95,15 @@ export default function MyShiftPage() {
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not submit cash'),
   });
 
-  if (shift.isPending) return <LoadingState />;
+  if (shift.isPending) {
+    return (
+      <div className="mx-auto flex max-w-md flex-col gap-4">
+        <Skeleton className="h-16 rounded-xl" />
+        <Skeleton className="h-40 rounded-xl" />
+        <Skeleton className="h-40 rounded-xl" />
+      </div>
+    );
+  }
   if (shift.isError) {
     return (
       <ErrorState
@@ -217,14 +226,15 @@ export default function MyShiftPage() {
   const varianceNegative = parseDecimal(variance) < 0;
 
   return (
-    <div className="mx-auto flex max-w-md flex-col gap-4">
-      <header className="flex items-center justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">My Shift</h1>
-          <p className="text-sm text-muted-foreground">{s.name}</p>
-        </div>
-        <Badge tone={isOpen ? 'success' : isApproved ? 'neutral' : 'warning'}>{s.status}</Badge>
-      </header>
+    <div className="mx-auto flex max-w-md flex-col gap-6">
+      <PageHeader
+        eyebrow="Operations"
+        title="My Shift"
+        description={s.name}
+        actions={
+          <Badge tone={isOpen ? 'success' : isApproved ? 'neutral' : 'warning'}>{s.status}</Badge>
+        }
+      />
 
       {isApproved ? (
         <div className="rounded-md bg-success/10 px-3 py-2 text-sm text-success">
@@ -375,7 +385,7 @@ function Row({
       <span className="text-muted-foreground">{label}</span>
       <span
         className={
-          'font-medium tabular-nums' +
+          'font-mono text-sm font-medium tabular-nums' +
           (tone === 'danger' ? ' text-danger' : tone === 'success' ? ' text-success' : '')
         }
       >
