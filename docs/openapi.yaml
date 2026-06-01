@@ -1743,6 +1743,91 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/stations/{stationID}/reports/revenue.xlsx:
+    get:
+      tags: [Reports]
+      summary: Export a station's recent revenue days as a styled Excel workbook
+      parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: XLSX export, content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stations/{stationID}/reports/reconciliation.xlsx:
+    get:
+      tags: [Reports]
+      summary: Export a station's day reconciliations as a styled Excel workbook
+      parameters:
+        - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: operating_day_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: XLSX export, content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/financials.xlsx:
+    get:
+      tags: [Reports]
+      summary: Export P&L + balance sheet as a styled Excel workbook
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string, enum: [this-month, last-month, ytd, last-30] } }
+      responses:
+        '200': { description: XLSX export, content: { application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/daily-close/insights:
+    get:
+      tags: [Reports]
+      summary: Deterministic insights + data-quality warnings for the Daily Station Close report
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Insights, content: { application/json: { schema: { $ref: '#/components/schemas/ReportInsights' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/sales-summary/insights:
+    get:
+      tags: [Reports]
+      summary: Deterministic insights + data-quality warnings for the Sales Summary report
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Insights, content: { application/json: { schema: { $ref: '#/components/schemas/ReportInsights' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/stock-reconciliation/insights:
+    get:
+      tags: [Reports]
+      summary: Deterministic insights + data-quality warnings for the Fuel Stock Reconciliation report
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Insights, content: { application/json: { schema: { $ref: '#/components/schemas/ReportInsights' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/cash-reconciliation/insights:
+    get:
+      tags: [Reports]
+      summary: Deterministic insights + data-quality warnings for the Cash Reconciliation report
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Insights, content: { application/json: { schema: { $ref: '#/components/schemas/ReportInsights' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/customer-aging/insights:
+    get:
+      tags: [Reports]
+      summary: Deterministic insights + data-quality warnings for the Customer Aging report
+      responses:
+        '200': { description: Insights, content: { application/json: { schema: { $ref: '#/components/schemas/ReportInsights' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/audit-logs/export:
     post:
       tags: [Audit]
@@ -3826,6 +3911,27 @@ components:
     Object:
       type: object
       additionalProperties: true
+    # Deterministic report insights + data-quality warnings (REPORTING).
+    ReportInsights:
+      type: object
+      properties:
+        insights:
+          type: array
+          items:
+            type: object
+            properties:
+              severity: { type: string, enum: [info, warning, critical] }
+              message: { type: string }
+              recommended_action: { type: string }
+            required: [severity, message]
+        data_quality:
+          type: array
+          items:
+            type: object
+            properties:
+              message: { type: string }
+            required: [message]
+      required: [insights, data_quality]
     # Standard paginated list envelope returned by the paginated list
     # endpoints: {items, count, limit, offset, has_more}. Monetary, litre,
     # and rate values inside items are decimal strings (type: string).

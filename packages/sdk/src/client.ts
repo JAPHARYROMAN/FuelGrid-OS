@@ -62,6 +62,8 @@ import type {
   Reconciliation,
   ReconciliationOverview,
   Region,
+  ReportInsights,
+  ReportKey,
   ReportSpec,
   Role,
   Sale,
@@ -2390,14 +2392,34 @@ export class Client {
         const qs = params.toString();
         return `${this.baseURL}/api/v1/accounting/gl-export.csv${qs ? `?${qs}` : ''}`;
       }
+      case 'revenue-xlsx':
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/revenue.xlsx`;
+      case 'reconciliation-xlsx': {
+        const qs = report.operatingDayID
+          ? `?operating_day_id=${encodeURIComponent(report.operatingDayID)}`
+          : '';
+        return `${this.baseURL}/api/v1/stations/${encodeURIComponent(report.stationID)}/reports/reconciliation.xlsx${qs}`;
+      }
+      case 'financials-xlsx': {
+        const qs = report.period ? `?period=${encodeURIComponent(report.period)}` : '';
+        return `${this.baseURL}/api/v1/reports/financials.xlsx${qs}`;
+      }
     }
   }
 
-  /** The HTTP Accept header for a report spec — PDF documents vs CSV data. */
+  /** The HTTP Accept header for a report spec — PDF / XLSX documents vs CSV. */
   private reportAccept(report: ReportSpec): string {
-    return report.kind === 'daily-close-pdf' || report.kind === 'financials-pdf'
-      ? 'application/pdf'
-      : 'text/csv';
+    if (report.kind === 'daily-close-pdf' || report.kind === 'financials-pdf') {
+      return 'application/pdf';
+    }
+    if (
+      report.kind === 'revenue-xlsx' ||
+      report.kind === 'reconciliation-xlsx' ||
+      report.kind === 'financials-xlsx'
+    ) {
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    return 'text/csv';
   }
 
   /**
@@ -2428,6 +2450,26 @@ export class Client {
       throw new SdkError(message, res.status, body, requestId);
     }
     return res.blob();
+  }
+
+  /**
+   * Fetch the deterministic insights + data-quality warnings for a signature
+   * report. The station-scoped reports require `stationID`; `customer-aging` is
+   * tenant-wide and ignores it. `period` is accepted for forward-compatibility.
+   */
+  getReportInsights(
+    reportKey: ReportKey,
+    opts?: { stationID?: string; period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportInsights> {
+    const params = new URLSearchParams();
+    if (opts?.stationID) params.set('station_id', opts.stationID);
+    if (opts?.period) params.set('period', opts.period);
+    const qs = params.toString();
+    return this.request<ReportInsights>(
+      `/api/v1/reports/${encodeURIComponent(reportKey)}/insights${qs ? `?${qs}` : ''}`,
+      { signal },
+    );
   }
 
   // ----------- Cash & banking (Phase 7) -----------
