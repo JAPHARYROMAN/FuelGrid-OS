@@ -95,3 +95,13 @@ export type { TankVisualProps } from './components/tank-visual';
 
 export { PumpCard } from './components/pump-card';
 export type { PumpCardProps, PumpCardNozzle } from './components/pump-card';
+
+export {
+  LineChart,
+  AreaChart,
+  BarChart,
+  CategoricalBarChart,
+  Sparkline,
+} from './components/charts';
+export type { ChartSeries } from './components/charts';
+export { chartColors } from './lib/chart-theme';
