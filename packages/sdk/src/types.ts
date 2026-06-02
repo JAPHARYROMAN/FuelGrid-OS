@@ -160,7 +160,9 @@ export interface Delivery {
   supplier_id?: string;
   purchase_order_id?: string;
   po_line_id?: string;
-  volume_litres: number;
+  /** Ledger volume + PO variance are exact decimal STRINGS (numeric(14,3) -> text). */
+  volume_litres: string;
+  /** Advisory dip cross-checks are sensor floats, not ledger figures. */
   dip_before_litres?: number;
   dip_after_litres?: number;
   dip_variance_litres?: number;
@@ -171,7 +173,7 @@ export interface Delivery {
   landed_cost_total?: string;
   landed_cost_per_litre?: string;
   match_status: string;
-  quantity_variance_litres?: number;
+  quantity_variance_litres?: string;
   received_by: string;
   received_at: string;
   notes?: string;
@@ -289,8 +291,11 @@ export interface Tank {
   status: string;
   installation_date?: string;
   decommission_date?: string;
-  /** Latest dip-resolved volume; present only on the station overview. */
-  current_litres?: number;
+  /**
+   * Latest dip-resolved volume as an exact decimal STRING (numeric(14,3) ->
+   * text); present only on the station overview.
+   */
+  current_litres?: string;
   /** Metadata for current_litres, so the UI can flag a stale (prior-day) read. */
   current_dip_reading_type?: 'opening' | 'closing';
   current_dip_recorded_at?: string;
@@ -671,9 +676,9 @@ export interface RecentVariance {
 
 export interface InventoryOverviewTank {
   tank: Tank;
-  /** Ledger book balance is an exact decimal STRING; the rest are display floats. */
+  /** Book balance + latest physical are exact decimal STRINGS; fill %/days are display floats. */
   book_balance: string;
-  latest_physical?: number;
+  latest_physical?: string;
   latest_physical_at?: string;
   fill_percent: number;
   days_of_stock?: number;
@@ -688,9 +693,9 @@ export interface InventoryOverview {
 
 export interface ReconciliationOverviewTank {
   tank: Tank;
-  /** Ledger book balance is an exact decimal STRING. */
+  /** Book balance + latest physical are exact decimal STRINGS. */
   book_balance: string;
-  latest_physical?: number;
+  latest_physical?: string;
   reconciliation?: Reconciliation;
 }
 
@@ -1637,6 +1642,12 @@ export interface Paginated<T> {
   items: T[];
   count: number;
   limit?: number;
+  offset?: number;
+  /**
+   * True when the returned window may not be the tail of the result set, i.e.
+   * another page can be fetched (the Go writePaged/writePagedMore envelope).
+   */
+  has_more: boolean;
 }
 
 // ----------- Workforce (Phase 11) -----------
