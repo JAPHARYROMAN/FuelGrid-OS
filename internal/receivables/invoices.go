@@ -164,6 +164,39 @@ func (r *Repo) RevenueBreakdown(ctx context.Context, q database.Querier, tenantI
 	return out, rows.Err()
 }
 
+// InvoiceLine is one billed line of a customer invoice. Amount is the exact
+// decimal STRING the column stores (numeric ::text); never a Go float64.
+type InvoiceLine struct {
+	ID                uuid.UUID
+	Description       *string
+	Amount            string
+	RevenueAccountKey string
+}
+
+// ListInvoiceLines returns an invoice's billed lines in insertion order, for
+// rendering the formal invoice document. Amounts are exact decimal strings.
+func (r *Repo) ListInvoiceLines(ctx context.Context, tenantID, invoiceID uuid.UUID) ([]InvoiceLine, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, description, amount::text, revenue_account_key
+		FROM customer_invoice_lines
+		WHERE tenant_id = $1 AND customer_invoice_id = $2
+		ORDER BY created_at, id
+	`, tenantID, invoiceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []InvoiceLine{}
+	for rows.Next() {
+		var l InvoiceLine
+		if err := rows.Scan(&l.ID, &l.Description, &l.Amount, &l.RevenueAccountKey); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // SetInvoiceJournalEntry links an issued invoice to the AR journal entry.
 func (r *Repo) SetInvoiceJournalEntry(ctx context.Context, tx pgx.Tx, tenantID, id, entryID uuid.UUID) error {
 	_, err := tx.Exec(ctx, `UPDATE customer_invoices SET journal_entry_id = $3 WHERE tenant_id = $1 AND id = $2`, tenantID, id, entryID)

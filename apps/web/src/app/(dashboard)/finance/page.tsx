@@ -28,6 +28,7 @@ import {
   formatMoney,
 } from '@fuelgrid/ui';
 
+import { DocumentActions } from '@/components/document-actions';
 import { api } from '@/lib/api';
 
 export default function FinancePage() {
@@ -43,12 +44,35 @@ export default function FinancePage() {
         title="Finance"
         description="Balance sheet, profit & loss, payables, and recent journal activity."
         actions={
-          <Button asChild variant="secondary">
-            <Link href="/finance/close">
-              Period close
-              <ArrowRight className="size-4" />
-            </Link>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <DocumentActions
+              onFetch={() => api.journalEntriesPdf()}
+              filename="journal-entries.pdf"
+              permission="journal.read"
+              viewLabel="View journal"
+              downloadLabel="Journal PDF"
+            />
+            <DocumentActions
+              onFetch={() => api.expensesPdf()}
+              filename="expenses.pdf"
+              permission="finance.read"
+              viewLabel="View expenses"
+              downloadLabel="Expenses PDF"
+            />
+            <DocumentActions
+              onFetch={() => api.supplierBalancesPdf()}
+              filename="supplier-balances.pdf"
+              permission="payable.read"
+              viewLabel="View AP"
+              downloadLabel="AP PDF"
+            />
+            <Button asChild variant="secondary">
+              <Link href="/finance/close">
+                Period close
+                <ArrowRight className="size-4" />
+              </Link>
+            </Button>
+          </div>
         }
       />
 

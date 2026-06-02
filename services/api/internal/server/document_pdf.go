@@ -104,6 +104,100 @@ func (s *Server) renderListDocument(r *http.Request, tenantID uuid.UUID, spec Li
 	return doc.bytes()
 }
 
+// RecordDocumentSpec declaratively describes a single formal RECORD document —
+// the kind you'd email a counterparty (a purchase order to a supplier, an
+// invoice to a customer). Unlike a list document (many rows of one entity) it
+// renders ONE entity: a letterhead, an optional party/address block, a
+// key/value header (number, dates, status, …), a line-items table, and a small
+// stack of totals. It is built on the same letterhead helper as the list
+// framework so a record and a list print with identical branding.
+type RecordDocumentSpec struct {
+	// Title is the document title (e.g. "Purchase Order", "Tax Invoice").
+	Title string
+	// SubLines are muted lines under the title (e.g. the document number).
+	SubLines []string
+	// PartyHeading labels the party block (e.g. "Supplier", "Bill to"). When
+	// empty the party block is skipped entirely.
+	PartyHeading string
+	// PartyLines are the counterparty identity lines (name, then optional
+	// address/contact lines). Rendered under PartyHeading.
+	PartyLines []string
+	// MetaPairs is the document's key/value header (number, dates, status, …),
+	// rendered as a two-column "Label  value" band.
+	MetaPairs []DocumentMeta
+	// LineColumns/Lines/LineTotals describe the line-items table, reusing the
+	// same paginating listTable as the list framework. Cells are pre-formatted
+	// decimal strings — never float64.
+	LineColumns []DocumentColumn
+	Lines       [][]string
+	LineTotals  []string
+	// Totals are the closing figures rendered as bold "label  amount" rows under
+	// the table (e.g. Subtotal / Tax / Total). Amounts are decimal strings.
+	Totals []DocumentMeta
+	// Note is an optional muted footnote (terms, remittance instructions).
+	Note string
+}
+
+// renderRecordDocument renders a single formal record document (PO, invoice)
+// from the spec and returns the encoded PDF. It loads the tenant letterhead,
+// draws the optional party block, the key/value meta band, the paginating
+// line-items table, the closing totals, and an optional note. It is the
+// record-shaped counterpart to renderListDocument and reuses the same
+// letterhead helper and listTable so both document families share branding and
+// pagination.
+func (s *Server) renderRecordDocument(r *http.Request, tenantID uuid.UUID, spec RecordDocumentSpec) ([]byte, error) {
+	doc := newLetterheadDoc(s.loadLetterhead(r, tenantID), LetterheadOptions{
+		Title:    spec.Title,
+		SubLines: spec.SubLines,
+	})
+
+	if spec.PartyHeading != "" && len(spec.PartyLines) > 0 {
+		doc.partyBlock(spec.PartyHeading, spec.PartyLines)
+	}
+
+	if len(spec.MetaPairs) > 0 {
+		doc.metaBand(spec.MetaPairs)
+	}
+
+	if len(spec.LineColumns) > 0 {
+		doc.listTable(spec.LineColumns, spec.Lines, spec.LineTotals)
+	}
+
+	for _, t := range spec.Totals {
+		doc.totalRow(t.Label, t.Value)
+	}
+
+	if spec.Note != "" {
+		doc.note(spec.Note)
+	}
+
+	return doc.bytes()
+}
+
+// partyBlock renders the counterparty identity block of a record document: a
+// small bold heading ("Supplier" / "Bill to") followed by the party's name and
+// address/contact lines. Kept visually distinct from the meta band so the
+// reader sees who the document is for at a glance.
+func (d *pdfDoc) partyBlock(heading string, lines []string) {
+	pdf := d.pdf
+	pdf.SetFont(pdfFontFamily, "B", 9)
+	pdf.SetTextColor(90, 90, 90)
+	pdf.CellFormat(0, 5, d.tr(heading), "", 1, "L", false, 0, "")
+	pdf.SetTextColor(20, 20, 20)
+	for i, ln := range lines {
+		if ln == "" {
+			continue
+		}
+		style := ""
+		if i == 0 {
+			style = "B" // the party name
+		}
+		pdf.SetFont(pdfFontFamily, style, 10)
+		pdf.CellFormat(0, 5, d.tr(ln), "", 1, "L", false, 0, "")
+	}
+	pdf.Ln(2)
+}
+
 // fitColumnWidths returns cols unchanged when their widths fit within the
 // usable content width, or a copy scaled down proportionally when they
 // overflow, so a mis-sized column set can never run off the right margin. It

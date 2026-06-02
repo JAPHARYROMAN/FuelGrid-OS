@@ -26,6 +26,7 @@ import {
   TableRow,
 } from '@fuelgrid/ui';
 
+import { DocumentActions } from '@/components/document-actions';
 import { api } from '@/lib/api';
 import { formatLitres, formatMoney, parseDecimal, sumMoney } from '@/lib/money';
 
@@ -115,6 +116,23 @@ export default function ProcurementPage() {
                 Receiving
               </Link>
             </Button>
+            <DocumentActions
+              onFetch={() => api.purchaseOrdersPdf()}
+              filename="purchase-orders.pdf"
+              permission="purchase_order.read"
+              viewLabel="View POs"
+              downloadLabel="POs PDF"
+            />
+            {stationID ? (
+              <DocumentActions
+                onFetch={() => api.stationDeliveriesPdf(stationID)}
+                filename="deliveries.pdf"
+                permission="inventory.read"
+                stationId={stationID}
+                viewLabel="View GRNs"
+                downloadLabel="GRNs PDF"
+              />
+            ) : null}
           </div>
         }
       />
@@ -198,6 +216,7 @@ export default function ProcurementPage() {
                       <TableHead className="text-right">Ordered</TableHead>
                       <TableHead className="text-right">Received</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Document</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -352,6 +371,16 @@ function PORow({
       <TableCell className="text-right font-mono tabular-nums">{litres(received)} L</TableCell>
       <TableCell>
         <Badge tone={statusTone(po.status)}>{po.status.replace('_', ' ')}</Badge>
+      </TableCell>
+      <TableCell>
+        <div className="flex justify-end">
+          <DocumentActions
+            onFetch={() => api.purchaseOrderPdf(po.id)}
+            filename={`purchase-order-${po.id.slice(0, 8)}.pdf`}
+            permission="purchase_order.read"
+            stationId={po.station_id}
+          />
+        </div>
       </TableCell>
     </TableRow>
   );

@@ -2590,6 +2590,100 @@ export class Client {
     return this.fetchBlob(this.productsPdfUrl(), 'application/pdf', signal);
   }
 
+  // ---- Phase 2b list-document PDFs ----
+
+  /**
+   * Build the same-origin URL for the purchase-orders list-document PDF
+   * (purchase_order.read, audited). Optional supplier/status filters mirror the
+   * JSON list endpoint.
+   */
+  purchaseOrdersPdfUrl(params?: { supplierId?: string; status?: string }): string {
+    const qs = new URLSearchParams();
+    if (params?.supplierId) qs.set('supplier_id', params.supplierId);
+    if (params?.status) qs.set('status', params.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return `${this.baseURL}/api/v1/purchase-orders.pdf${suffix}`;
+  }
+
+  /** Fetch the purchase-orders list-document as a PDF Blob (purchase_order.read). */
+  purchaseOrdersPdf(
+    params?: { supplierId?: string; status?: string },
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    return this.fetchBlob(this.purchaseOrdersPdfUrl(params), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for a single purchase order's PDF (purchase_order.read). */
+  purchaseOrderPdfUrl(id: string): string {
+    return `${this.baseURL}/api/v1/purchase-orders/${id}.pdf`;
+  }
+
+  /** Fetch a single purchase order as a formal PDF document Blob (purchase_order.read). */
+  purchaseOrderPdf(id: string, signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.purchaseOrderPdfUrl(id), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for a station's deliveries/GRNs PDF (inventory.read, station-scoped). */
+  stationDeliveriesPdfUrl(stationId: string): string {
+    return `${this.baseURL}/api/v1/stations/${stationId}/deliveries.pdf`;
+  }
+
+  /** Fetch a station's deliveries/GRNs list-document as a PDF Blob (inventory.read). */
+  stationDeliveriesPdf(stationId: string, signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.stationDeliveriesPdfUrl(stationId), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for the expenses list-document PDF (finance.read). */
+  expensesPdfUrl(status?: string): string {
+    const suffix = status ? `?status=${encodeURIComponent(status)}` : '';
+    return `${this.baseURL}/api/v1/expenses.pdf${suffix}`;
+  }
+
+  /** Fetch the expenses list-document as a PDF Blob (finance.read). */
+  expensesPdf(status?: string, signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.expensesPdfUrl(status), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for the customer-aging list-document PDF (finance.read). */
+  customerAgingPdfUrl(): string {
+    return `${this.baseURL}/api/v1/customer-aging.pdf`;
+  }
+
+  /** Fetch the customer-aging (AR by customer) list-document as a PDF Blob (finance.read). */
+  customerAgingPdf(signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.customerAgingPdfUrl(), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for the supplier-balances list-document PDF (payable.read). */
+  supplierBalancesPdfUrl(): string {
+    return `${this.baseURL}/api/v1/supplier-balances.pdf`;
+  }
+
+  /** Fetch the supplier-balances (AP aging) list-document as a PDF Blob (payable.read). */
+  supplierBalancesPdf(signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.supplierBalancesPdfUrl(), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for the GL journal list-document PDF (journal.read). */
+  journalEntriesPdfUrl(): string {
+    return `${this.baseURL}/api/v1/journal-entries.pdf`;
+  }
+
+  /** Fetch the GL journal (journal entries) list-document as a PDF Blob (journal.read). */
+  journalEntriesPdf(signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.journalEntriesPdfUrl(), 'application/pdf', signal);
+  }
+
+  /** Build the same-origin URL for a single customer invoice's PDF (finance.read). */
+  customerInvoicePdfUrl(id: string): string {
+    return `${this.baseURL}/api/v1/customer-invoices/${id}.pdf`;
+  }
+
+  /** Fetch a single customer invoice as a formal PDF document Blob (finance.read). */
+  customerInvoicePdf(id: string, signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.customerInvoicePdfUrl(id), 'application/pdf', signal);
+  }
+
   /**
    * Fetch the deterministic insights + data-quality warnings for a signature
    * report. The station-scoped reports require `stationID`; `customer-aging` is

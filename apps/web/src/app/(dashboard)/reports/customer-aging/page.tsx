@@ -24,6 +24,7 @@ import {
   TableRow,
 } from '@fuelgrid/ui';
 
+import { DocumentActions } from '@/components/document-actions';
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 
@@ -59,6 +60,13 @@ export default function CustomerAgingPage() {
         eyebrow="Reports · Customers"
         title="Customer Aging"
         description="Every credit customer with an outstanding receivable balance."
+        actions={
+          <DocumentActions
+            onFetch={() => api.customerAgingPdf()}
+            filename="customer-aging.pdf"
+            permission="finance.read"
+          />
+        }
       />
 
       <ReportDownloads

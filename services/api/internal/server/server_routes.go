@@ -277,8 +277,10 @@ func (s *Server) registerInventoryRoutes(r chi.Router) {
 	// station-scoped (delivery.receive), authorized in-handler.
 	r.Get("/tanks/{id}/deliveries", s.handleListTankDeliveries)
 	r.With(s.requirePermissionHeld("delivery.receive")).Post("/tanks/{id}/deliveries", s.handleReceiveDelivery)
-	r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).
-		Get("/stations/{stationID}/deliveries", s.handleListStationDeliveries)
+	r.With(s.requirePermission("inventory.read", stationFromURLParam("stationID"))).Group(func(r chi.Router) {
+		r.Get("/stations/{stationID}/deliveries", s.handleListStationDeliveries)
+		r.Get("/stations/{stationID}/deliveries.pdf", s.handleExportStationDeliveriesPDF)
+	})
 	r.Get("/deliveries/{id}", s.handleGetDeliveryReceipt)
 }
 
@@ -290,6 +292,8 @@ func (s *Server) registerProcurementRoutes(r chi.Router) {
 		r.Get("/suppliers.pdf", s.handleExportSuppliersPDF)
 		r.Get("/suppliers/{id}", s.handleGetSupplier)
 		r.Get("/purchase-orders", s.handleListPurchaseOrders)
+		r.Get("/purchase-orders.pdf", s.handleExportPurchaseOrdersPDF)
+		r.Get("/purchase-orders/{id}.pdf", s.handleExportPurchaseOrderPDF)
 	})
 	r.With(s.requirePermission("supplier.manage", nil)).Group(func(r chi.Router) {
 		r.Post("/suppliers", s.handleCreateSupplier)
@@ -640,6 +644,7 @@ func (s *Server) registerFinanceRoutes(r chi.Router) {
 		Post("/accounting-periods/{id}/lock", s.handlePeriodTransition("locked"))
 	r.With(s.requirePermissionHeld("journal.read")).Group(func(r chi.Router) {
 		r.Get("/journal-entries", s.handleListJournalEntries)
+		r.Get("/journal-entries.pdf", s.handleExportJournalEntriesPDF)
 		r.Get("/journal-entries/{id}", s.handleGetJournalEntry)
 	})
 	r.With(s.requirePermission("journal.adjust", nil)).Group(func(r chi.Router) {
@@ -651,6 +656,7 @@ func (s *Server) registerFinanceRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("payable.read")).Group(func(r chi.Router) {
 		r.Get("/payables", s.handleListPayables)
 		r.Get("/ap-aging", s.handleAPaging)
+		r.Get("/supplier-balances.pdf", s.handleExportSupplierBalancesPDF)
 		r.Get("/supplier-payments", s.handleListSupplierPayments)
 	})
 	r.With(s.requirePermission("payable.manage", nil)).
@@ -692,7 +698,9 @@ func (s *Server) registerFinanceRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
 		r.Get("/customer-invoices", s.handleListCustomerInvoices)
 		r.Get("/customer-invoices/{id}", s.handleGetCustomerInvoice)
+		r.Get("/customer-invoices/{id}.pdf", s.handleExportCustomerInvoicePDF)
 		r.Get("/customer-invoices-aging", s.handleCustomerInvoiceAging)
+		r.Get("/customer-aging.pdf", s.handleExportCustomerAgingPDF)
 		r.Get("/customer-payments", s.handleListCustomerPayments)
 	})
 	r.With(s.requirePermission("customer_invoice.manage", nil)).
@@ -706,6 +714,7 @@ func (s *Server) registerFinanceRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
 		r.Get("/expense-categories", s.handleListExpenseCategories)
 		r.Get("/expenses", s.handleListExpenses)
+		r.Get("/expenses.pdf", s.handleExportExpensesPDF)
 		r.Get("/expenses/{id}", s.handleGetExpense)
 		r.Get("/petty-cash-floats", s.handleListPettyCashFloats)
 		r.Get("/petty-cash-floats/{id}", s.handleGetPettyCashFloat)
