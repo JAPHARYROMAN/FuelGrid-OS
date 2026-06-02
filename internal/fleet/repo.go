@@ -19,12 +19,15 @@ import (
 )
 
 var (
-	ErrNotFound   = errors.New("fleet: not found")
-	ErrConflict   = errors.New("fleet: conflict")
-	ErrBadState   = errors.New("fleet: invalid state transition")
-	ErrDenied     = errors.New("fleet: authorization denied")
-	ErrConsumed   = errors.New("fleet: authorization already consumed")
-	ErrValidation = errors.New("fleet: validation failed")
+	ErrNotFound = errors.New("fleet: not found")
+	ErrConflict = errors.New("fleet: conflict")
+	ErrBadState = errors.New("fleet: invalid state transition")
+	ErrDenied   = errors.New("fleet: authorization denied")
+	ErrConsumed = errors.New("fleet: authorization already consumed")
+	// ErrSaleNotFound means the consumed_by sale id passed to FulfillAuthorization
+	// does not name a sale in the caller's tenant (W1-FLEET-FK).
+	ErrSaleNotFound = errors.New("fleet: consuming sale not found")
+	ErrValidation   = errors.New("fleet: validation failed")
 )
 
 type Repo struct {

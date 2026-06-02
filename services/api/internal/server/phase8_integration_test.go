@@ -181,7 +181,7 @@ func TestPhase8_Authorization(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	ctx := context.Background()
-	_, _, admin := h.adminContext(t, ctx)
+	adminID, _, admin := h.adminContext(t, ctx)
 
 	station := h.ids.station1.String()
 	code, cust := h.invPostJSON(t, "/api/v1/customers", admin, map[string]any{"code": "AUTHCO", "name": "Auth Co", "credit_limit": "10000"})
@@ -219,12 +219,19 @@ func TestPhase8_Authorization(t *testing.T) {
 		t.Fatalf("override authorization: %d", code)
 	}
 
-	// Fulfilling the first authorization consumes it once; a second fulfill fails.
-	saleRef := uuid.New().String()
+	// consumed_by must reference a real sale (W1-FLEET-FK): a random sale id is
+	// rejected with 422 before any consumption happens.
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+authID+"/fulfill", admin, map[string]any{"consumed_by": uuid.New().String()}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("fulfill with unknown sale: %d, want 422", code)
+	}
+
+	// Fulfilling the first authorization with a real sale consumes it once; a
+	// second fulfill (even with another valid sale) fails as already consumed.
+	saleRef := seedSale(t, ctx, h, adminID, "2026-06-10").String()
 	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+authID+"/fulfill", admin, map[string]any{"consumed_by": saleRef}); code != http.StatusOK {
 		t.Fatalf("fulfill authorization: %d", code)
 	}
-	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+authID+"/fulfill", admin, map[string]any{"consumed_by": uuid.New().String()}); code != http.StatusConflict {
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+authID+"/fulfill", admin, map[string]any{"consumed_by": seedSale(t, ctx, h, adminID, "2026-06-11").String()}); code != http.StatusConflict {
 		t.Fatalf("double fulfill: %d, want 409", code)
 	}
 
@@ -245,7 +252,7 @@ func TestPhase8_OdometerConsumption(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	ctx := context.Background()
-	_, _, admin := h.adminContext(t, ctx)
+	adminID, _, admin := h.adminContext(t, ctx)
 
 	code, cust := h.invPostJSON(t, "/api/v1/customers", admin, map[string]any{"code": "ODOCO", "name": "Odo Co", "credit_limit": "50000"})
 	if code != http.StatusCreated {
@@ -279,7 +286,8 @@ func TestPhase8_OdometerConsumption(t *testing.T) {
 	if code != http.StatusCreated {
 		t.Fatalf("authorization: %d %v", code, auth)
 	}
-	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+auth["id"].(string)+"/fulfill", admin, map[string]any{"consumed_by": uuid.New().String()}); code != http.StatusOK {
+	saleRef := seedSale(t, ctx, h, adminID, "2026-06-13").String()
+	if code, _ := h.invPostJSON(t, "/api/v1/fuel-authorizations/"+auth["id"].(string)+"/fulfill", admin, map[string]any{"consumed_by": saleRef}); code != http.StatusOK {
 		t.Fatalf("fulfill: %d", code)
 	}
 
@@ -359,6 +367,30 @@ func mustAdminID(t *testing.T, ctx context.Context, h *harness) uuid.UUID {
 		t.Fatalf("admin id: %v", err)
 	}
 	return id
+}
+
+// seedSale inserts a recognized Phase-6 sale and returns its id, for use as a
+// valid consumed_by reference when fulfilling an authorization (W1-FLEET-FK adds
+// a composite FK fuel_authorizations(tenant_id, consumed_by) -> sales). Each
+// call uses a fresh day/shift so the (shift, nozzle) idempotency key is unique.
+func seedSale(t *testing.T, ctx context.Context, h *harness, adminID uuid.UUID, businessDate string) uuid.UUID {
+	t.Helper()
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id = $1 AND tank_id = $2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+	day, shift := seedClosedDayShift(t, ctx, h, adminID, nozzleID, businessDate, 2000)
+	var saleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO sales (tenant_id, shift_id, station_id, operating_day_id, nozzle_id, product_id, tank_id,
+		    litres, unit_price, gross_amount, tax_rate, tax_amount, net_amount, recorded_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 2000, 2.95, 5900, 18, 900, 5000, $8)
+		RETURNING id
+	`, h.ids.tenantID, shift, h.ids.station1, day, nozzleID, h.ids.pmsProduct, h.ids.tankPMS, adminID).Scan(&saleID); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+	return saleID
 }
 
 // TestPhase8_AuthorizationLimitsAndExpiry proves the authorization engine
