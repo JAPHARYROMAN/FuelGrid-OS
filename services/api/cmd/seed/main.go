@@ -519,6 +519,36 @@ func run() error {
 		return err
 	}
 
+	// Risk & Insights Engine: the four default rules (Workstream D). Mirrors the
+	// 0084 migration so a freshly seeded demo tenant has detection configured.
+	// Idempotent via the (tenant_id, code) unique index.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO risk_rules
+		    (tenant_id, code, name, rule_type, status, category, condition,
+		     threshold, lookback_days, comparison_period_days, severity,
+		     message_template, recommended_action, enabled, description)
+		VALUES
+		    ($1, 'fuel_variance_over_tolerance', 'Fuel variance over tolerance', 'threshold', 'active', 'inventory', 'fuel_variance_over_tolerance',
+		     NULL, 30, 30, 'high', '{product} variance exceeded tolerance by {variance_litres} L.',
+		     'Review tank dip, pump readings, and delivery records.', true,
+		     'Fires when a tank reconciliation variance exceeds the product loss tolerance (or the rule threshold in litres when set).'),
+		    ($1, 'repeated_cash_shortage', 'Repeated cash shortage', 'threshold', 'active', 'cash', 'repeated_cash_shortage',
+		     3, 7, 7, 'high', 'Attendant {attendant} has repeated shortages across {count} shifts in {days} days.',
+		     'Review cash submissions and supervisor approvals.', true,
+		     'Fires when an attendant has at least the threshold number of cash shortages within the comparison window.'),
+		    ($1, 'stockout_coverage', 'Stockout coverage', 'threshold', 'active', 'inventory', 'stockout_coverage',
+		     2, 14, 14, 'medium', '{product} may reach minimum level within ~{hours} hours.',
+		     'Create a purchase order or schedule a delivery.', true,
+		     'Fires when projected days of cover (on-hand litres / average daily sales) fall below the threshold.'),
+		    ($1, 'supplier_delivery_shortage', 'Supplier delivery shortage', 'threshold', 'active', 'procurement', 'supplier_delivery_shortage',
+		     NULL, 30, 30, 'high', 'Supplier {supplier} delivery shortage of {shortage_litres} L detected.',
+		     'Flag delivery for dispute before supplier invoice approval.', true,
+		     'Fires when received litres fall short of ordered litres by more than the tolerance fraction (rule threshold).')
+		ON CONFLICT (tenant_id, code) DO NOTHING
+	`, tenantID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}

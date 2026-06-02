@@ -1040,6 +1040,7 @@ export interface StockTransfer {
 export interface RiskAlert {
   id: string;
   rule_code?: string;
+  rule_id?: string;
   alert_type: string;
   severity: string;
   status: string;
@@ -1048,7 +1049,48 @@ export interface RiskAlert {
   subject_id?: string;
   detail?: string;
   amount?: string;
+  recommended_action?: string;
   score: number;
+}
+
+// RiskRuleInput is the create/update payload for a rule. All fields besides
+// code/name are optional on update; threshold stays a decimal string.
+export interface RiskRuleInput {
+  code: string;
+  name: string;
+  rule_type?: string;
+  category?: string;
+  condition?: string;
+  severity?: string;
+  description?: string;
+  message_template?: string;
+  recommended_action?: string;
+  threshold?: string;
+  lookback_days?: number;
+  comparison_period_days?: number;
+  status?: string;
+  enabled?: boolean;
+}
+
+// RiskRule is one configurable rule in the Rules & Insights Engine. `condition`
+// names a code-backed evaluator (not an expression); `threshold` is a decimal
+// string (or null) and stays off the float path.
+export interface RiskRule {
+  id: string;
+  code: string;
+  name: string;
+  rule_type: string;
+  status: string;
+  category: string;
+  condition?: string;
+  threshold?: string;
+  lookback_days: number;
+  comparison_period_days?: number;
+  severity: string;
+  description?: string;
+  message_template?: string;
+  recommended_action?: string;
+  enabled: boolean;
 }
 
 export interface ARentry {

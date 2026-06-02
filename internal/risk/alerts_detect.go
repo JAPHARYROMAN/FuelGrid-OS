@@ -3,6 +3,7 @@ package risk
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -24,27 +25,29 @@ var alertAllowedFrom = map[string][]string{
 }
 
 type Alert struct {
-	ID          uuid.UUID
-	RuleCode    *string
-	AlertType   string
-	Severity    string
-	Status      string
-	StationID   *uuid.UUID
-	SubjectType *string
-	SubjectID   *uuid.UUID
-	Detail      *string
-	Amount      *string
-	Score       int
-	CreatedAt   time.Time
+	ID                uuid.UUID
+	RuleCode          *string
+	RuleID            *uuid.UUID
+	AlertType         string
+	Severity          string
+	Status            string
+	StationID         *uuid.UUID
+	SubjectType       *string
+	SubjectID         *uuid.UUID
+	Detail            *string
+	Amount            *string
+	RecommendedAction *string
+	Score             int
+	CreatedAt         time.Time
 }
 
 const alertColumns = `
-    id, rule_code, alert_type, severity, status, station_id, subject_type, subject_id, detail, amount::text, score, created_at
+    id, rule_code, rule_id, alert_type, severity, status, station_id, subject_type, subject_id, detail, amount::text, recommended_action, score, created_at
 `
 
 func scanAlert(row pgx.Row, a *Alert) error {
-	return row.Scan(&a.ID, &a.RuleCode, &a.AlertType, &a.Severity, &a.Status, &a.StationID,
-		&a.SubjectType, &a.SubjectID, &a.Detail, &a.Amount, &a.Score, &a.CreatedAt)
+	return row.Scan(&a.ID, &a.RuleCode, &a.RuleID, &a.AlertType, &a.Severity, &a.Status, &a.StationID,
+		&a.SubjectType, &a.SubjectID, &a.Detail, &a.Amount, &a.RecommendedAction, &a.Score, &a.CreatedAt)
 }
 
 // severityScore maps a configured severity to the alert score used for
@@ -65,127 +68,130 @@ func severityScore(sev string) int {
 	}
 }
 
-type ruleConfig struct {
-	status       string
-	severity     string
-	threshold    string // "" when the rule's threshold is NULL
-	lookbackDays int
+// enabledRule is one configured rule loaded for a detection run. condition
+// names the evaluator; the rest is the operator-configurable surface.
+type enabledRule struct {
+	id                   uuid.UUID
+	code                 string
+	condition            string
+	severity             string
+	threshold            string // "" when NULL
+	comparisonPeriodDays int    // 0 => evaluator default
+	messageTemplate      string
+	recommendedAction    string
 }
 
-// loadRuleConfigs reads the configured rules for the given codes in one query.
-func (r *Repo) loadRuleConfigs(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, codes []string) (map[string]ruleConfig, error) {
+// loadEnabledRules returns the rules eligible to run for a detection pass:
+// enabled = true AND status not paused/retired. This is what makes
+// disabling/pausing a rule actually stop its alerts (fixes RISK-002).
+func (r *Repo) loadEnabledRules(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) ([]enabledRule, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT code, status, severity, COALESCE(threshold::text, ''), lookback_days
-		FROM risk_rules WHERE tenant_id = $1 AND code = ANY($2)
-	`, tenantID, codes)
+		SELECT id, code, COALESCE(condition, ''), severity,
+		       COALESCE(threshold::text, ''),
+		       COALESCE(comparison_period_days, lookback_days, 0),
+		       COALESCE(message_template, ''), COALESCE(recommended_action, '')
+		FROM risk_rules
+		WHERE tenant_id = $1 AND enabled = true AND status NOT IN ('paused', 'retired')
+		ORDER BY code
+	`, tenantID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]ruleConfig{}
+	var out []enabledRule
 	for rows.Next() {
-		var code string
-		var c ruleConfig
-		if err := rows.Scan(&code, &c.status, &c.severity, &c.threshold, &c.lookbackDays); err != nil {
+		var e enabledRule
+		if err := rows.Scan(&e.id, &e.code, &e.condition, &e.severity, &e.threshold,
+			&e.comparisonPeriodDays, &e.messageTemplate, &e.recommendedAction); err != nil {
 			return nil, err
 		}
-		out[code] = c
+		out = append(out, e)
 	}
 	return out, rows.Err()
 }
 
-// Detection packs. Each raises idempotent alerts linked to immutable source
-// facts. Bind args: $1 tenant, $2 severity, $3 score, $4 threshold (” => no
-// magnitude floor), and (where the source table has a timestamp) $5
-// lookback_days (<= 0 => no time bound).
-const fuelLossPack = `
-	INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, score)
-	SELECT tr.tenant_id, 'fuel_loss', 'fuel_loss', $2, t.station_id, 'tank_reconciliation', tr.id,
-	       'stock variance over tolerance: ' || tr.variance_litres || ' L', $3
-	FROM tank_reconciliations tr JOIN tanks t ON t.id = tr.tank_id AND t.tenant_id = tr.tenant_id
-	WHERE tr.tenant_id = $1 AND tr.status = 'exception'
-	  AND abs(tr.variance_litres) >= COALESCE(NULLIF($4, '')::numeric, 0)
-	  AND ($5 <= 0 OR tr.created_at >= now() - make_interval(days => $5))
-	  AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = tr.tenant_id AND sup.alert_type = 'fuel_loss'
-	                  AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = t.station_id))
-	ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`
+// suppressed reports whether an open alert for (alertType, station) is currently
+// suppressed. A suppression with NULL entity_id covers the whole type; one with
+// an entity_id covers that station only. Mirrors the pre-existing pack logic.
+func (r *Repo) suppressed(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, alertType string, station *uuid.UUID) (bool, error) {
+	var n int
+	err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM risk_suppressions sup
+		WHERE sup.tenant_id = $1 AND sup.alert_type = $2
+		  AND (sup.expires_at IS NULL OR sup.expires_at > now())
+		  AND (sup.entity_id IS NULL OR sup.entity_id = $3)
+	`, tenantID, alertType, station).Scan(&n)
+	return n > 0, err
+}
 
-const cashShortagePack = `
-	INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, station_id, subject_type, subject_id, detail, amount, score)
-	SELECT tenant_id, 'cash_shortage', 'cash_shortage', $2, station_id, 'cash_reconciliation', id,
-	       'counted cash short by ' || abs(variance), abs(variance), $3
-	FROM cash_reconciliations WHERE tenant_id = $1 AND status = 'posted' AND variance < 0
-	  AND abs(variance) >= COALESCE(NULLIF($4, '')::numeric, 0)
-	  AND ($5 <= 0 OR created_at >= now() - make_interval(days => $5))
-	  AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = cash_reconciliations.tenant_id AND sup.alert_type = 'cash_shortage'
-	                  AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND (sup.entity_id IS NULL OR sup.entity_id = cash_reconciliations.station_id))
-	ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`
+// upsertAlert inserts a rendered alert idempotently. The open-alert unique index
+// (tenant_id, alert_type, subject_id) keeps a single open alert per subject, so
+// re-running detection while an alert is open is a no-op. alert_type is the
+// rule's condition key; subject_id is the candidate's dedupe entity.
+func (r *Repo) upsertAlert(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, rule enabledRule, c Candidate, detail string) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO risk_alerts
+		    (tenant_id, rule_code, rule_id, alert_type, severity, station_id,
+		     subject_type, subject_id, detail, amount, recommended_action, score)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10,'')::numeric, NULLIF($11,''), $12)
+		ON CONFLICT (tenant_id, alert_type, subject_id)
+		    WHERE status IN ('open','acknowledged','investigating','escalated')
+		    DO NOTHING
+	`, tenantID, rule.code, rule.id, rule.condition, rule.severity, c.StationID,
+		c.EntityType, c.EntityID, detail, c.Amount, rule.recommendedAction, severityScore(rule.severity))
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
 
-// procurement_discrepancies has no timestamp column, so this pack honors the
-// threshold but not lookback (bind args $1..$4). Wiring a lookback here is a
-// tracked follow-up once the table carries a detected/created timestamp.
-const deliveryDiscrepancyPack = `
-	INSERT INTO risk_alerts (tenant_id, rule_code, alert_type, severity, subject_type, subject_id, detail, amount, score)
-	SELECT tenant_id, 'delivery_discrepancy', 'delivery_discrepancy', $2, 'procurement_discrepancy', id,
-	       'open procurement discrepancy', variance_amount, $3
-	FROM procurement_discrepancies WHERE tenant_id = $1 AND status = 'open'
-	  AND abs(variance_amount) >= COALESCE(NULLIF($4, '')::numeric, 0)
-	  AND NOT EXISTS (SELECT 1 FROM risk_suppressions sup WHERE sup.tenant_id = procurement_discrepancies.tenant_id AND sup.alert_type = 'delivery_discrepancy'
-	                  AND (sup.expires_at IS NULL OR sup.expires_at > now()) AND sup.entity_id IS NULL)
-	ON CONFLICT (tenant_id, alert_type, subject_id) WHERE status IN ('open','acknowledged','investigating','escalated') DO NOTHING`
-
-// RunDetection runs the built-in detection packs, now driven by the configured
-// rules instead of running unconditionally (audit RISK "pause is a no-op"):
-//
-//   - a pack whose rule is paused or retired does not run — pause is honored,
-//     including the PauseAllRules kill switch;
-//   - a pack with a configured rule uses that rule's threshold, severity (and,
-//     where the source table supports it, lookback window);
-//   - a pack with no configured rule runs with built-in defaults, so detection
-//     stays fail-safe (on by default) for tenants that have not tuned it.
-//
-// Returns the number of new alerts.
+// RunDetection drives the configurable Rules & Insights Engine. For each ENABLED
+// rule (enabled=true AND status not paused/retired) it looks up the evaluator
+// named by the rule's `condition`, runs it, renders each candidate's
+// message_template into the alert detail, attaches recommended_action, rule_id
+// and the rule's severity, honors active suppressions, and upserts the alert
+// idempotently. An unknown condition is skipped (logged). Disabling or pausing a
+// rule now actually stops its alerts (RISK-001/RISK-002). Returns new alert
+// count; signature is unchanged so the handler is unaffected.
 func (r *Repo) RunDetection(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (int, error) {
-	packs := []struct {
-		code        string
-		defSeverity string
-		sql         string
-		lookback    bool
-	}{
-		{"fuel_loss", "high", fuelLossPack, true},
-		{"cash_shortage", "medium", cashShortagePack, true},
-		{"delivery_discrepancy", "medium", deliveryDiscrepancyPack, false},
-	}
-	codes := make([]string, len(packs))
-	for i := range packs {
-		codes[i] = packs[i].code
-	}
-	rules, err := r.loadRuleConfigs(ctx, tx, tenantID, codes)
+	rules, err := r.loadEnabledRules(ctx, tx, tenantID)
 	if err != nil {
 		return 0, err
 	}
-
+	asOf := time.Now()
 	created := 0
-	for _, p := range packs {
-		severity, threshold, lookback := p.defSeverity, "", 0
-		if cfg, ok := rules[p.code]; ok {
-			if cfg.status == "paused" || cfg.status == "retired" {
-				continue // honor pause: a disabled rule stops its pack entirely
-			}
-			if cfg.severity != "" {
-				severity = cfg.severity
-			}
-			threshold, lookback = cfg.threshold, cfg.lookbackDays
+	for _, rule := range rules {
+		eval, ok := EvaluatorFor(rule.condition)
+		if !ok {
+			slog.WarnContext(ctx, "risk: skipping rule with unknown condition",
+				"tenant_id", tenantID, "code", rule.code, "condition", rule.condition)
+			continue
 		}
-		args := []any{tenantID, severity, severityScore(severity), threshold}
-		if p.lookback {
-			args = append(args, lookback)
-		}
-		tag, err := tx.Exec(ctx, p.sql, args...)
+		cands, err := eval(ctx, tx, tenantID, asOf, RuleConfig{
+			Threshold:            rule.threshold,
+			ComparisonPeriodDays: rule.comparisonPeriodDays,
+			Severity:             rule.severity,
+		})
 		if err != nil {
 			return 0, err
 		}
-		created += int(tag.RowsAffected())
+		for _, c := range cands {
+			supp, err := r.suppressed(ctx, tx, tenantID, rule.condition, c.StationID)
+			if err != nil {
+				return 0, err
+			}
+			if supp {
+				continue
+			}
+			detail := renderTemplate(rule.messageTemplate, c.Vars)
+			ins, err := r.upsertAlert(ctx, tx, tenantID, rule, c, detail)
+			if err != nil {
+				return 0, err
+			}
+			if ins {
+				created++
+			}
+		}
 	}
 	return created, nil
 }

@@ -18,6 +18,7 @@ export type {
   CentralPriceRollout,
   EnterpriseOverview,
   RiskAlert,
+  RiskRule,
   StationGroup,
   StationRank,
   StockTransfer,

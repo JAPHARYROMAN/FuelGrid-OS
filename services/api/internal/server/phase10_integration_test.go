@@ -7,8 +7,6 @@ import (
 	"context"
 	"net/http"
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 // TestPhase10_SignalsRulesDetection covers Categories A-B: signal backfill, the
@@ -20,16 +18,8 @@ func TestPhase10_SignalsRulesDetection(t *testing.T) {
 	ctx := context.Background()
 	adminID, _, admin := h.adminContext(t, ctx)
 
-	// Seed a posted cash reconciliation with a 500 shortfall.
-	var nozzleID uuid.UUID
-	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
-	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
-	if _, err := h.pool.Exec(ctx, `
-		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
-		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
-	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
-		t.Fatalf("seed cash recon: %v", err)
-	}
+	// Seed a firing repeated_cash_shortage rule + its linked posted shortage.
+	seedFiringCashShortage(t, ctx, h, adminID, "2026-06-05")
 
 	// Backfill derives signals from source facts.
 	if code, bf := h.invPostJSON(t, "/api/v1/risk/signals/backfill", admin, map[string]any{}); code != http.StatusOK || bf["created"].(float64) < 1 {
@@ -39,22 +29,17 @@ func TestPhase10_SignalsRulesDetection(t *testing.T) {
 		t.Fatalf("signals = %d %v", code, sig)
 	}
 
-	// Rule registry.
-	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules", admin, map[string]any{
-		"code": "cash_short", "name": "Cash shortage", "rule_type": "threshold", "severity": "medium",
-	}); code != http.StatusCreated {
-		t.Fatalf("create rule: %d", code)
-	}
+	// Rule registry lists the seeded rule.
 	if code, rules := h.getJSON(t, "/api/v1/risk/rules", admin); code != http.StatusOK || rules["count"].(float64) < 1 {
 		t.Fatalf("rules = %d %v", code, rules)
 	}
 
-	// Detection raises a cash_shortage alert.
+	// Detection raises a repeated_cash_shortage alert.
 	code, det := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{})
 	if code != http.StatusOK || det["alerts_created"].(float64) < 1 {
 		t.Fatalf("detect = %d %v", code, det)
 	}
-	code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=cash_shortage", admin)
+	code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=repeated_cash_shortage", admin)
 	items, _ := alerts["items"].([]any)
 	if code != http.StatusOK || len(items) != 1 {
 		t.Fatalf("alerts = %d %v", code, alerts)
@@ -88,15 +73,7 @@ func TestPhase10_ScoringDashboard(t *testing.T) {
 	ctx := context.Background()
 	adminID, _, admin := h.adminContext(t, ctx)
 
-	var nozzleID uuid.UUID
-	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
-	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
-	if _, err := h.pool.Exec(ctx, `
-		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
-		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
-	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
-		t.Fatalf("seed cash recon: %v", err)
-	}
+	seedFiringCashShortage(t, ctx, h, adminID, "2026-06-05")
 	if code, _ := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK {
 		t.Fatalf("detect: %d", code)
 	}
@@ -129,19 +106,11 @@ func TestPhase10_Investigations(t *testing.T) {
 	ctx := context.Background()
 	adminID, _, admin := h.adminContext(t, ctx)
 
-	var nozzleID uuid.UUID
-	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
-	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
-	if _, err := h.pool.Exec(ctx, `
-		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
-		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
-	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
-		t.Fatalf("seed cash recon: %v", err)
-	}
+	seedFiringCashShortage(t, ctx, h, adminID, "2026-06-05")
 	if code, _ := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK {
 		t.Fatalf("detect: %d", code)
 	}
-	code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=cash_shortage", admin)
+	code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=repeated_cash_shortage", admin)
 	alertID := alerts["items"].([]any)[0].(map[string]any)["id"].(string)
 	if code != http.StatusOK {
 		t.Fatalf("alerts: %d", code)
@@ -189,27 +158,19 @@ func TestPhase10_Governance(t *testing.T) {
 	ctx := context.Background()
 	adminID, _, admin := h.adminContext(t, ctx)
 
-	var nozzleID uuid.UUID
-	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
-	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-05", 1000)
-	if _, err := h.pool.Exec(ctx, `
-		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
-		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
-	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
-		t.Fatalf("seed cash recon: %v", err)
-	}
+	seedFiringCashShortage(t, ctx, h, adminID, "2026-06-05")
 
-	// Suppress cash_shortage before detecting; the alert must not be raised.
+	// Suppress repeated_cash_shortage before detecting; the alert must not be raised.
 	if code, _ := h.invPostJSON(t, "/api/v1/risk/suppressions", admin, map[string]any{
-		"alert_type": "cash_shortage", "reason": "known cash pickup timing",
+		"alert_type": "repeated_cash_shortage", "reason": "known cash pickup timing",
 	}); code != http.StatusCreated {
 		t.Fatalf("create suppression: %d", code)
 	}
 	if code, det := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK || det["alerts_created"].(float64) != 0 {
 		t.Fatalf("detect should be suppressed: %v", det)
 	}
-	if code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=cash_shortage", admin); code != http.StatusOK || len(alerts["items"].([]any)) != 0 {
-		t.Fatalf("expected no cash_shortage alerts: %v", alerts)
+	if code, alerts := h.getJSON(t, "/api/v1/risk/alerts?type=repeated_cash_shortage", admin); code != http.StatusOK || len(alerts["items"].([]any)) != 0 {
+		t.Fatalf("expected no repeated_cash_shortage alerts: %v", alerts)
 	}
 
 	// Rule tuning.
@@ -241,48 +202,31 @@ func TestPhase10_DetectionHonorsRuleConfig(t *testing.T) {
 	ctx := context.Background()
 	adminID, _, admin := h.adminContext(t, ctx)
 
-	var nozzleID uuid.UUID
-	_ = h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`, h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID)
-	day, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-06-07", 1000)
-	if _, err := h.pool.Exec(ctx, `
-		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
-		VALUES ($1, $2, $3, 50000, 49500, -500, 'posted', $4)
-	`, h.ids.tenantID, h.ids.station1, day, adminID); err != nil {
-		t.Fatalf("seed cash recon: %v", err)
-	}
-
-	// Configure + activate a cash_shortage rule with a 1000 threshold. The 500
-	// shortage is below it, so detection must raise nothing — the configured
-	// threshold is honored (the hardcoded pack used to fire on any shortage).
-	code, rule := h.invPostJSON(t, "/api/v1/risk/rules", admin, map[string]any{
-		"code": "cash_shortage", "name": "Cash shortage", "rule_type": "threshold",
-		"severity": "high", "threshold": "1000", "lookback_days": 30,
-	})
-	if code != http.StatusCreated {
-		t.Fatalf("create rule: %d %v", code, rule)
-	}
-	ruleID := rule["id"].(string)
-	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules/"+ruleID+"/status", admin, map[string]any{"status": "active"}); code != http.StatusOK {
-		t.Fatalf("activate rule: %d", code)
+	// Seed a single attendant cash shortage and a repeated_cash_shortage rule
+	// configured with a COUNT threshold of 3. One shortage is below it, so
+	// detection raises nothing — the configured threshold is honored (RISK-001).
+	ruleID := seedFiringCashShortage(t, ctx, h, adminID, "2026-06-07")
+	if _, err := h.pool.Exec(ctx, `UPDATE risk_rules SET threshold = 3 WHERE id = $1`, ruleID); err != nil {
+		t.Fatalf("set threshold 3: %v", err)
 	}
 	if code, det := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK || det["alerts_created"].(float64) != 0 {
-		t.Fatalf("detect with threshold 1000 must create 0 (500 < 1000): %v", det)
+		t.Fatalf("detect with count threshold 3 must create 0 (1 shortage): %v", det)
 	}
 
-	// Tune the threshold below the shortage; it now fires, at the rule's severity.
-	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules/"+ruleID+"/tune", admin,
-		map[string]any{"threshold": "100", "lookback_days": 30, "severity": "high"}); code != http.StatusOK {
+	// Tune the threshold to 1 (and severity high); it now fires at the rule's
+	// severity and derived score.
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules/"+ruleID.String()+"/tune", admin,
+		map[string]any{"threshold": "1", "lookback_days": 30, "severity": "high"}); code != http.StatusOK {
 		t.Fatalf("tune: %d", code)
 	}
 	if code, det := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK || det["alerts_created"].(float64) != 1 {
-		t.Fatalf("detect with threshold 100 must create 1: %v", det)
+		t.Fatalf("detect with count threshold 1 must create 1: %v", det)
 	}
-	// The alert carries the rule's severity and the derived score.
 	var alertID, sev string
 	var score int
 	if err := h.pool.QueryRow(ctx, `
 		SELECT id, severity, score FROM risk_alerts
-		WHERE tenant_id = $1 AND alert_type = 'cash_shortage' AND status NOT IN ('resolved','dismissed')
+		WHERE tenant_id = $1 AND alert_type = 'repeated_cash_shortage' AND status NOT IN ('resolved','dismissed')
 		ORDER BY created_at DESC LIMIT 1
 	`, h.ids.tenantID).Scan(&alertID, &sev, &score); err != nil {
 		t.Fatalf("read alert: %v", err)
@@ -293,11 +237,11 @@ func TestPhase10_DetectionHonorsRuleConfig(t *testing.T) {
 
 	// Resolve it, then pause the rule. Detection must not re-raise it — a
 	// resolved alert no longer blocks a fresh insert, so only the pause prevents
-	// it. Pause is no longer a no-op.
+	// it. Pause is no longer a no-op (RISK-002).
 	if code, _ := h.invPostJSON(t, "/api/v1/risk/alerts/"+alertID+"/resolve", admin, map[string]any{"disposition": "confirmed"}); code != http.StatusOK {
 		t.Fatalf("resolve: %d", code)
 	}
-	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules/"+ruleID+"/status", admin, map[string]any{"status": "paused"}); code != http.StatusOK {
+	if code, _ := h.invPostJSON(t, "/api/v1/risk/rules/"+ruleID.String()+"/status", admin, map[string]any{"status": "paused"}); code != http.StatusOK {
 		t.Fatalf("pause rule: %d", code)
 	}
 	if code, det := h.invPostJSON(t, "/api/v1/risk/detect", admin, map[string]any{}); code != http.StatusOK || det["alerts_created"].(float64) != 0 {
