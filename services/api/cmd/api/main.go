@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -88,8 +89,17 @@ func run() error {
 		ServiceName: cfg.OtelServiceName,
 		Version:     version,
 		Environment: cfg.Env,
+		Endpoint:    cfg.OtelExporterOTLPEndpoint,
 	}, logger)
 	if tracingErr != nil {
+		// Fail-stop when the operator explicitly selected the OTLP exporter:
+		// they pointed it at a collector, so a broken endpoint must abort boot
+		// rather than let traces silently vanish. The stdout/none paths stay
+		// best-effort (log and continue) so dev/CI never refuse to start over
+		// telemetry.
+		if cfg.OtelExporter == "otlp" {
+			return fmt.Errorf("tracing init failed: %w", tracingErr)
+		}
 		logger.Warn("tracing init failed", "error", tracingErr)
 		tracingShutdown = func(context.Context) error { return nil }
 	}

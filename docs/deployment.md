@@ -139,6 +139,25 @@ The full secret inventory, redaction model (the `config.Secret` type redacts sec
 
 The `/metrics` endpoint is intentionally open in dev. In production it MUST be reached only via the metrics scraper — gate it via Fly's internal network or an ingress rule.
 
+### Distributed tracing (OTLP)
+
+The API exports spans through OpenTelemetry. `OTEL_EXPORTER` selects the exporter:
+
+| `OTEL_EXPORTER` | Behaviour |
+|---|---|
+| `none` (default) | Tracing disabled — spans are created but discarded (no-op provider). Boot never fails. |
+| `stdout` | Pretty-prints spans to stderr. Dev / CI only. |
+| `otlp` | Ships spans over **OTLP/gRPC** to the collector at `OTEL_EXPORTER_OTLP_ENDPOINT`. |
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` is the collector address used when `OTEL_EXPORTER=otlp`:
+
+- A bare `host:port` (e.g. `tempo:4317`) or an `https://` URL connects over **TLS** — the secure default for a remote collector.
+- An `http://` prefix forces an **insecure/plaintext** connection, intended for a local collector or a same-host sidecar.
+
+**Fail-stop semantics:** when `OTEL_EXPORTER=otlp` and the exporter cannot be built (endpoint unset, malformed, or unresolvable), the API **refuses to boot** — it exits with a non-zero status rather than start with traces silently dropped. Telemetry the operator explicitly asked for must never disappear unnoticed. The `none` and `stdout` paths stay best-effort: a failure there is logged and the API continues.
+
+The tracer provider is flushed on shutdown (`SIGTERM`/`SIGINT`) with a 5s timeout so in-flight span batches are delivered before exit.
+
 ## Database migrations on deploy
 
 Migrations run via `services/api/cmd/migrate up` as a pre-deploy step:
