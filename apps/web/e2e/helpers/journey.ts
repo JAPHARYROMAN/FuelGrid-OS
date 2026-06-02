@@ -48,7 +48,7 @@ export const STATION = {
 };
 
 export function paginated<T>(items: T[]) {
-  return { items, count: items.length };
+  return { items, count: items.length, limit: items.length, offset: 0, has_more: false };
 }
 
 /** Convenience: fulfill a route with a JSON body + the X-Request-Id the SDK reads. */

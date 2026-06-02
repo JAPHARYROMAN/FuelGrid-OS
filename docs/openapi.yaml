@@ -4477,7 +4477,7 @@ components:
         status:            { type: string }
         installation_date: { type: string, format: date }
         decommission_date: { type: string, format: date }
-        current_litres:            { type: number, description: Latest dip-resolved volume; station overview only }
+        current_litres:            { type: string, description: Latest dip-resolved volume as an exact decimal string (numeric -> text); station overview only }
         current_dip_reading_type:  { type: string, enum: [opening, closing], description: Station overview only }
         current_dip_recorded_at:   { type: string, format: date-time, description: Station overview only }
         current_dip_business_date: { type: string, format: date, description: Station overview only }

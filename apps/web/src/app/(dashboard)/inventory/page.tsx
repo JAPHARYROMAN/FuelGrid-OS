@@ -21,8 +21,8 @@ import {
 import { api } from '@/lib/api';
 import { formatLitres } from '@/lib/money';
 
-// Litre fields arrive as exact decimal strings (book_balance, capacity_litres)
-// or display numbers (latest_physical); formatLitres handles both.
+// Litre fields arrive as exact decimal strings (book_balance, capacity_litres,
+// latest_physical); formatLitres parses them for display only.
 function fmtLitres(n: number | string) {
   return formatLitres(n, { fallback: '0' });
 }

@@ -71,7 +71,7 @@ const DELIVERY = {
   tank_id: TANK.id,
   purchase_order_id: PO.id,
   po_line_id: 'pol-1',
-  volume_litres: 10000,
+  volume_litres: '10000.000',
   line_unit_price: '1.20',
   freight_amount: '0',
   duty_amount: '0',
@@ -107,7 +107,7 @@ test.describe('procurement receiving', () => {
         movement: { id: 'mv-1' },
         dip_mismatch: false,
         quantity_discrepancy: false,
-        quantity_variance_litres: 0,
+        quantity_variance_litres: '0.000',
         purchase_order_status: 'received',
       });
     });

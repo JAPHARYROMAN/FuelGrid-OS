@@ -723,7 +723,9 @@ export class Client {
     req: {
       tank_id: string;
       po_line_id: string;
-      volume_litres: number;
+      /** Exact decimal litres (string); the backend binds it into numeric. */
+      volume_litres: string;
+      /** Advisory dip cross-checks stay sensor floats. */
       dip_before_litres?: number;
       dip_after_litres?: number;
       line_unit_price?: string;
@@ -738,7 +740,8 @@ export class Client {
     movement: StockMovement;
     dip_mismatch: boolean;
     quantity_discrepancy: boolean;
-    quantity_variance_litres: number;
+    /** received−ordered variance, an exact decimal STRING. */
+    quantity_variance_litres: string;
     purchase_order_status: string;
   }> {
     return this.request(`/api/v1/purchase-orders/${encodeURIComponent(purchaseOrderID)}/receipts`, {

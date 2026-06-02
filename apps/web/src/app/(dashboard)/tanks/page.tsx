@@ -70,9 +70,10 @@ export default function TanksPage() {
   const rows = useMemo<TankRow[]>(() => {
     return (tanks.data?.items ?? []).map((tank) => {
       const capacity = parseDecimal(tank.capacity_litres) ?? 0;
-      const current = tank.current_litres;
+      // current_litres is a decimal STRING; parse for the display-only fill %.
+      const current = tank.current_litres != null ? parseDecimal(tank.current_litres) : undefined;
       const fillPercent =
-        current != null && capacity > 0
+        current != null && Number.isFinite(current) && capacity > 0
           ? Math.max(0, Math.min(100, (current / capacity) * 100))
           : undefined;
       return {
@@ -80,7 +81,7 @@ export default function TanksPage() {
         station: stationLookup.get(tank.station_id),
         product: productLookup.get(tank.product_id),
         capacity,
-        current: current ?? undefined,
+        current,
         fillPercent,
       };
     });
