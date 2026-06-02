@@ -12,26 +12,53 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 )
 
 // TestDocumentPDF_ExportsAndAuthorizes proves each list-document endpoint
 // returns a non-empty application/pdf body (with the %PDF magic) for an actor
 // holding the mirrored read permission, and 403 for an actor who lacks it.
-// The seeded admin (system_admin) holds every permission; the seeded operator
-// (station_manager) holds station.read but NOT customer.read /
-// purchase_order.read — so products.pdf is allowed for the operator while
-// customers.pdf / suppliers.pdf are forbidden.
+// The seeded admin (system_admin) holds every permission; a freshly-created
+// attendant holds neither customer.read, purchase_order.read, nor station.read
+// (even with a station grant), so all three .pdf endpoints are forbidden for it.
 func TestDocumentPDF_ExportsAndAuthorizes(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	tenantSlug := slug(h)
 	admin := h.login(t, tenantSlug, h.ids.adminEmail)
-	operator := h.login(t, tenantSlug, h.ids.opEmail)
 
 	ctx := context.Background()
+
+	// A minimal attendant (with a station grant) genuinely lacks the read
+	// permissions these documents are gated on — the deterministic 403 actor.
+	hash, err := password.New(password.DefaultParams, "").Hash(testPassword)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	attEmail := fmt.Sprintf("doc-att-%d@it.local", time.Now().UnixNano())
+	var attID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'Doc Attendant', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, attEmail, hash).Scan(&attID); err != nil {
+		t.Fatalf("seed attendant: %v", err)
+	}
+	grantRole(t, ctx, h.pool, h.ids.tenantID, attID, "attendant")
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`,
+		attID, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("station access: %v", err)
+	}
+	attendant := h.login(t, tenantSlug, attEmail)
+
 	// Seed one customer and one supplier (the harness already seeds products).
 	if _, err := h.pool.Exec(ctx, `
 		INSERT INTO customers (tenant_id, code, name, contact_name, contact_phone, credit_limit, status)
@@ -52,9 +79,9 @@ func TestDocumentPDF_ExportsAndAuthorizes(t *testing.T) {
 		allowedToken string
 		deniedToken  string // empty => no 403 case for this endpoint
 	}{
-		{"customers", "/api/v1/customers.pdf", admin, operator},
-		{"suppliers", "/api/v1/suppliers.pdf", admin, operator},
-		{"products", "/api/v1/products.pdf", admin, ""},
+		{"customers", "/api/v1/customers.pdf", admin, attendant},
+		{"suppliers", "/api/v1/suppliers.pdf", admin, attendant},
+		{"products", "/api/v1/products.pdf", admin, attendant},
 	}
 
 	for _, tc := range cases {
