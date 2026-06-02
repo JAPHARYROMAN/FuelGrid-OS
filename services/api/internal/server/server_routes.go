@@ -535,7 +535,9 @@ func (s *Server) registerRiskRoutes(r chi.Router) {
 		Post("/risk/signals/backfill", s.handleBackfillSignals)
 	r.With(s.requirePermission("risk_rule.manage", nil)).Group(func(r chi.Router) {
 		r.Post("/risk/rules", s.handleCreateRiskRule)
+		r.Put("/risk/rules/{id}", s.handleUpdateRiskRule)
 		r.Post("/risk/rules/{id}/status", s.handleSetRiskRuleStatus)
+		r.Post("/risk/rules/{id}/enabled", s.handleSetRiskRuleEnabled)
 	})
 	r.With(s.requirePermission("risk_alert.manage", nil)).Group(func(r chi.Router) {
 		r.Post("/risk/detect", s.handleRunDetection)

@@ -7,6 +7,8 @@ import type {
   CentralPriceRollout,
   EnterpriseOverview,
   RiskAlert,
+  RiskRule,
+  RiskRuleInput,
   StationGroup,
   StationRank,
   StockTransfer,
@@ -3208,23 +3210,38 @@ export class Client {
     return this.request(`/api/v1/risk/signals${qs}`, { signal });
   }
 
-  listRiskRules(signal?: AbortSignal): Promise<{ items: unknown[]; count: number }> {
-    return this.request('/api/v1/risk/rules', { signal });
+  listRiskRules(signal?: AbortSignal): Promise<Paginated<RiskRule>> {
+    return this.request<Paginated<RiskRule>>('/api/v1/risk/rules', { signal });
   }
 
-  createRiskRule(
-    req: {
-      code: string;
-      name: string;
-      rule_type?: string;
-      severity?: string;
-      description?: string;
-      threshold?: string;
-      lookback_days?: number;
-    },
+  createRiskRule(req: RiskRuleInput, signal?: AbortSignal): Promise<{ id: string }> {
+    return this.request('/api/v1/risk/rules', { method: 'POST', body: req, signal });
+  }
+
+  // updateRiskRule fully updates a rule's configurable fields (PUT).
+  updateRiskRule(
+    id: string,
+    req: Partial<RiskRuleInput>,
     signal?: AbortSignal,
   ): Promise<{ id: string }> {
-    return this.request('/api/v1/risk/rules', { method: 'POST', body: req, signal });
+    return this.request(`/api/v1/risk/rules/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: req,
+      signal,
+    });
+  }
+
+  // setRiskRuleEnabled flips a rule's enabled flag — the per-rule kill switch.
+  setRiskRuleEnabled(
+    id: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ id: string; enabled: boolean }> {
+    return this.request(`/api/v1/risk/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'POST',
+      body: { enabled },
+      signal,
+    });
   }
 
   setRiskRuleStatus(
