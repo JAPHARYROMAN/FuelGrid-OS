@@ -263,7 +263,7 @@ It includes:
 * Station performance prediction
 * Customer risk scoring
 * Automated alerts
-* AI-generated explanations
+* Rule-based explanations
 * Recommended actions
 * Executive summaries
 
@@ -356,7 +356,7 @@ The full FuelGrid OS should include these modules:
 34. Tax/Compliance Reporting
 35. Audit Trail
 36. Alerts & Notifications
-37. AI Insights Assistant
+37. Rules & Insights Engine
 38. Forecasting Engine
 39. Procurement Planning
 40. Maintenance Management
@@ -419,7 +419,7 @@ For large operators.
 Includes everything in Chain OS, plus:
 
 * Advanced analytics
-* AI assistant
+* Rules & Insights Engine
 * Hardware integrations
 * API/webhooks
 * ERP/accounting integrations
@@ -520,7 +520,7 @@ Finance
 Procurement
 Reports
 Alerts
-AI Assistant
+Rules & Insights
 Audit
 Integrations
 Settings
@@ -743,7 +743,7 @@ audit-service
 notification-service
 integration-service
 document-service
-ai-assistant-service
+rules-insights-service
 offline-sync-service
 ```
 
@@ -867,12 +867,12 @@ This is important because fuel businesses involve money, stock, and fraud risk.
 
 ---
 
-# AI Assistant as a Native OS Layer
+# Automation & Rules Engine as a Native OS Layer
 
-The AI assistant should not be a gimmick.
-It should be a serious operations analyst.
+The Rules & Insights Engine should not be a gimmick.
+It should act as a serious operations analyst, built entirely on deterministic, configurable rules — no AI.
 
-It should help users ask:
+It runs named evaluators over operational data and surfaces answers to questions such as:
 
 ```text
 Why did diesel losses increase this week?
@@ -885,7 +885,7 @@ Which stations are underperforming compared to last month?
 What should I investigate today?
 ```
 
-The assistant should be connected to:
+Each evaluator reads from:
 
 * Sales data
 * Stock data
@@ -896,7 +896,7 @@ The assistant should be connected to:
 * Reports
 * Alerts
 
-And it should answer with evidence, not guesses.
+It applies configurable thresholds, message templates, and recommended actions, so every insight is backed by evidence and a traceable rule — never a guess.
 
 ---
 
@@ -1074,14 +1074,14 @@ Since we are not doing an MVP, we should use **full OS build phases**, not MVP p
 * Rule engine
 * Procurement planning
 
-## Phase 9: AI Assistant
+## Phase 9: Automation & Rules Engine
 
-* Natural language querying
+* Saved queries and filters over operational data
 * Report generation
-* Variance explanation
+* Rule-based variance explanation
 * Executive summaries
-* Investigation assistant
-* Operational recommendations
+* Investigation workflows
+* Operational recommendations from configurable rules
 
 ## Phase 10: Hardware & Integrations
 
@@ -1154,7 +1154,7 @@ The final product should feel like this:
 
 Here is the refined statement:
 
-> **FuelGrid OS is a full-fledged fuel business operating system designed for single stations, multi-station chains, depots, and fleet operators. It unifies station operations, fuel inventory, pump and tank management, sales, payments, finance, procurement, customer credit, fleet fueling, risk detection, AI intelligence, reporting, and hardware integrations into one premium command platform.**
+> **FuelGrid OS is a full-fledged fuel business operating system designed for single stations, multi-station chains, depots, and fleet operators. It unifies station operations, fuel inventory, pump and tank management, sales, payments, finance, procurement, customer credit, fleet fueling, risk detection, rule-based intelligence, reporting, and hardware integrations into one premium command platform.**
 
 A shorter version:
 
