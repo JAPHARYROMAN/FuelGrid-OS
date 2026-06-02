@@ -232,8 +232,15 @@ type Config struct {
 	MetricsObserveInterval time.Duration `envconfig:"METRICS_OBSERVE_INTERVAL" default:"15s"`
 	OtelExporter           string        `envconfig:"OTEL_EXPORTER" default:"none"`
 	OtelServiceName        string        `envconfig:"OTEL_SERVICE_NAME" default:"fuelgrid-api"`
-	SentryDSN              string        `envconfig:"SENTRY_DSN"`
-	SentryTracesSampleRate float64       `envconfig:"SENTRY_TRACES_SAMPLE_RATE" default:"0.05"`
+	// OtelExporterOTLPEndpoint is the OTLP/gRPC collector address used when
+	// OTEL_EXPORTER=otlp (e.g. "tempo:4317" or "https://otlp.example.com:443").
+	// A bare host:port or https:// uses TLS; an http:// prefix forces an
+	// insecure/plaintext connection for a local collector. It MUST be set when
+	// the exporter is "otlp": a configured-but-broken endpoint is a fatal boot
+	// error so traces the operator asked for never disappear silently.
+	OtelExporterOTLPEndpoint string  `envconfig:"OTEL_EXPORTER_OTLP_ENDPOINT"`
+	SentryDSN                string  `envconfig:"SENTRY_DSN"`
+	SentryTracesSampleRate   float64 `envconfig:"SENTRY_TRACES_SAMPLE_RATE" default:"0.05"`
 }
 
 // Load reads environment variables and returns a populated Config.
