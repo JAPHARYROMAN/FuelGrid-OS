@@ -235,6 +235,12 @@ func mapAuthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, identity.ErrInvalidCredentials),
 		errors.Is(err, identity.ErrMfaInvalid):
 		writeError(w, http.StatusUnauthorized, "invalid credentials")
+	case errors.Is(err, identity.ErrTotpReplay):
+		// A cryptographically valid code presented twice within its acceptance
+		// window. Single-use is enforced (W1-SEC-TOTP): the code is spent, so
+		// the client must wait for the next one. 401 keeps it indistinguishable
+		// from a plain bad code to an observer.
+		writeError(w, http.StatusUnauthorized, "mfa code already used")
 	case errors.Is(err, identity.ErrMfaRequired):
 		writeError(w, http.StatusUnauthorized, "mfa code required")
 	case errors.Is(err, identity.ErrUserLocked):
