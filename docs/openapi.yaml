@@ -22,6 +22,8 @@ tags:
     description: Current actor's identity, permissions, sessions
   - name: Companies
     description: Tenant CRUD over the companies hierarchy
+  - name: Branding
+    description: Tenant company letterhead / branding (the header on every document PDF)
   - name: Regions
     description: Regions under a company
   - name: Stations
@@ -557,6 +559,66 @@ paths:
       responses:
         '204': { description: Deleted }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/branding:
+    get:
+      tags: [Branding]
+      summary: Get the tenant company letterhead / branding
+      description: >-
+        Returns the tenant's branding text fields plus a logo-presence flag and
+        a same-origin logo URL (never the bytes). Readable by any authenticated
+        tenant user; the letterhead appears on every document PDF.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Branding' } } } }
+    put:
+      tags: [Branding]
+      summary: Upsert the tenant branding text fields
+      description: Requires the companies.manage permission. The logo is managed separately.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/BrandingUpdate' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Branding' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/branding/logo:
+    get:
+      tags: [Branding]
+      summary: Stream the tenant logo
+      description: Returns the stored logo with its image content type, or 404 when none is set.
+      responses:
+        '200':
+          description: OK
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Branding]
+      summary: Upload the tenant logo
+      description: >-
+        Multipart upload of a PNG or JPEG image, capped at 1 MiB. Requires the
+        companies.manage permission. Non-image content is rejected 400; an
+        oversized body is rejected 413.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Branding' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '413': { description: Image exceeds the 1 MiB size cap }
+    delete:
+      tags: [Branding]
+      summary: Clear the tenant logo
+      description: Requires the companies.manage permission. Idempotent (204 even when no logo was set).
+      responses:
+        '204': { description: Cleared }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/regions:
     get:
@@ -4280,6 +4342,41 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Company' } }
         count: { type: integer }
+
+    Branding:
+      type: object
+      properties:
+        display_name:      { type: string }
+        legal_name:        { type: string }
+        tax_id:            { type: string }
+        registration_no:   { type: string }
+        address_line1:     { type: string }
+        address_line2:     { type: string }
+        city:              { type: string }
+        country:           { type: string }
+        phone:             { type: string }
+        email:             { type: string }
+        website:           { type: string }
+        footer_note:       { type: string }
+        has_logo:          { type: boolean }
+        logo_content_type: { type: string }
+        logo_url:          { type: string }
+        updated_at:        { type: string, format: date-time }
+    BrandingUpdate:
+      type: object
+      properties:
+        display_name:    { type: string }
+        legal_name:      { type: string }
+        tax_id:          { type: string }
+        registration_no: { type: string }
+        address_line1:   { type: string }
+        address_line2:   { type: string }
+        city:            { type: string }
+        country:         { type: string }
+        phone:           { type: string }
+        email:           { type: string }
+        website:         { type: string }
+        footer_note:     { type: string }
 
     Region:
       type: object

@@ -171,7 +171,10 @@ func (s *Server) handleExportDailyClosePDF(w http.ResponseWriter, r *http.Reques
 	if businessDate != "" {
 		periodLine += "  •  Business date " + businessDate
 	}
-	doc := newReportPDF("Daily Shift & Close Report", tenantLine(actor.TenantID), periodLine)
+	doc := newLetterheadDoc(s.loadLetterhead(r, actor.TenantID), LetterheadOptions{
+		Title:    "Daily Shift & Close Report",
+		SubLines: []string{periodLine},
+	})
 
 	if headline != nil {
 		doc.sectionHeading("Close summary (" + headline.BusinessDate.Format(dateLayout) + ", status: " + headline.Status + ")")
@@ -258,7 +261,10 @@ func (s *Server) handleExportFinancialsPDF(w http.ResponseWriter, r *http.Reques
 
 	periodLine := fmt.Sprintf("Period %s  •  %s to %s",
 		label, from.Format(dateLayout), to.Format(dateLayout))
-	doc := newReportPDF("Financial Statement", tenantLine(actor.TenantID), periodLine)
+	doc := newLetterheadDoc(s.loadLetterhead(r, actor.TenantID), LetterheadOptions{
+		Title:    "Financial Statement",
+		SubLines: []string{periodLine},
+	})
 
 	doc.sectionHeading("Profit & Loss")
 	doc.keyValue("Revenue", is.Revenue)

@@ -16,6 +16,7 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/accounting"
 	"github.com/japharyroman/fuelgrid-os/internal/banking"
+	"github.com/japharyroman/fuelgrid-os/internal/branding"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
 	"github.com/japharyroman/fuelgrid-os/internal/calibration"
 	"github.com/japharyroman/fuelgrid-os/internal/companies"
@@ -104,6 +105,7 @@ type Server struct {
 	expenses       *expenses.Repo
 	fleet          *fleet.Repo
 	companies      *companies.Repo
+	branding       *branding.Repo
 	regions        *regions.Repo
 	stations       *stations.Repo
 	products       *products.Repo
@@ -200,6 +202,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.expenses = expenses.New(deps.DB)
 		s.fleet = fleet.New(deps.DB, cfg.AuthPasswordPepper.Reveal())
 		s.companies = companies.New(deps.DB)
+		s.branding = branding.New(deps.DB)
 		s.regions = regions.New(deps.DB)
 		s.stations = stations.New(deps.DB)
 		s.products = products.New(deps.DB)

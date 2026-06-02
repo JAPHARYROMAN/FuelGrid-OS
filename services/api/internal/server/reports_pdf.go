@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/go-pdf/fpdf"
@@ -186,9 +185,4 @@ type pdfBuffer struct{ b []byte }
 func (p *pdfBuffer) Write(b []byte) (int, error) {
 	p.b = append(p.b, b...)
 	return len(b), nil
-}
-
-// tenantLine formats the tenant identity line for the title block.
-func tenantLine(tenantID fmt.Stringer) string {
-	return "Tenant " + tenantID.String()
 }
