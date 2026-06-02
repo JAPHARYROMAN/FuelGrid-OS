@@ -256,8 +256,21 @@ func (r *Repo) ListAuthorizationsPage(ctx context.Context, tenantID, customerID 
 }
 
 // FulfillAuthorization consumes an approved authorization exactly once, linking
-// it to the Phase-6 sale. A second fulfillment yields ErrConsumed.
+// it to the Phase-6 sale. A second fulfillment yields ErrConsumed. The
+// consuming sale must exist in the same tenant (W1-FLEET-FK); a missing or
+// cross-tenant sale id yields ErrSaleNotFound. The composite FK added in
+// migration 0083 backstops this at the database, but the explicit lookup turns
+// the failure into a clean 422 instead of a foreign-key error, and runs inside
+// the caller's tx so the check and the write are atomic.
 func (r *Repo) FulfillAuthorization(ctx context.Context, tx pgx.Tx, tenantID, id, consumedBy uuid.UUID) (*Authorization, error) {
+	var saleExists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sales WHERE tenant_id = $1 AND id = $2)`, tenantID, consumedBy).Scan(&saleExists); err != nil {
+		return nil, err
+	}
+	if !saleExists {
+		return nil, ErrSaleNotFound
+	}
+
 	var a Authorization
 	err := scanAuth(tx.QueryRow(ctx, `
 		UPDATE fuel_authorizations SET status = 'fulfilled', consumed_by = $3

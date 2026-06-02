@@ -179,6 +179,10 @@ func (s *Server) handleFulfillAuthorization(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusConflict, "authorization is not approved or already consumed")
 			return "", err
 		}
+		if errors.Is(err, fleet.ErrSaleNotFound) {
+			writeError(w, http.StatusUnprocessableEntity, "consumed_by must reference an existing sale in this tenant")
+			return "", err
+		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return "", err
