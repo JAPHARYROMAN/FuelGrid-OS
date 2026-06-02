@@ -228,3 +228,56 @@ describe('Client.request transport errors (SDK-03)', () => {
     await expect(client.request('/api/v1/thing')).rejects.toBe(abort);
   });
 });
+
+describe('Client list-document PDF exports (DOC-PDF)', () => {
+  // A fetch stub returning a PDF Blob response, recording how it was called.
+  function pdfFetch(status: number) {
+    return vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response(new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])]), {
+          status,
+          headers: { 'Content-Type': 'application/pdf' },
+        }),
+      ),
+    );
+  }
+
+  const cases = [
+    { name: 'customersPdf', path: '/api/v1/customers.pdf' },
+    { name: 'suppliersPdf', path: '/api/v1/suppliers.pdf' },
+    { name: 'productsPdf', path: '/api/v1/products.pdf' },
+  ] as const;
+
+  for (const c of cases) {
+    it(`${c.name} GETs ${c.path} with an application/pdf Accept and returns a Blob`, async () => {
+      const f = pdfFetch(200);
+      const client = new Client({
+        baseURL: 'http://api.test',
+        fetch: f as unknown as typeof fetch,
+      });
+      const blob = await client[c.name]();
+      expect(blob).toBeInstanceOf(Blob);
+      const { url, init } = callArgs(f);
+      expect(url).toBe(`http://api.test${c.path}`);
+      expect(init.method).toBe('GET');
+      expect((init.headers as Record<string, string>).Accept).toBe('application/pdf');
+      expect(init.credentials).toBe('same-origin');
+    });
+
+    it(`${c.name} throws an SdkError on a 403`, async () => {
+      const f = jsonFetch(403, { error: 'forbidden' });
+      const client = new Client({
+        baseURL: 'http://api.test',
+        fetch: f as unknown as typeof fetch,
+      });
+      await expect(client[c.name]()).rejects.toMatchObject({ name: 'SdkError', status: 403 });
+    });
+  }
+
+  it('exposes matching same-origin URL helpers', () => {
+    const client = new Client({ baseURL: 'http://api.test' });
+    expect(client.customersPdfUrl()).toBe('http://api.test/api/v1/customers.pdf');
+    expect(client.suppliersPdfUrl()).toBe('http://api.test/api/v1/suppliers.pdf');
+    expect(client.productsPdfUrl()).toBe('http://api.test/api/v1/products.pdf');
+  });
+});

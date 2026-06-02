@@ -32,6 +32,7 @@ import {
 
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
+import { DocumentActions } from '@/components/document-actions';
 
 interface FormState {
   code: string;
@@ -171,10 +172,17 @@ export default function ProductsPage() {
         title="Products"
         description={`The fuels and products this tenant sells — ${list.data?.count ?? 0} total.`}
         actions={
-          <Button onClick={openCreate}>
-            <Plus className="size-4" />
-            New product
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocumentActions
+              onFetch={() => api.productsPdf()}
+              filename="products.pdf"
+              permission="station.read"
+            />
+            <Button onClick={openCreate}>
+              <Plus className="size-4" />
+              New product
+            </Button>
+          </div>
         }
       />
 

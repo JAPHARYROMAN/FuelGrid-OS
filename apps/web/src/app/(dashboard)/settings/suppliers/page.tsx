@@ -31,6 +31,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { DocumentActions } from '@/components/document-actions';
 
 interface FormState {
   code: string;
@@ -144,10 +145,17 @@ export default function SuppliersPage() {
         title="Suppliers"
         description={`Supplier records shared across stations — ${suppliers.data?.count ?? 0} total.`}
         actions={
-          <Button onClick={openCreate}>
-            <Plus className="size-4" />
-            New supplier
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocumentActions
+              onFetch={() => api.suppliersPdf()}
+              filename="suppliers.pdf"
+              permission="purchase_order.read"
+            />
+            <Button onClick={openCreate}>
+              <Plus className="size-4" />
+              New supplier
+            </Button>
+          </div>
         }
       />
 

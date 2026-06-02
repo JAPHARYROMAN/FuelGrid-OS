@@ -711,6 +711,14 @@ paths:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Product' } } } }
         '409': { description: Duplicate product code }
 
+  /api/v1/products.pdf:
+    get:
+      tags: [Products]
+      summary: Export the product catalogue as a branded PDF list document
+      responses:
+        '200': { description: PDF document, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/products/{id}:
     get:
       tags: [Products]
@@ -2330,6 +2338,13 @@ paths:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/suppliers.pdf:
+    get:
+      tags: [Procurement]
+      summary: Export suppliers as a branded PDF list document
+      responses:
+        '200': { description: PDF document, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/suppliers/{id}:
     get:
       tags: [Procurement]
@@ -2998,6 +3013,13 @@ paths:
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customers.pdf:
+    get:
+      tags: [Customers]
+      summary: Export customers as a branded PDF list document
+      responses:
+        '200': { description: PDF document, content: { application/pdf: { schema: { type: string, format: binary } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/customers/{id}:
     patch:

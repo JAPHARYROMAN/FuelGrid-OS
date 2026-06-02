@@ -212,6 +212,7 @@ func (s *Server) registerCommercialMasterRoutes(r chi.Router) {
 
 	r.With(s.requirePermissionHeld("station.read")).Group(func(r chi.Router) {
 		r.Get("/products", s.handleListProducts)
+		r.Get("/products.pdf", s.handleExportProductsPDF)
 		r.Get("/products/{id}", s.handleGetProduct)
 	})
 	r.With(s.requirePermission("products.manage", nil)).Group(func(r chi.Router) {
@@ -286,6 +287,7 @@ func (s *Server) registerInventoryRoutes(r chi.Router) {
 func (s *Server) registerProcurementRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("purchase_order.read")).Group(func(r chi.Router) {
 		r.Get("/suppliers", s.handleListSuppliers)
+		r.Get("/suppliers.pdf", s.handleExportSuppliersPDF)
 		r.Get("/suppliers/{id}", s.handleGetSupplier)
 		r.Get("/purchase-orders", s.handleListPurchaseOrders)
 	})
@@ -367,6 +369,7 @@ func (s *Server) registerReceivablesRoutes(r chi.Router) {
 	// are tenant-wide: reads ride customer.read, writes credit.manage.
 	r.With(s.requirePermissionHeld("customer.read")).Group(func(r chi.Router) {
 		r.Get("/customers", s.handleListCustomers)
+		r.Get("/customers.pdf", s.handleExportCustomersPDF)
 		r.Get("/customers/{id}/statement", s.handleCustomerStatement)
 		r.Get("/customers/{id}/contacts", s.handleListCustomerContacts)
 	})
