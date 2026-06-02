@@ -179,6 +179,21 @@ func (s *Server) registerCommercialMasterRoutes(r chi.Router) {
 		r.Delete("/companies/{id}", s.handleDeleteCompany)
 	})
 
+	// Tenant-level company letterhead / branding (LETTERHEAD). Reads are open to
+	// any authenticated tenant user (the letterhead is on every document they
+	// can already download); writes require companies.manage.
+	if s.branding != nil {
+		r.Group(func(r chi.Router) {
+			r.Get("/branding", s.handleGetBranding)
+			r.Get("/branding/logo", s.handleGetBrandingLogo)
+		})
+		r.With(s.requirePermission("companies.manage", nil)).Group(func(r chi.Router) {
+			r.Put("/branding", s.handleUpdateBranding)
+			r.Post("/branding/logo", s.handleUploadBrandingLogo)
+			r.Delete("/branding/logo", s.handleDeleteBrandingLogo)
+		})
+	}
+
 	r.With(s.requirePermissionHeld("station.read")).
 		Get("/regions", s.handleListRegions)
 	r.With(s.requirePermission("regions.manage", nil)).Group(func(r chi.Router) {

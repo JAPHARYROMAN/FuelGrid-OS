@@ -41,6 +41,8 @@ export type {
   CashSubmission,
   CloseChecklist,
   Company,
+  TenantBranding,
+  TenantBrandingUpdate,
   CreditAlert,
   CreditPosition,
   CreditProfile,

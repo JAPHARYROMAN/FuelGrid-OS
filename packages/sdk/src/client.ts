@@ -30,6 +30,8 @@ import type {
   CalibrationChart,
   CalibrationPreview,
   Company,
+  TenantBranding,
+  TenantBrandingUpdate,
   DipReading,
   Expense,
   ExpenseCategory,
@@ -513,6 +515,50 @@ export class Client {
       method: 'DELETE',
       signal,
     });
+  }
+
+  // ----------- Branding (tenant company letterhead) -----------
+
+  /** Fetch the tenant's branding / letterhead text fields + logo presence. */
+  getBranding(signal?: AbortSignal): Promise<TenantBranding> {
+    return this.request<TenantBranding>('/api/v1/branding', { signal });
+  }
+
+  /** Upsert the tenant branding text fields (permission: companies.manage). */
+  updateBranding(input: TenantBrandingUpdate, signal?: AbortSignal): Promise<TenantBranding> {
+    return this.request<TenantBranding>('/api/v1/branding', {
+      method: 'PUT',
+      body: input,
+      signal,
+    });
+  }
+
+  /**
+   * Upload the tenant logo (PNG or JPEG, <= 1 MiB; permission: companies.manage).
+   * Returns the updated branding. The server validates the content type and size.
+   */
+  uploadBrandingLogo(file: File | Blob, signal?: AbortSignal): Promise<TenantBranding> {
+    const form = new FormData();
+    form.set('file', file);
+    return this.request<TenantBranding>('/api/v1/branding/logo', {
+      method: 'POST',
+      body: form,
+      signal,
+    });
+  }
+
+  /** Clear the tenant logo (permission: companies.manage). */
+  deleteBrandingLogo(signal?: AbortSignal): Promise<void> {
+    return this.request<void>('/api/v1/branding/logo', { method: 'DELETE', signal });
+  }
+
+  /**
+   * Same-origin URL of the tenant logo (cookie-bearing via the BFF). Use as an
+   * <img src> for a preview; append a cache-buster after an upload so the new
+   * image is fetched.
+   */
+  brandingLogoUrl(): string {
+    return `${this.baseURL}/api/v1/branding/logo`;
   }
 
   // ----------- Regions -----------

@@ -7,6 +7,7 @@ import { cn } from '@fuelgrid/ui';
 
 const nav = [
   { href: '/settings/companies', label: 'Companies' },
+  { href: '/settings/branding', label: 'Branding' },
   { href: '/settings/regions', label: 'Regions' },
   { href: '/settings/stations', label: 'Stations' },
   { href: '/settings/products', label: 'Products' },

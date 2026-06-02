@@ -63,6 +63,47 @@ export interface Company {
   status: string;
 }
 
+/**
+ * TenantBranding is the tenant-level company letterhead — the header rendered
+ * on every downloadable document PDF. One per tenant. The logo is uploaded and
+ * streamed separately (see uploadBrandingLogo / brandingLogoUrl); this carries
+ * only a presence flag and a same-origin URL, never the bytes.
+ */
+export interface TenantBranding {
+  display_name: string;
+  legal_name: string;
+  tax_id: string;
+  registration_no: string;
+  address_line1: string;
+  address_line2: string;
+  city: string;
+  country: string;
+  phone: string;
+  email: string;
+  website: string;
+  footer_note: string;
+  has_logo: boolean;
+  logo_content_type?: string;
+  logo_url?: string;
+  updated_at?: string;
+}
+
+/** The writable text fields for updateBranding (logo managed separately). */
+export interface TenantBrandingUpdate {
+  display_name?: string;
+  legal_name?: string;
+  tax_id?: string;
+  registration_no?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  country?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  footer_note?: string;
+}
+
 export interface Region {
   id: string;
   tenant_id: string;
