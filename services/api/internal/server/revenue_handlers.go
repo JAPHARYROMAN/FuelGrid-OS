@@ -75,12 +75,13 @@ func (s *Server) recognizeShiftRevenue(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-func saleListResponse(rows []revenue.Sale) map[string]any {
+// saleDTOs maps a slice of sales to their DTOs.
+func saleDTOs(rows []revenue.Sale) []saleDTO {
 	out := make([]saleDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toSaleDTO(&rows[i]))
 	}
-	return map[string]any{"items": out, "count": len(out)}
+	return out
 }
 
 func (s *Server) handleListShiftSales(w http.ResponseWriter, r *http.Request) {
@@ -107,13 +108,22 @@ func (s *Server) handleListShiftSales(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeStation(w, r, actor, "revenue.read", shift.StationID) {
 		return
 	}
-	rows, err := s.revenue.ListForShift(ctx, actor.TenantID, id)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.revenue.ListForShiftPage(ctx, actor.TenantID, id, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list shift sales", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, saleListResponse(rows))
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	out := saleDTOs(rows)
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 func (s *Server) handleListStationSales(w http.ResponseWriter, r *http.Request) {
@@ -132,13 +142,22 @@ func (s *Server) handleListStationSales(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "operating_day_id query param is required")
 		return
 	}
-	rows, err := s.revenue.ListForStationDay(r.Context(), actor.TenantID, stationID, dayID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.revenue.ListForStationDayPage(r.Context(), actor.TenantID, stationID, dayID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list station sales", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, saleListResponse(rows))
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	out := saleDTOs(rows)
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type tankValuationDTO struct {

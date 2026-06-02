@@ -74,7 +74,10 @@ export default function EmployeesPage() {
   const employeesKey = ['employees', stationID];
   const list = useQuery({
     queryKey: employeesKey,
-    queryFn: ({ signal }) => api.listEmployees(stationID, signal),
+    // TODO(pagination): the API now returns a paged envelope. We request the
+    // max page size and render a single page; add a Load more / prev-next
+    // control here if a station's headcount grows past one page.
+    queryFn: ({ signal }) => api.listEmployees(stationID, { limit: 200 }, signal),
     enabled: !!stationID,
   });
 

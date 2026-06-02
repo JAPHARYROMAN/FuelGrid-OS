@@ -98,6 +98,30 @@ func (r *Repo) ListForShift(ctx context.Context, tenantID, shiftID uuid.UUID) ([
 	return out, rows.Err()
 }
 
+// ListForShiftPage returns a page of a shift's payments ordered by received_at
+// (with id as a stable tiebreaker for consistent paging), applying the supplied
+// limit and offset.
+func (r *Repo) ListForShiftPage(ctx context.Context, tenantID, shiftID uuid.UUID, limit, offset int) ([]Payment, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+columns+` FROM payments
+		WHERE tenant_id = $1 AND shift_id = $2 ORDER BY received_at, id
+		LIMIT $3 OFFSET $4
+	`, tenantID, shiftID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Payment{}
+	for rows.Next() {
+		var p Payment
+		if err := scan(rows, &p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ReconcileShift totals a shift's recorded tenders against recognized revenue
 // (sales gross), all in SQL so the variance is exact.
 func (r *Repo) ReconcileShift(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (ShiftReconciliation, error) {

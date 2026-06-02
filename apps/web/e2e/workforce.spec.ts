@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 
 import { STATION, authedSession, json, paginated } from './helpers/journey';
 
@@ -41,7 +41,7 @@ test.describe('workforce', () => {
     await authedSession(page);
 
     let employees: ReturnType<typeof employee>[] = [];
-    await page.route('**/api/bff/api/v1/stations/*/employees', async (route) => {
+    await page.route('**/api/bff/api/v1/stations/*/employees**', async (route) => {
       if (route.request().method() === 'POST') {
         employees = [employee()];
         return json(route, employee());
@@ -70,7 +70,7 @@ test.describe('workforce', () => {
 
     // One unassigned employee to start.
     let employees = [employee({ team_id: undefined })];
-    await page.route('**/api/bff/api/v1/stations/*/employees', (route) =>
+    await page.route('**/api/bff/api/v1/stations/*/employees**', (route) =>
       json(route, paginated(employees)),
     );
 

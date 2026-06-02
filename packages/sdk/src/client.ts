@@ -146,6 +146,19 @@ export class SdkError extends Error {
 }
 
 /**
+ * Builds the `?limit=&offset=` query suffix for a paged list endpoint,
+ * omitting either param when it is null/undefined. Returns '' when neither is
+ * supplied so call sites can interpolate it unconditionally.
+ */
+function pageQuery(params: { limit?: number; offset?: number }): string {
+  const q = new URLSearchParams();
+  if (params.limit != null) q.set('limit', String(params.limit));
+  if (params.offset != null) q.set('offset', String(params.offset));
+  const qs = q.toString();
+  return qs ? `?${qs}` : '';
+}
+
+/**
  * A minimal structural schema interface, satisfied by a Zod schema's
  * `.safeParse`. Declared here so the SDK transport can validate critical
  * payloads without importing zod into the transport file's type surface.
@@ -422,8 +435,11 @@ export class Client {
 
   // ----------- Me (session management + password) -----------
 
-  listMySessions(signal?: AbortSignal): Promise<Paginated<Session>> {
-    return this.request<Paginated<Session>>('/api/v1/me/sessions', { signal });
+  listMySessions(
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Session>> {
+    return this.request<Paginated<Session>>(`/api/v1/me/sessions${pageQuery(params)}`, { signal });
   }
 
   revokeMySession(sessionID: string, signal?: AbortSignal): Promise<void> {
@@ -1180,9 +1196,13 @@ export class Client {
   // ----------- Workforce (Phase 11) -----------
 
   /** A station's employees (station.read). */
-  listEmployees(stationID: string, signal?: AbortSignal): Promise<WorkforceList<Employee>> {
-    return this.request<WorkforceList<Employee>>(
-      `/api/v1/stations/${encodeURIComponent(stationID)}/employees`,
+  listEmployees(
+    stationID: string,
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Employee>> {
+    return this.request<Paginated<Employee>>(
+      `/api/v1/stations/${encodeURIComponent(stationID)}/employees${pageQuery(params)}`,
       { signal },
     );
   }
@@ -1535,19 +1555,28 @@ export class Client {
 
   // ----------- Recognized sales & valuation (Phase 6) -----------
 
-  listShiftSales(shiftID: string, signal?: AbortSignal): Promise<Paginated<Sale>> {
-    return this.request<Paginated<Sale>>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/sales`, {
-      signal,
-    });
+  listShiftSales(
+    shiftID: string,
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Sale>> {
+    return this.request<Paginated<Sale>>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/sales${pageQuery(params)}`,
+      { signal },
+    );
   }
 
   listStationSales(
     stationID: string,
     operatingDayID: string,
+    params: { limit?: number; offset?: number } = {},
     signal?: AbortSignal,
   ): Promise<Paginated<Sale>> {
+    const q = new URLSearchParams({ operating_day_id: operatingDayID });
+    if (params.limit != null) q.set('limit', String(params.limit));
+    if (params.offset != null) q.set('offset', String(params.offset));
     return this.request<Paginated<Sale>>(
-      `/api/v1/stations/${encodeURIComponent(stationID)}/sales?operating_day_id=${encodeURIComponent(operatingDayID)}`,
+      `/api/v1/stations/${encodeURIComponent(stationID)}/sales?${q.toString()}`,
       { signal },
     );
   }
@@ -1583,9 +1612,13 @@ export class Client {
     });
   }
 
-  listShiftPayments(shiftID: string, signal?: AbortSignal): Promise<Paginated<Payment>> {
+  listShiftPayments(
+    shiftID: string,
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Payment>> {
     return this.request<Paginated<Payment>>(
-      `/api/v1/shifts/${encodeURIComponent(shiftID)}/payments`,
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/payments${pageQuery(params)}`,
       { signal },
     );
   }
@@ -3423,8 +3456,11 @@ export class Client {
 
   // ----------- Users -----------
 
-  listUsers(signal?: AbortSignal): Promise<Paginated<UserSummary>> {
-    return this.request<Paginated<UserSummary>>('/api/v1/users', { signal });
+  listUsers(
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<UserSummary>> {
+    return this.request<Paginated<UserSummary>>(`/api/v1/users${pageQuery(params)}`, { signal });
   }
 
   inviteUser(

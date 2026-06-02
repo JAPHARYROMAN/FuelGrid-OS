@@ -124,6 +124,35 @@ func (r *SessionRepo) ListActiveForUser(ctx context.Context, userID uuid.UUID) (
 	return out, rows.Err()
 }
 
+// ListActiveForUserPage returns a page of every non-revoked, non-expired
+// session for the user, ordered by issued_at desc (with id as a stable
+// tiebreaker), applying the supplied limit and offset.
+func (r *SessionRepo) ListActiveForUserPage(ctx context.Context, userID uuid.UUID, limit, offset int) ([]SessionRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, user_id, tenant_id, issued_at, expires_at, revoked_at,
+		       coalesce(user_agent, '')
+		FROM sessions
+		WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+		ORDER BY issued_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`, userID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionRow
+	for rows.Next() {
+		var s SessionRow
+		if err := rows.Scan(
+			&s.ID, &s.UserID, &s.TenantID, &s.IssuedAt, &s.ExpiresAt, &s.RevokedAt, &s.UserAgent,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // FindActiveOwnedBy returns a session by id only if it belongs to the
 // given user and is still live. Used to gate the per-session revoke
 // endpoint so a user can only kill their own sessions.
