@@ -256,7 +256,7 @@ Recommended core palette:
 * Emerald: Success, healthy, reconciled
 * Amber: Warning, review needed
 * Red: Critical, loss, shortage, danger
-* Violet: AI assistant and predictive intelligence
+* Violet: Rules & Insights Engine and forecasting
 
 ## 5.2 Fuel Product Colors
 
@@ -282,7 +282,7 @@ Use semantic colors consistently:
 * Critical: Red
 * Offline: Gray
 * Locked: Indigo/Slate
-* AI Insight: Violet
+* Rule-based Insight: Violet
 
 ## 5.4 Dark Mode
 
@@ -424,7 +424,7 @@ Full navigation:
 * Procurement
 * Reports
 * Risk Center
-* AI Assistant
+* Rules & Insights
 * Audit
 * Integrations
 * Settings
@@ -447,7 +447,7 @@ The top bar should include:
 * Station/region/company selector
 * Quick create button
 * Alerts icon
-* AI assistant entry point
+* Rules & Insights entry point
 * Sync status
 * User profile
 
@@ -457,7 +457,7 @@ The right panel should provide contextual intelligence.
 
 It may show:
 
-* AI insight
+* Rule-based insight
 * Recommended action
 * Related alerts
 * Approval requests
@@ -656,17 +656,17 @@ FuelGrid OS should include custom fuel-operation components:
 * Credit Limit Meter
 * Fleet Consumption Card
 
-## 10.3 AI Components
+## 10.3 Rules & Insights Components
 
-AI interface components:
+Rules & Insights interface components:
 
-* AI Chat Panel
-* Suggested Prompt Chips
+* Saved-Query and Rule Browser
+* Suggested Question Chips
 * Insight Summary Card
 * Evidence List
 * Recommended Action Card
 * Generated Report Preview
-* Investigation Assistant Panel
+* Investigation Panel
 * Forecast Explanation Card
 
 ---
@@ -686,7 +686,7 @@ Answer: “How is the entire fuel business performing right now?”
 * Network map
 * Trend charts
 * Alert highlights
-* AI executive summary
+* Rule-based executive summary
 * Station ranking
 
 ## Key Sections
@@ -704,7 +704,7 @@ Answer: “How is the entire fuel business performing right now?”
 11. Regional map
 12. Critical alerts
 13. Forecasts
-14. AI insight panel
+14. Rule-based insight panel
 
 ## Example Opening
 
@@ -989,7 +989,7 @@ Use:
 
 ---
 
-# 11.10 AI Assistant
+# 11.10 Rules & Insights Engine
 
 ## Purpose
 
@@ -997,10 +997,10 @@ Answer: “What does the system know and what should I do next?”
 
 ## Key Sections
 
-* Chat interface
+* Saved-query and rule browser
 * Suggested questions
 * Context chips
-* Generated answers
+* Rule-based answers
 * Evidence list
 * Recommended actions
 * Report generation
@@ -1008,13 +1008,13 @@ Answer: “What does the system know and what should I do next?”
 
 ## Visual Requirements
 
-The AI assistant should feel like an operations analyst, not a gimmick.
+The Rules & Insights Engine should feel like an operations analyst, not a gimmick. Every insight comes from a deterministic, configurable rule — no AI.
 
 It should show:
 
-* What it analyzed
+* Which rule evaluated and what data it analyzed
 * What it found
-* How confident it is
+* The threshold and confidence boundaries that applied
 * What the user should do next
 
 ---
@@ -1111,7 +1111,7 @@ Primary screens:
 * Profitability
 * Risk Summary
 * Forecasts
-* AI Executive Briefing
+* Rule-based Executive Briefing
 
 Design rules:
 
@@ -1467,9 +1467,9 @@ Closing a day should feel like completing a flight checklist. The user should fe
 
 Risk alerts should open into a beautiful investigation view showing patterns, related shifts, related pumps, related attendants, evidence, and recommended actions.
 
-## 20.5 AI Operations Analyst
+## 20.5 Rule-Based Operations Analyst
 
-The AI assistant should feel like an expert analyst embedded inside the OS, able to explain what happened and what to do next.
+The Rules & Insights Engine should feel like an expert analyst embedded inside the OS, applying deterministic rules to explain what happened and what to do next.
 
 ## 20.6 Station Network Map
 

@@ -11,7 +11,7 @@
 
 # 1. Executive Summary
 
-FuelGrid OS is a full-fledged fuel business operating system designed for single stations, multi-station chains, depots, fleets, distributors, and enterprise fuel organizations. It unifies fuel inventory, tank and pump operations, shift management, sales, payments, finance, procurement, supplier management, customer credit, fleet fueling, risk detection, AI intelligence, reporting, audit, mobile operations, offline workflows, and hardware integrations into one command platform.
+FuelGrid OS is a full-fledged fuel business operating system designed for single stations, multi-station chains, depots, fleets, distributors, and enterprise fuel organizations. It unifies fuel inventory, tank and pump operations, shift management, sales, payments, finance, procurement, supplier management, customer credit, fleet fueling, risk detection, rule-based intelligence, reporting, audit, mobile operations, offline workflows, and hardware integrations into one command platform.
 
 The system is not intended to be a small fuel management application. It is designed as the central operating layer for a fuel business, where every liter of fuel and every unit of money is traceable, auditable, and intelligently managed.
 
@@ -103,7 +103,7 @@ It combines:
 
 ## 3.2 Positioning Statement
 
-FuelGrid OS is a full-fledged fuel business operating system for single stations, multi-station chains, depots, fleet operators, distributors, and enterprise fuel organizations. It unifies station operations, fuel inventory, tank and pump management, sales, payments, finance, procurement, customer credit, fleet fueling, risk detection, AI intelligence, reporting, audit, and hardware integrations into one premium command platform.
+FuelGrid OS is a full-fledged fuel business operating system for single stations, multi-station chains, depots, fleet operators, distributors, and enterprise fuel organizations. It unifies station operations, fuel inventory, tank and pump management, sales, payments, finance, procurement, customer credit, fleet fueling, risk detection, rule-based intelligence, reporting, audit, and hardware integrations into one premium command platform.
 
 ## 3.3 Short Product Description
 
@@ -202,7 +202,7 @@ Fleet operators need to control vehicle fueling, driver behavior, fuel limits, o
 
 ## 4.5 Enterprise Fuel Organizations
 
-Large enterprises need advanced integrations, custom workflows, AI intelligence, strong audit, forecasting, and multi-company support.
+Large enterprises need advanced integrations, custom workflows, rule-based intelligence, strong audit, forecasting, and multi-company support.
 
 ### Needs
 
@@ -210,7 +210,7 @@ Large enterprises need advanced integrations, custom workflows, AI intelligence,
 * Advanced role-based access control
 * Hardware integrations
 * ERP/accounting integrations
-* AI analytics
+* Deterministic analytics
 * Compliance reporting
 * Custom workflows
 * API access
@@ -416,7 +416,7 @@ Auditors should usually be read-only and should not edit operational records unl
 * Forecasts
 * Credit exposure
 * Management summaries
-* AI insights
+* Rule-based insights
 
 ## 5.9 System Administrator
 
@@ -487,7 +487,7 @@ For large operators.
 ### Includes Chain OS plus
 
 * Advanced analytics
-* AI assistant
+* Rules & Insights Engine
 * Hardware integrations
 * ERP integrations
 * Custom workflows
@@ -543,7 +543,7 @@ FuelGrid OS consists of 12 major operating layers.
 8. Finance and Accounting Control OS
 9. Customer Credit and Fleet Fuel OS
 10. Risk, Fraud and Intelligence OS
-11. AI Assistant and Executive Intelligence OS
+11. Rules & Insights and Executive Intelligence OS
 12. Integrations, Hardware and API OS
 
 ---
@@ -1238,15 +1238,15 @@ Recommended action:
 
 ---
 
-## 8.11 AI Assistant and Executive Intelligence OS
+## 8.11 Rules & Insights and Executive Intelligence OS
 
 ### Objective
 
-Provide a permission-aware AI assistant that helps users understand operations, explain variances, generate reports, investigate risk, and make decisions.
+Provide a permission-aware Rules & Insights Engine that helps users understand operations, explain variances, generate reports, investigate risk, and make decisions. The engine is fully deterministic: named evaluators apply configurable thresholds and message templates to operational data — there is no AI.
 
-### AI Assistant Requirements
+### Rules & Insights Requirements
 
-Users should be able to ask:
+The engine should answer common operational questions through saved queries and rule evaluators, such as:
 
 * Why did PMS losses increase this week?
 * Which stations need fuel tomorrow?
@@ -1259,9 +1259,9 @@ Users should be able to ask:
 * Which delivery had the biggest discrepancy?
 * What should I investigate today?
 
-### AI Data Access
+### Data Access
 
-The AI assistant should access, based on user permissions:
+The Rules & Insights Engine should access, based on user permissions:
 
 * Sales data
 * Stock data
@@ -1277,11 +1277,11 @@ The AI assistant should access, based on user permissions:
 * Reports
 * Forecasts
 
-### AI Output
+### Output
 
-The AI should produce:
+The engine should produce:
 
-* Plain-language explanations
+* Plain-language, rule-based explanations
 * Operational summaries
 * Executive summaries
 * Investigation recommendations
@@ -1290,17 +1290,17 @@ The AI should produce:
 * Risk summaries
 * Station comparisons
 
-### AI Governance Rules
+### Governance Rules
 
-The AI must:
+The engine must:
 
 * Respect user permissions
 * Never expose restricted financial data
-* Cite internal system records where possible
+* Cite the internal system records and the specific rule that triggered each insight
 * Avoid unsupported claims
-* Explain uncertainty
+* Make threshold and confidence boundaries explicit
 * Recommend actions, not perform unauthorized actions
-* Log AI queries for audit
+* Log every evaluation and query for audit
 
 ---
 
@@ -1608,7 +1608,7 @@ The system should use an adapter-based architecture:
 * approval_steps
 * record_locks
 
-## 10.10 AI, Reporting and Integration Entities
+## 10.10 Rules, Reporting and Integration Entities
 
 * reports
 * report_templates
@@ -1698,7 +1698,7 @@ The full navigation should include:
 * Procurement
 * Reports
 * Alerts
-* AI Assistant
+* Rules & Insights
 * Audit
 * Integrations
 * Settings
@@ -1722,7 +1722,7 @@ The executive dashboard must show:
 * Regional performance
 * Critical alerts
 * Forecasts
-* AI executive summary
+* Rule-based executive summary
 
 ## 11.7 Station Dashboard
 
@@ -1846,15 +1846,15 @@ The risk center must show:
 * Open investigations
 * Closed investigations
 
-## 11.14 AI Assistant Interface
+## 11.14 Rules & Insights Interface
 
-The AI assistant must include:
+The Rules & Insights Engine interface must include:
 
-* Chat interface
+* Saved-query and rule browser
 * Suggested questions
-* Data-backed answers
+* Data-backed, rule-traced answers
 * Charts/tables when needed
-* Source references
+* Source and rule references
 * Recommended actions
 * Report generation
 * Investigation mode
@@ -2146,7 +2146,7 @@ The system should be designed around these domains:
 * notification-service
 * integration-service
 * document-service
-* ai-assistant-service
+* rules-insights-service
 * offline-sync-service
 
 The first implementation may be a modular monolith with strict service boundaries, but the architecture must allow future service extraction.
@@ -2188,7 +2188,7 @@ Events support:
 * Auditability
 * Reporting
 * Real-time alerts
-* AI insight generation
+* Rule-based insight generation
 * Integration webhooks
 * Historical replay
 * Fraud detection
@@ -2577,16 +2577,16 @@ These are full system construction phases, not MVP phases.
 * Rule-based automation
 * Escalation workflows
 
-## Phase 12: AI Assistant
+## Phase 12: Automation & Rules Engine
 
-* AI chat interface
+* Saved-query and rule browser
 * Permission-aware queries
-* Variance explanation
+* Rule-based variance explanation
 * Executive summaries
 * Report generation
-* Investigation assistant
+* Investigation workflows
 * Forecast explanation
-* Natural language analytics
+* Deterministic analytics
 
 ## Phase 13: Hardware and External Integrations
 
@@ -2665,12 +2665,12 @@ FuelGrid OS is successful when the following outcomes are achieved.
 * The system supports investigation workflows.
 * The system generates risk scores for stations and users.
 
-## 24.5 AI Acceptance
+## 24.5 Rules & Insights Acceptance
 
-* Users can ask natural language questions.
-* AI answers respect user permissions.
-* AI explanations are based on system data.
-* AI can explain variances, summarize performance, and recommend investigations.
+* Users can run saved queries and rule evaluators over operational data.
+* Answers respect user permissions.
+* Explanations are based on system data and the rules that triggered them.
+* The engine can explain variances, summarize performance, and recommend investigations through configurable rules.
 
 ## 24.6 Design Acceptance
 
@@ -2701,7 +2701,7 @@ The following decisions should be finalized during technical planning:
 
 # 26. Final Product Definition
 
-FuelGrid OS is a full-fledged fuel operations operating system designed to manage the complete lifecycle of fuel businesses. It connects stations, tanks, pumps, shifts, deliveries, suppliers, customers, fleets, sales, payments, finance, inventory, risk, reporting, AI intelligence, and hardware integrations into one unified platform. It gives owners, managers, attendants, finance teams, auditors, and executives complete visibility and control over every liter of fuel and every unit of money.
+FuelGrid OS is a full-fledged fuel operations operating system designed to manage the complete lifecycle of fuel businesses. It connects stations, tanks, pumps, shifts, deliveries, suppliers, customers, fleets, sales, payments, finance, inventory, risk, reporting, rule-based intelligence, and hardware integrations into one unified platform. It gives owners, managers, attendants, finance teams, auditors, and executives complete visibility and control over every liter of fuel and every unit of money.
 
 Short version:
 
