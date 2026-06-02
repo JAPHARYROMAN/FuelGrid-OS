@@ -19,6 +19,7 @@ export type {
   EnterpriseOverview,
   RiskAlert,
   RiskRule,
+  RiskRuleInput,
   StationGroup,
   StationRank,
   StockTransfer,

@@ -6,7 +6,6 @@ import { ShieldAlert } from 'lucide-react';
 
 import { SdkError, type RiskAlert } from '@fuelgrid/sdk';
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -15,14 +14,23 @@ import {
   EmptyState,
   ErrorState,
   PageHeader,
+  RiskAlertCard,
+  type RiskSeverity,
   Skeleton,
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
-function sevTone(sev: string): 'neutral' | 'warning' {
-  return sev === 'high' || sev === 'critical' ? 'warning' : 'neutral';
+const SEVERITIES: RiskSeverity[] = ['critical', 'high', 'medium', 'low', 'info'];
+
+function toRiskSeverity(sev: string): RiskSeverity {
+  return (SEVERITIES as string[]).includes(sev) ? (sev as RiskSeverity) : 'info';
+}
+
+/** Humanize the alert_type slug for the card title (fallback when no detail). */
+function alertTitle(a: RiskAlert): string {
+  return a.alert_type.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export default function RiskPage() {
@@ -125,18 +133,23 @@ export default function RiskPage() {
               icon={<ShieldAlert />}
             />
           ) : (
-            <div className="flex flex-col gap-2">
+            <div className="flex flex-col gap-3">
               {alerts.data!.items.map((a: RiskAlert) => (
-                <div key={a.id} className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2">
-                    <Badge tone={sevTone(a.severity)}>{a.severity}</Badge>
-                    <span>{a.alert_type}</span>
-                    <span className="text-muted-foreground">{a.detail}</span>
-                  </span>
+                <div key={a.id} className="flex flex-col gap-2">
+                  <RiskAlertCard
+                    severity={toRiskSeverity(a.severity)}
+                    title={alertTitle(a)}
+                    description={a.detail}
+                    metricLabel={a.amount ? 'Amount' : undefined}
+                    metricValue={a.amount ?? undefined}
+                    recommendedAction={a.recommended_action}
+                    station={a.station_id ?? undefined}
+                  />
                   <PermissionGate permission="risk_alert.manage">
                     <Button
                       size="sm"
                       variant="outline"
+                      className="self-end"
                       disabled={resolve.isPending && resolve.variables === a.id}
                       onClick={() => resolve.mutate(a.id)}
                     >
