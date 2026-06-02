@@ -56,7 +56,7 @@ function overview(tank: { reconciliation?: unknown }) {
     station: STATION,
     day: DAY,
     all_shifts_approved: true,
-    tanks: [{ tank: TANK, book_balance: '5000.000', latest_physical: 4900, ...tank }],
+    tanks: [{ tank: TANK, book_balance: '5000.000', latest_physical: '4900.000', ...tank }],
   };
 }
 

@@ -199,8 +199,10 @@ const prefixedDipColumns = `
 // was an opening or closing read, and the business date of the operating day
 // it belongs to.
 type LatestDip struct {
-	TankID       uuid.UUID
-	VolumeLitres float64
+	TankID uuid.UUID
+	// VolumeLitres is an exact decimal STRING (numeric(14,3) read ::text);
+	// never Go float64. Display consumers parse it locally for visuals only.
+	VolumeLitres string
 	ReadingType  string
 	RecordedAt   time.Time
 	BusinessDate time.Time
@@ -214,7 +216,7 @@ type LatestDip struct {
 func (r *Repo) LatestDipsForStation(ctx context.Context, tenantID, stationID uuid.UUID) (map[uuid.UUID]LatestDip, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT DISTINCT ON (d.tank_id)
-		       d.tank_id, d.volume_litres, d.reading_type, d.recorded_at, od.business_date
+		       d.tank_id, d.volume_litres::text, d.reading_type, d.recorded_at, od.business_date
 		FROM tank_dip_readings d
 		JOIN tanks t          ON t.id  = d.tank_id
 		JOIN shifts sh        ON sh.id = d.shift_id

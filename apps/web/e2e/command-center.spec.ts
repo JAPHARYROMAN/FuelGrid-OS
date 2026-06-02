@@ -152,7 +152,7 @@ function mockCommandCenter(page: Parameters<typeof authedSession>[0]) {
         {
           tank: { id: 'tank-1', station_id: STATION.id, name: 'Tank 1', code: 'T1' },
           book_balance: '4900.000',
-          latest_physical: 4900,
+          latest_physical: '4900.000',
           fill_percent: 32,
           days_of_stock: 1.5,
           recent_variances: [],
@@ -169,7 +169,7 @@ function mockCommandCenter(page: Parameters<typeof authedSession>[0]) {
         {
           tank: { id: 'tank-1', station_id: STATION.id, name: 'Tank 1', code: 'T1' },
           book_balance: '4900.000',
-          latest_physical: 4900,
+          latest_physical: '4900.000',
           reconciliation: { id: 'rec-1', over_tolerance: true },
         },
       ],
@@ -201,7 +201,7 @@ function mockCommandCenter(page: Parameters<typeof authedSession>[0]) {
           tenant_id: STATION.tenant_id,
           tank_id: 'tank-1',
           supplier_ref: 'BL-9001',
-          volume_litres: 20000,
+          volume_litres: '20000.000',
           freight_amount: '0.00',
           duty_amount: '0.00',
           levies_amount: '0.00',

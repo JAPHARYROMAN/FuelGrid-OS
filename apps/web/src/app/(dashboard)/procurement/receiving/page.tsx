@@ -128,7 +128,8 @@ export default function ReceivingPage() {
       return api.receivePurchaseOrderReceipt(selectedPO.id, {
         tank_id: tankID,
         po_line_id: selectedLine.id,
-        volume_litres: Number(volume),
+        // volume is the raw form string; send it as a decimal string, no Number().
+        volume_litres: volume,
         freight_amount: freight || '0',
         duty_amount: duty || '0',
         levies_amount: levies || '0',
@@ -136,7 +137,7 @@ export default function ReceivingPage() {
     },
     onSuccess: (res) => {
       setLastReceipt(res.delivery);
-      setInvoiceQty(String(res.delivery.volume_litres));
+      setInvoiceQty(res.delivery.volume_litres);
       setInvoicePrice(res.delivery.line_unit_price ?? selectedLine?.unit_price ?? '');
       setSubmitError(null);
       qc.invalidateQueries({ queryKey: ['purchase-orders', stationID] });

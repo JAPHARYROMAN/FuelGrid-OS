@@ -126,10 +126,11 @@ func (s *Server) handleGetTankBookBalance(w http.ResponseWriter, r *http.Request
 
 type setOpeningBalanceRequest struct {
 	// FromDip seeds the opening from the tank's first dip reading; otherwise
-	// Litres is used.
-	FromDip bool     `json:"from_dip"`
-	Litres  *float64 `json:"litres,omitempty"`
-	Notes   *string  `json:"notes,omitempty"`
+	// Litres is used. Litres is an exact decimal (accepted as a JSON number or
+	// string) and bound into the numeric ledger column — never a Go float64.
+	FromDip bool         `json:"from_dip"`
+	Litres  decimalInput `json:"litres,omitempty"`
+	Notes   *string      `json:"notes,omitempty"`
 }
 
 func (s *Server) handleSetTankOpeningBalance(w http.ResponseWriter, r *http.Request) {
@@ -164,8 +165,10 @@ func (s *Server) handleSetTankOpeningBalance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Resolve the opening litres: the tank's first dip, or an explicit value.
-	var litres float64
+	// Resolve the opening litres as an exact decimal STRING: the tank's first
+	// dip (already numeric text), or a validated explicit value. The string is
+	// bound into the numeric ledger column downstream — never a Go float.
+	var litres string
 	srcType := "opening"
 	if req.FromDip {
 		dip, err := s.readings.FirstDipForTank(ctx, actor.TenantID, tank.ID)
@@ -178,16 +181,16 @@ func (s *Server) handleSetTankOpeningBalance(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		// MD boundary: SetOpeningBalance still takes a float (INV-001 owns that
-		// input); the dip volume is an exact-decimal string, parsed here.
-		litres = dispDecimal(dip.VolumeLitres)
+		// The dip volume is already an exact-decimal string (numeric(14,3) text).
+		litres = dip.VolumeLitres
 		srcType = "opening"
 	} else {
-		if req.Litres == nil || *req.Litres < 0 {
-			writeError(w, http.StatusBadRequest, "litres must be provided and non-negative, or set from_dip")
+		// decimalPattern is sign-free, so Valid() also rejects negatives.
+		if !req.Litres.Valid() {
+			writeError(w, http.StatusBadRequest, "litres must be provided and a non-negative decimal, or set from_dip")
 			return
 		}
-		litres = *req.Litres
+		litres = req.Litres.String()
 	}
 
 	tx, err := s.deps.DB.Begin(ctx)

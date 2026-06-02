@@ -53,7 +53,7 @@ import {
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
-import { formatLitres, formatMoney } from '@/lib/money';
+import { formatLitres, formatMoney, sumMoney } from '@/lib/money';
 import { setSentryUser } from '@/lib/sentry';
 
 /* -------------------------------------------------------------------------- */
@@ -198,7 +198,8 @@ export default function CommandCenterPage() {
   const summary = revenue.data?.summary;
   const tenders = revenue.data?.tenders;
   const tanks = inventory.data?.tanks ?? [];
-  const totalStockLitres = tanks.reduce((acc, t) => acc + (t.latest_physical ?? 0), 0);
+  // latest_physical is a decimal STRING; sum decimal-safe (never Number()+reduce).
+  const totalStockLitres = sumMoney(tanks.map((t) => t.latest_physical));
   const stockoutTanks = tanks
     .filter((t) => t.days_of_stock != null && t.days_of_stock <= 2)
     .sort((a, b) => (a.days_of_stock ?? 0) - (b.days_of_stock ?? 0));
