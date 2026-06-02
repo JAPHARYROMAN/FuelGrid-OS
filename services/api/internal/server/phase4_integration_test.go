@@ -836,8 +836,8 @@ func TestPhase4_Overviews(t *testing.T) {
 	if pmsInv["book_balance"].(string) != "25000.000" {
 		t.Fatalf("inventory book_balance = %v, want 25000.000 (post-seal)", pmsInv["book_balance"])
 	}
-	if pmsInv["latest_physical"].(float64) != 25000 {
-		t.Fatalf("inventory latest_physical = %v, want 25000", pmsInv["latest_physical"])
+	if pmsInv["latest_physical"].(string) != "25000.000" {
+		t.Fatalf("inventory latest_physical = %v, want 25000.000", pmsInv["latest_physical"])
 	}
 	lastRecon := pmsInv["last_reconciliation"].(map[string]any)
 	if lastRecon["over_tolerance"].(bool) {

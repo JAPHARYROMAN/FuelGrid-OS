@@ -25,7 +25,7 @@ type deliveryDTO struct {
 	SupplierID             *uuid.UUID `json:"supplier_id,omitempty"`
 	PurchaseOrderID        *uuid.UUID `json:"purchase_order_id,omitempty"`
 	POLineID               *uuid.UUID `json:"po_line_id,omitempty"`
-	VolumeLitres           float64    `json:"volume_litres"`
+	VolumeLitres           string     `json:"volume_litres"`
 	DipBeforeLitres        *float64   `json:"dip_before_litres,omitempty"`
 	DipAfterLitres         *float64   `json:"dip_after_litres,omitempty"`
 	DipVarianceLitres      *float64   `json:"dip_variance_litres,omitempty"`
@@ -36,7 +36,7 @@ type deliveryDTO struct {
 	LandedCostTotal        *string    `json:"landed_cost_total,omitempty"`
 	LandedCostPerLitre     *string    `json:"landed_cost_per_litre,omitempty"`
 	MatchStatus            string     `json:"match_status"`
-	QuantityVarianceLitres *float64   `json:"quantity_variance_litres,omitempty"`
+	QuantityVarianceLitres *string    `json:"quantity_variance_litres,omitempty"`
 	ReceivedBy             uuid.UUID  `json:"received_by"`
 	ReceivedAt             string     `json:"received_at"`
 	Notes                  *string    `json:"notes,omitempty"`
@@ -60,11 +60,14 @@ func toDeliveryDTO(d *inventory.Delivery) deliveryDTO {
 }
 
 type receiveDeliveryRequest struct {
-	SupplierRef     *string  `json:"supplier_ref,omitempty"`
-	VolumeLitres    float64  `json:"volume_litres"`
-	DipBeforeLitres *float64 `json:"dip_before_litres,omitempty"`
-	DipAfterLitres  *float64 `json:"dip_after_litres,omitempty"`
-	Notes           *string  `json:"notes,omitempty"`
+	SupplierRef *string `json:"supplier_ref,omitempty"`
+	// VolumeLitres is an exact decimal (JSON number or string), bound into the
+	// numeric ledger column — never a Go float64. The dip cross-check fields stay
+	// floats: they are advisory sensor readings, not the ledger figure.
+	VolumeLitres    decimalInput `json:"volume_litres"`
+	DipBeforeLitres *float64     `json:"dip_before_litres,omitempty"`
+	DipAfterLitres  *float64     `json:"dip_after_litres,omitempty"`
+	Notes           *string      `json:"notes,omitempty"`
 }
 
 func (s *Server) handleReceiveDelivery(w http.ResponseWriter, r *http.Request) {
@@ -83,8 +86,9 @@ func (s *Server) handleReceiveDelivery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.VolumeLitres <= 0 {
-		writeError(w, http.StatusBadRequest, "volume_litres must be positive")
+	// decimalPattern is sign-free so Valid() rejects negatives; reject zero too.
+	if !req.VolumeLitres.Valid() || dispDecimal(req.VolumeLitres.String()) <= 0 {
+		writeError(w, http.StatusBadRequest, "volume_litres must be a positive decimal")
 		return
 	}
 	if (req.DipBeforeLitres != nil && *req.DipBeforeLitres < 0) || (req.DipAfterLitres != nil && *req.DipAfterLitres < 0) {
@@ -112,7 +116,11 @@ func (s *Server) handleReceiveDelivery(w http.ResponseWriter, r *http.Request) {
 	var dipVariance *float64
 	var dipMismatch bool
 	if req.DipBeforeLitres != nil && req.DipAfterLitres != nil {
-		variance := req.VolumeLitres - (*req.DipAfterLitres - *req.DipBeforeLitres)
+		// Advisory dip cross-check only: the dips are sensor floats, so this one
+		// comparison parses the (exact-decimal) volume and the product's loss
+		// tolerance to floats. The persisted volume stays the exact string.
+		volF := dispDecimal(req.VolumeLitres.String())
+		variance := volF - (*req.DipAfterLitres - *req.DipBeforeLitres)
 		dipVariance = &variance
 		prod, err := s.products.Get(ctx, actor.TenantID, tank.ProductID)
 		if err != nil {
@@ -120,10 +128,7 @@ func (s *Server) handleReceiveDelivery(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		// MD boundary: delivery volume input is still a float (inventory wave
-		// owns that). Parse the product's exact-decimal loss tolerance for this
-		// advisory dip-mismatch check only.
-		dipMismatch = math.Abs(variance) > req.VolumeLitres*dispDecimal(prod.LossTolerancePercent)/100
+		dipMismatch = math.Abs(variance) > volF*dispDecimal(prod.LossTolerancePercent)/100
 	}
 
 	tx, err := s.deps.DB.Begin(ctx)
@@ -134,7 +139,7 @@ func (s *Server) handleReceiveDelivery(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	delivery, movement, err := s.inventory.ReceiveDelivery(ctx, tx, actor.TenantID, inventory.ReceiveInput{
-		TankID: tank.ID, SupplierRef: req.SupplierRef, VolumeLitres: req.VolumeLitres,
+		TankID: tank.ID, SupplierRef: req.SupplierRef, VolumeLitres: req.VolumeLitres.String(),
 		DipBeforeLitres: req.DipBeforeLitres, DipAfterLitres: req.DipAfterLitres,
 		DipVarianceLitres: dipVariance, ReceivedBy: actor.UserID, Notes: req.Notes,
 	})

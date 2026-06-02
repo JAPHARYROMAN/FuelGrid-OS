@@ -57,7 +57,7 @@ func toRecentVarianceDTO(rr *reconciliation.RecentReconciliation) recentVariance
 type inventoryTankDTO struct {
 	Tank               tankDTO             `json:"tank"`
 	BookBalance        string              `json:"book_balance"`
-	LatestPhysical     *float64            `json:"latest_physical,omitempty"`
+	LatestPhysical     *string             `json:"latest_physical,omitempty"`
 	LatestPhysicalAt   *string             `json:"latest_physical_at,omitempty"`
 	FillPercent        float64             `json:"fill_percent"`
 	DaysOfStock        *float64            `json:"days_of_stock,omitempty"`
@@ -169,7 +169,7 @@ func (s *Server) handleInventoryOverview(w http.ResponseWriter, r *http.Request)
 type reconciliationTankDTO struct {
 	Tank           tankDTO            `json:"tank"`
 	BookBalance    string             `json:"book_balance"`
-	LatestPhysical *float64           `json:"latest_physical,omitempty"`
+	LatestPhysical *string            `json:"latest_physical,omitempty"`
 	Reconciliation *reconciliationDTO `json:"reconciliation,omitempty"`
 }
 

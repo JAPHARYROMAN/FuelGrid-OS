@@ -743,16 +743,18 @@ func (s *Server) handleTransitionPurchaseOrder(w http.ResponseWriter, r *http.Re
 }
 
 type receivePOReceiptRequest struct {
-	TankID          uuid.UUID `json:"tank_id"`
-	POLineID        uuid.UUID `json:"po_line_id"`
-	VolumeLitres    float64   `json:"volume_litres"`
-	DipBeforeLitres *float64  `json:"dip_before_litres,omitempty"`
-	DipAfterLitres  *float64  `json:"dip_after_litres,omitempty"`
-	LineUnitPrice   *string   `json:"line_unit_price,omitempty"`
-	FreightAmount   string    `json:"freight_amount,omitempty"`
-	DutyAmount      string    `json:"duty_amount,omitempty"`
-	LeviesAmount    string    `json:"levies_amount,omitempty"`
-	Notes           *string   `json:"notes,omitempty"`
+	TankID   uuid.UUID `json:"tank_id"`
+	POLineID uuid.UUID `json:"po_line_id"`
+	// VolumeLitres is an exact decimal (JSON number or string), bound into the
+	// numeric column and matched against the PO in SQL — never a Go float64.
+	VolumeLitres    decimalInput `json:"volume_litres"`
+	DipBeforeLitres *float64     `json:"dip_before_litres,omitempty"`
+	DipAfterLitres  *float64     `json:"dip_after_litres,omitempty"`
+	LineUnitPrice   *string      `json:"line_unit_price,omitempty"`
+	FreightAmount   string       `json:"freight_amount,omitempty"`
+	DutyAmount      string       `json:"duty_amount,omitempty"`
+	LeviesAmount    string       `json:"levies_amount,omitempty"`
+	Notes           *string      `json:"notes,omitempty"`
 }
 
 func (s *Server) handleReceivePurchaseOrderReceipt(w http.ResponseWriter, r *http.Request) {
@@ -765,8 +767,8 @@ func (s *Server) handleReceivePurchaseOrderReceipt(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.TankID == uuid.Nil || req.POLineID == uuid.Nil || req.VolumeLitres <= 0 {
-		writeError(w, http.StatusBadRequest, "tank_id, po_line_id, and positive volume_litres are required")
+	if req.TankID == uuid.Nil || req.POLineID == uuid.Nil || !req.VolumeLitres.Valid() || dispDecimal(req.VolumeLitres.String()) <= 0 {
+		writeError(w, http.StatusBadRequest, "tank_id, po_line_id, and a positive decimal volume_litres are required")
 		return
 	}
 	if (req.DipBeforeLitres != nil && *req.DipBeforeLitres < 0) || (req.DipAfterLitres != nil && *req.DipAfterLitres < 0) {
@@ -791,17 +793,18 @@ func (s *Server) handleReceivePurchaseOrderReceipt(w http.ResponseWriter, r *htt
 	var dipVariance *float64
 	var dipMismatch bool
 	if req.DipBeforeLitres != nil && req.DipAfterLitres != nil {
-		variance := req.VolumeLitres - (*req.DipAfterLitres - *req.DipBeforeLitres)
+		// Advisory dip cross-check only: the dips are sensor floats, so this one
+		// comparison parses the (exact-decimal) volume and the product's loss
+		// tolerance to floats. The persisted volume stays the exact string.
+		volF := dispDecimal(req.VolumeLitres.String())
+		variance := volF - (*req.DipAfterLitres - *req.DipBeforeLitres)
 		dipVariance = &variance
 		prod, err := s.products.Get(ctx, actor.TenantID, tank.ProductID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		// MD boundary: receipt volume input is still a float (inventory wave owns
-		// that). Parse the product's exact-decimal loss tolerance for this
-		// advisory dip-mismatch check only.
-		dipMismatch = abs(variance) > req.VolumeLitres*dispDecimal(prod.LossTolerancePercent)/100
+		dipMismatch = abs(variance) > volF*dispDecimal(prod.LossTolerancePercent)/100
 	}
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
@@ -811,7 +814,7 @@ func (s *Server) handleReceivePurchaseOrderReceipt(w http.ResponseWriter, r *htt
 	defer func() { _ = tx.Rollback(ctx) }()
 	res, err := s.inventory.ReceiveGoodsReceipt(ctx, tx, actor.TenantID, inventory.GoodsReceiptInput{
 		TankID: req.TankID, PurchaseOrderID: po.ID, POLineID: req.POLineID,
-		VolumeLitres: req.VolumeLitres, DipBeforeLitres: req.DipBeforeLitres,
+		VolumeLitres: req.VolumeLitres.String(), DipBeforeLitres: req.DipBeforeLitres,
 		DipAfterLitres: req.DipAfterLitres, DipVarianceLitres: dipVariance,
 		LineUnitPrice: req.LineUnitPrice, FreightAmount: defaultDecimal(req.FreightAmount),
 		DutyAmount: defaultDecimal(req.DutyAmount), LeviesAmount: defaultDecimal(req.LeviesAmount),

@@ -16,7 +16,6 @@ package inventory
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
@@ -318,7 +317,10 @@ func negateDecimal(s string) string {
 // OpeningInput is the data needed to seed a tank's opening balance.
 type OpeningInput struct {
 	TankID uuid.UUID
-	Litres float64
+	// Litres is an exact decimal STRING (bound into the numeric(14,3) ledger
+	// column via $N::numeric); never Go float64. The caller validates it is a
+	// well-formed decimal before calling.
+	Litres string
 	// SourceRefType records what produced the opening: "opening" for a
 	// manual/first-dip seed, "reconciliation" when a sealed day's physical
 	// figure carries forward (Stage 6). Defaults to "opening" when nil.
@@ -393,10 +395,10 @@ func (r *Repo) SetOpeningBalance(ctx context.Context, tx pgx.Tx, tenantID uuid.U
 		TankID:        in.TankID,
 		MovementType:  TypeOpening,
 		SourceRefType: srcType,
-		// MD-1 boundary: OpeningInput.Litres is still an upstream float (a dip
-		// volume or a manual request value). Format it to the ledger's 3-decimal
-		// numeric text here; the float source is retyped in a later money-wave PR.
-		Litres:     strconv.FormatFloat(in.Litres, 'f', 3, 64),
+		// Litres is an exact decimal STRING (a dip volume or a validated manual
+		// request value); PostMovement binds it into the numeric column via
+		// $N::numeric, so no float ever touches the ledger figure.
+		Litres:     in.Litres,
 		RecordedBy: in.RecordedBy,
 		Notes:      in.Notes,
 	})

@@ -201,7 +201,8 @@ func (s *Server) handleExportInventoryCSV(w http.ResponseWriter, r *http.Request
 		}
 		physical, physicalAt := "", ""
 		if ld, ok := latest[tank.ID]; ok {
-			physical = strconv.FormatFloat(ld.VolumeLitres, 'f', -1, 64)
+			// VolumeLitres is already an exact-decimal string (numeric text).
+			physical = ld.VolumeLitres
 			physicalAt = ld.RecordedAt.Format(time.RFC3339)
 		}
 		varLitres, varPercent, recStatus := "", "", ""
