@@ -73,9 +73,19 @@ type Service struct {
 	store     session.Store
 	limiter   *ratelimit.Limiter
 	redis     *redis.Client
+	totpGuard *totp.Guard
 	logger    *slog.Logger
 	mfaCipher *secretcrypto.Cipher
 	now       func() time.Time
+}
+
+// redisConsumeStore adapts *redis.Client to totp.ConsumeStore. go-redis's
+// SetNX returns a *BoolCmd; the guard wants the (bool, error) pair directly so
+// it stays decoupled from go-redis (and trivially fakeable in tests).
+type redisConsumeStore struct{ client *redis.Client }
+
+func (r redisConsumeStore) SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
+	return r.client.SetNX(ctx, key, value, ttl).Result()
 }
 
 // NewService wires the identity service. Callers own the underlying
@@ -107,6 +117,7 @@ func NewService(
 		store:     store,
 		limiter:   limiter,
 		redis:     redisClient,
+		totpGuard: totp.NewGuard(redisConsumeStore{client: redisClient}, "totp_used:"),
 		logger:    logger,
 		mfaCipher: secretcrypto.New(authPepper),
 		now:       time.Now,
@@ -214,7 +225,26 @@ func (s *Service) Login(ctx context.Context, req LoginRequest) (*LoginResult, er
 		if req.MfaCode == "" {
 			return &LoginResult{MfaRequired: true}, nil
 		}
-		totpOK := user.MfaSecret != nil && s.verifyTOTP(*user.MfaSecret, req.MfaCode)
+		// Replay-guarded TOTP check: a cryptographically valid code is consumed
+		// (single-use) so a re-presentation within its acceptance window fails.
+		totpOK := false
+		if user.MfaSecret != nil {
+			switch err := s.checkTOTP(ctx, user.ID, *user.MfaSecret, req.MfaCode); {
+			case err == nil:
+				totpOK = true
+			case errors.Is(err, ErrTotpReplay):
+				// A valid-but-reused code: do NOT fall through to the backup-code
+				// path (it isn't a backup code) and do NOT count it as a generic
+				// MFA failure — surface the replay distinctly so the handler can
+				// 401 without burning a lockout slot on a benign double-submit.
+				return nil, ErrTotpReplay
+			case errors.Is(err, ErrMfaInvalid):
+				// Not a valid TOTP code — fall through to the backup-code path.
+			default:
+				// Store/decrypt failure: fail closed.
+				return nil, err
+			}
+		}
 		// Fall back to a one-time backup recovery code when the TOTP code
 		// doesn't match — the same mfa_code field carries either. A matched
 		// backup code is consumed (single-use) inside the success tx below.
@@ -605,12 +635,48 @@ func (s *Service) ConfirmPasswordReset(ctx context.Context, token, newPassword s
 // legacy plaintext secret written before AUTH-13) and checks the code against
 // it at the current time. A decryption failure is treated as a verification
 // failure — a tampered or unreadable secret never authenticates.
+//
+// This is the pure cryptographic check with NO replay protection. Use
+// checkTOTP on any authentication path that should reject a re-used code; this
+// bare form is reserved for the one-shot enrollment/disable flows where the
+// secret is being proven, not used to grant a session.
 func (s *Service) verifyTOTP(stored, code string) bool {
 	secret, err := s.mfaCipher.Decrypt(stored)
 	if err != nil {
 		return false
 	}
 	return totp.Verify(secret, code, s.now())
+}
+
+// checkTOTP is the replay-guarded TOTP check for the login hot path. It first
+// runs the stateless cryptographic Verify; only on a cryptographic match does
+// it atomically consume the code (set-if-not-exists in the session store) so a
+// second presentation of the same code within its acceptance window is
+// rejected. A shoulder-surfed or phished-then-relayed code is valid for the
+// full window (period ± skew); single-use consumption closes that replay gap
+// (W1-SEC-TOTP).
+//
+// Returns:
+//   - nil               on a fresh, valid code (caller may authenticate);
+//   - ErrMfaInvalid     when the code does not match the secret;
+//   - ErrTotpReplay     when the code is valid but already consumed;
+//   - the store error   when the consume cannot be confirmed (fail closed —
+//     we never grant a session without a guarantee of single use).
+func (s *Service) checkTOTP(ctx context.Context, userID uuid.UUID, stored, code string) error {
+	secret, err := s.mfaCipher.Decrypt(stored)
+	if err != nil {
+		return ErrMfaInvalid
+	}
+	if !totp.Verify(secret, code, s.now()) {
+		return ErrMfaInvalid
+	}
+	if err := s.totpGuard.Consume(ctx, userID, code); err != nil {
+		if errors.Is(err, totp.ErrReplay) {
+			return ErrTotpReplay
+		}
+		return err
+	}
+	return nil
 }
 
 // EnrollMfa generates a TOTP secret for the user, stores it (encrypted at rest)

@@ -16,6 +16,7 @@ var (
 	ErrSessionRevoked     = errors.New("identity: session revoked")
 	ErrMfaRequired        = errors.New("identity: MFA code required")
 	ErrMfaInvalid         = errors.New("identity: MFA code invalid")
+	ErrTotpReplay         = errors.New("identity: TOTP code already used")
 	ErrMfaAlreadyEnabled  = errors.New("identity: MFA is already enabled")
 	ErrMfaNotEnabled      = errors.New("identity: MFA is not enabled")
 	ErrPasswordWeak       = errors.New("identity: password does not meet requirements")
