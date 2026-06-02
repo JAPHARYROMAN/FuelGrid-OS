@@ -27,11 +27,19 @@ func (s *Server) handleListMySessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	rows, err := s.sessionRepo.ListActiveForUser(r.Context(), actor.UserID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.sessionRepo.ListActiveForUserPage(r.Context(), actor.UserID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list my sessions", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 
 	out := make([]sessionDTO, 0, len(rows))
@@ -41,7 +49,7 @@ func (s *Server) handleListMySessions(w http.ResponseWriter, r *http.Request) {
 			UserAgent: sr.UserAgent, IsCurrent: sr.ID == actor.SessionID,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 // handleRevokeMySession revokes a single session by id, scoped to the

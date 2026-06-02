@@ -158,9 +158,24 @@ func (r *Repo) ListForShift(ctx context.Context, tenantID, shiftID uuid.UUID) ([
 	return r.list(ctx, `WHERE tenant_id = $1 AND shift_id = $2 ORDER BY nozzle_id`, tenantID, shiftID)
 }
 
+// ListForShiftPage returns a page of a shift's sales ordered by nozzle (with id
+// as a stable tiebreaker), applying the supplied limit and offset.
+func (r *Repo) ListForShiftPage(ctx context.Context, tenantID, shiftID uuid.UUID, limit, offset int) ([]Sale, error) {
+	return r.list(ctx, `WHERE tenant_id = $1 AND shift_id = $2 ORDER BY nozzle_id, id LIMIT $3 OFFSET $4`,
+		tenantID, shiftID, limit, offset)
+}
+
 func (r *Repo) ListForStationDay(ctx context.Context, tenantID, stationID, dayID uuid.UUID) ([]Sale, error) {
 	return r.list(ctx, `WHERE tenant_id = $1 AND station_id = $2 AND operating_day_id = $3 ORDER BY recorded_at`,
 		tenantID, stationID, dayID)
+}
+
+// ListForStationDayPage returns a page of a station-day's sales ordered by
+// recorded_at (with id as a stable tiebreaker), applying the supplied limit and
+// offset.
+func (r *Repo) ListForStationDayPage(ctx context.Context, tenantID, stationID, dayID uuid.UUID, limit, offset int) ([]Sale, error) {
+	return r.list(ctx, `WHERE tenant_id = $1 AND station_id = $2 AND operating_day_id = $3 ORDER BY recorded_at, id LIMIT $4 OFFSET $5`,
+		tenantID, stationID, dayID, limit, offset)
 }
 
 func (r *Repo) list(ctx context.Context, where string, args ...any) ([]Sale, error) {

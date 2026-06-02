@@ -115,6 +115,32 @@ func (r *Repo) ListEmployees(ctx context.Context, tenantID, stationID uuid.UUID)
 	return out, rows.Err()
 }
 
+// ListEmployeesPage returns a page of a station's workforce ordered by name
+// (with id as a stable tiebreaker for consistent paging), applying the supplied
+// limit and offset.
+func (r *Repo) ListEmployeesPage(ctx context.Context, tenantID, stationID uuid.UUID, limit, offset int) ([]Employee, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+employeeColumns+`
+		FROM employees e
+		WHERE e.tenant_id = $1 AND e.station_id = $2
+		ORDER BY e.full_name ASC, e.id ASC
+		LIMIT $3 OFFSET $4`, tenantID, stationID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Employee
+	for rows.Next() {
+		e, err := scanEmployee(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // GetEmployee loads one employee by id within the tenant.
 func (r *Repo) GetEmployee(ctx context.Context, tenantID, id uuid.UUID) (Employee, error) {
 	e, err := scanEmployee(r.pool.QueryRow(ctx, `

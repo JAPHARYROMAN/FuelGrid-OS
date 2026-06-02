@@ -106,17 +106,25 @@ func (s *Server) handleListEmployees(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeStation(w, r, actor, "station.read", stationID) {
 		return
 	}
-	rows, err := s.workforce.ListEmployees(r.Context(), actor.TenantID, stationID)
+	limit, offset, ok := s.parsePage(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.workforce.ListEmployeesPage(r.Context(), actor.TenantID, stationID, limit+1, offset)
 	if err != nil {
 		s.logger.Error("list employees", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
 	out := make([]employeeDTO, 0, len(rows))
 	for i := range rows {
 		out = append(out, toEmployeeDTO(&rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
 type createEmployeeRequest struct {

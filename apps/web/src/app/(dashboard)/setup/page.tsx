@@ -68,7 +68,7 @@ export default function SetupPage() {
   });
   const employees = useQuery({
     queryKey: ['employees', firstStationID],
-    queryFn: ({ signal }) => api.listEmployees(firstStationID, signal),
+    queryFn: ({ signal }) => api.listEmployees(firstStationID, {}, signal),
     enabled: Boolean(firstStationID),
   });
   const teams = useQuery({

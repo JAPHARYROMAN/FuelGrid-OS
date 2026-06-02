@@ -57,7 +57,10 @@ export default function TeamsPage() {
   });
   const employees = useQuery({
     queryKey: ['employees', stationID],
-    queryFn: ({ signal }) => api.listEmployees(stationID, signal),
+    // TODO(pagination): paged envelope; request the max page size so the full
+    // roster is available for team assignment. Revisit with a control if a
+    // station's headcount grows past one page.
+    queryFn: ({ signal }) => api.listEmployees(stationID, { limit: 200 }, signal),
     enabled: !!stationID,
   });
   const anchorKey = ['rotation-anchor', stationID];

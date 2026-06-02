@@ -320,8 +320,9 @@ paths:
     get:
       tags: [Me]
       summary: List the actor's active sessions
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SessionList' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
 
   /api/v1/me/sessions/{sessionID}:
     delete:
@@ -980,8 +981,9 @@ paths:
     get:
       tags: [Users]
       summary: List tenant users with roles + station scope
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UserList' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
 
   /api/v1/admin/users:
     post:
@@ -2666,6 +2668,7 @@ paths:
       summary: List a station's sales
       parameters:
         - { in: path, name: stationID, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: operating_day_id, required: true, schema: { type: string, format: uuid } }
         - { $ref: '#/components/parameters/LimitParam' }
         - { $ref: '#/components/parameters/OffsetParam' }
       responses:
@@ -2676,18 +2679,24 @@ paths:
     get:
       tags: [Revenue]
       summary: List a shift's sales
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/shifts/{id}/payments:
     get:
       tags: [Revenue]
       summary: List a shift's payments
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
     post:
@@ -3838,8 +3847,9 @@ paths:
     get:
       tags: [Workforce]
       summary: List a station's employees (station.read)
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Workforce]

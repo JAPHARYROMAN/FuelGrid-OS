@@ -265,6 +265,35 @@ func (r *UserRepo) List(ctx context.Context, tenantID uuid.UUID) ([]Summary, err
 	return out, rows.Err()
 }
 
+// ListPage returns a page of non-deleted users in the tenant, newest first
+// (created_at desc, id as a stable tiebreaker for consistent paging), applying
+// the supplied limit and offset.
+func (r *UserRepo) ListPage(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]Summary, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, email, full_name, status, mfa_enabled, last_login_at, created_at
+		FROM users
+		WHERE tenant_id = $1 AND status <> 'deleted'
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2 OFFSET $3
+	`, tenantID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Summary
+	for rows.Next() {
+		var s Summary
+		if err := rows.Scan(
+			&s.ID, &s.Email, &s.FullName, &s.Status, &s.MfaEnabled, &s.LastLoginAt, &s.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 // Invite creates a user with status='invited' and no password. The
 // password is set later when the user accepts via the password-reset
 // flow.

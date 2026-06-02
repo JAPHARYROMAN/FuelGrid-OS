@@ -42,7 +42,11 @@ export default function UsersPage() {
 
   const list = useQuery({
     queryKey: ['users'],
-    queryFn: ({ signal }) => api.listUsers(signal),
+    // TODO(pagination): the API now returns a paged envelope (items/has_more/
+    // offset). We request the max page size and render a single page for now;
+    // add a Load more / prev-next control here if a tenant's user count grows
+    // past one page.
+    queryFn: ({ signal }) => api.listUsers({ limit: 200 }, signal),
   });
   const roles = useQuery({
     queryKey: ['roles'],

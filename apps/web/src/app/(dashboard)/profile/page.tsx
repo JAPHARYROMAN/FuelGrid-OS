@@ -36,7 +36,7 @@ export default function ProfilePage() {
   const me = useQuery({ queryKey: ['me'], queryFn: ({ signal }) => api.me(signal) });
   const sessions = useQuery({
     queryKey: ['me', 'sessions'],
-    queryFn: ({ signal }) => api.listMySessions(signal),
+    queryFn: ({ signal }) => api.listMySessions({}, signal),
   });
 
   const revoke = useMutation({
