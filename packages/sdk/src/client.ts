@@ -2516,9 +2516,19 @@ export class Client {
    * error handling. The caller is responsible for triggering the download.
    */
   async fetchReportBlob(report: ReportSpec, signal?: AbortSignal): Promise<Blob> {
-    const res = await this.fetchImpl(this.reportUrl(report), {
+    return this.fetchBlob(this.reportUrl(report), this.reportAccept(report), signal);
+  }
+
+  /**
+   * GET a same-origin URL (cookie-bearing via the BFF) and return the response
+   * body as a Blob, throwing SdkError on a non-2xx so callers share the app's
+   * error handling. The shared core behind every document/report blob fetch:
+   * the caller is responsible for previewing or downloading the result.
+   */
+  private async fetchBlob(url: string, accept: string, signal?: AbortSignal): Promise<Blob> {
+    const res = await this.fetchImpl(url, {
       method: 'GET',
-      headers: { Accept: this.reportAccept(report) },
+      headers: { Accept: accept },
       signal,
       credentials: 'same-origin',
     });
@@ -2538,6 +2548,46 @@ export class Client {
       throw new SdkError(message, res.status, body, requestId);
     }
     return res.blob();
+  }
+
+  // ----------- List-document PDF exports (DOC-PDF) -----------
+
+  /**
+   * Build the same-origin URL for the customers list-document PDF. The endpoint
+   * streams `application/pdf` inline (gated by customer.read, audited). Callers
+   * fetch it via {@link customersPdf} or hand the URL to a download.
+   */
+  customersPdfUrl(): string {
+    return `${this.baseURL}/api/v1/customers.pdf`;
+  }
+
+  /** Build the same-origin URL for the suppliers list-document PDF (purchase_order.read). */
+  suppliersPdfUrl(): string {
+    return `${this.baseURL}/api/v1/suppliers.pdf`;
+  }
+
+  /** Build the same-origin URL for the products list-document PDF (station.read). */
+  productsPdfUrl(): string {
+    return `${this.baseURL}/api/v1/products.pdf`;
+  }
+
+  /**
+   * Fetch the customers list-document as a PDF Blob (same-origin, cookie-bearing
+   * via the BFF). Throws SdkError on a non-2xx (e.g. 403 without customer.read).
+   * The caller previews or downloads the Blob.
+   */
+  customersPdf(signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.customersPdfUrl(), 'application/pdf', signal);
+  }
+
+  /** Fetch the suppliers list-document as a PDF Blob (gated by purchase_order.read). */
+  suppliersPdf(signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.suppliersPdfUrl(), 'application/pdf', signal);
+  }
+
+  /** Fetch the products list-document as a PDF Blob (gated by station.read). */
+  productsPdf(signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(this.productsPdfUrl(), 'application/pdf', signal);
   }
 
   /**

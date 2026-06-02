@@ -32,6 +32,7 @@ import {
 
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
+import { DocumentActions } from '@/components/document-actions';
 
 interface FormState {
   code: string;
@@ -143,10 +144,17 @@ export default function CustomersSettingsPage() {
         title="Customers"
         description={`Credit and account customers shared across stations — ${customers.data?.count ?? items.length} total.`}
         actions={
-          <Button onClick={openCreate}>
-            <Plus className="size-4" />
-            New customer
-          </Button>
+          <div className="flex items-center gap-2">
+            <DocumentActions
+              onFetch={() => api.customersPdf()}
+              filename="customers.pdf"
+              permission="customer.read"
+            />
+            <Button onClick={openCreate}>
+              <Plus className="size-4" />
+              New customer
+            </Button>
+          </div>
         }
       />
 
