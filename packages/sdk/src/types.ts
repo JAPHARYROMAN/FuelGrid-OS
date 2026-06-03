@@ -1487,8 +1487,27 @@ export interface Payable {
 
 export interface SupplierAging {
   supplier_id: string;
+  /** Total outstanding across all buckets (decimal string). */
   outstanding: string;
   open_count: number;
+  /** Not yet due (due_date >= today) or no due date. Decimal string. */
+  current: string;
+  /** 1-30 days past due. Decimal string. */
+  d1_30: string;
+  /** 31-60 days past due. Decimal string. */
+  d31_60: string;
+  /** 61-90 days past due. Decimal string. */
+  d61_90: string;
+  /** More than 90 days past due. Decimal string. */
+  d90_plus: string;
+}
+
+/**
+ * AP aging response: per-supplier day-aged buckets plus a tenant-wide grand
+ * total. `totals.supplier_id` is the zero UUID and is not a real supplier.
+ */
+export interface ApAgingResponse extends Paginated<SupplierAging> {
+  totals: SupplierAging;
 }
 
 export interface TrialBalanceRow {

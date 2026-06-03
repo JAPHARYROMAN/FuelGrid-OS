@@ -2310,9 +2310,29 @@ paths:
   /api/v1/ap-aging:
     get:
       tags: [Payables]
-      summary: Accounts-payable aging report
+      summary: Accounts-payable aging report (day-aged buckets by supplier)
+      description: >
+        Returns every supplier with an outstanding payable balance, split into
+        day-aged buckets (current / 1-30 / 31-60 / 61-90 / 90+) computed
+        server-side from each payable's invoice due date relative to today. Each
+        item carries the rollup (`outstanding`, `open_count`) plus the five
+        bucket amounts. The response also includes a tenant-wide `totals` row
+        using the same shape (its `supplier_id` is the zero UUID). All money
+        fields are decimal strings.
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count, totals]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/SupplierAging' }
+                  count: { type: integer }
+                  totals: { $ref: '#/components/schemas/SupplierAging' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/supplier-balances.pdf:
     get:
@@ -4218,6 +4238,21 @@ components:
     Object:
       type: object
       additionalProperties: true
+    # Per-supplier AP aging with day-aged buckets (also used for the grand
+    # total row, whose supplier_id is the zero UUID). Money fields are decimal
+    # strings; current + d1_30 + d31_60 + d61_90 + d90_plus == outstanding.
+    SupplierAging:
+      type: object
+      required: [supplier_id, outstanding, open_count, current, d1_30, d31_60, d61_90, d90_plus]
+      properties:
+        supplier_id: { type: string, format: uuid }
+        outstanding: { type: string, description: Total outstanding across all buckets (decimal string) }
+        open_count:  { type: integer }
+        current:     { type: string, description: Not yet due or no due date (decimal string) }
+        d1_30:       { type: string, description: 1-30 days past due (decimal string) }
+        d31_60:      { type: string, description: 31-60 days past due (decimal string) }
+        d61_90:      { type: string, description: 61-90 days past due (decimal string) }
+        d90_plus:    { type: string, description: More than 90 days past due (decimal string) }
     # Deterministic report insights + data-quality warnings (REPORTING).
     ReportInsights:
       type: object

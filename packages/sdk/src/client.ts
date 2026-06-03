@@ -24,7 +24,7 @@ import type {
   TrialBalance,
   JournalEntry,
   Payable,
-  SupplierAging,
+  ApAgingResponse,
   AuditLogEntry,
   AuditExportResult,
   CalibratedVolume,
@@ -2404,8 +2404,13 @@ export class Client {
     return this.request('/api/v1/payables/import', { method: 'POST', signal });
   }
 
-  getApAging(signal?: AbortSignal): Promise<Paginated<SupplierAging>> {
-    return this.request<Paginated<SupplierAging>>('/api/v1/ap-aging', { signal });
+  /**
+   * AP aging by supplier with day-aged buckets (current / 1-30 / 31-60 / 61-90
+   * / 90+) computed server-side from invoice due dates, plus a tenant-wide
+   * `totals` row. Money fields are decimal strings. Requires payable.read.
+   */
+  getApAging(signal?: AbortSignal): Promise<ApAgingResponse> {
+    return this.request<ApAgingResponse>('/api/v1/ap-aging', { signal });
   }
 
   recordSupplierPayment(

@@ -160,6 +160,7 @@ export type {
   StockMovement,
   Supplier,
   SupplierAging,
+  ApAgingResponse,
   SupplierBalance,
   SupplierInvoice,
   SupplierInvoiceLine,

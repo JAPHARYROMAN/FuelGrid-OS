@@ -2,11 +2,10 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Receipt, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, Receipt, Users } from 'lucide-react';
 
-import { SdkError } from '@fuelgrid/sdk';
+import { SdkError, type SupplierAging } from '@fuelgrid/sdk';
 import {
-  BarChart,
   Card,
   CardContent,
   CardHeader,
@@ -28,12 +27,16 @@ import { DocumentActions } from '@/components/document-actions';
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 
-// Sum a list of decimal-string amounts for the header total. Display only —
-// exact money math stays server-side; this is a readout.
-function sumAmounts(amounts: string[]): string {
-  const total = amounts.reduce((acc, b) => acc + (Number(b) || 0), 0);
-  return total.toFixed(2);
-}
+// The five day-aged buckets, in display order. Each maps a SupplierAging
+// decimal-string field to a column header. Math is server-side; this only
+// labels columns.
+const BUCKETS: ReadonlyArray<{ key: keyof SupplierAging; label: string }> = [
+  { key: 'current', label: 'Current' },
+  { key: 'd1_30', label: '1–30' },
+  { key: 'd31_60', label: '31–60' },
+  { key: 'd61_90', label: '61–90' },
+  { key: 'd90_plus', label: '90+' },
+];
 
 export default function PayablesAgingPage() {
   const aging = useQuery({
@@ -53,23 +56,28 @@ export default function PayablesAgingPage() {
     return m;
   }, [suppliers.data]);
 
+  const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
+  const toggle = React.useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   const rows = aging.data?.items ?? [];
-  const total = sumAmounts(rows.map((r) => r.outstanding));
-  const openTotal = rows.reduce((acc, r) => acc + (r.open_count ?? 0), 0);
-  const topRows = [...rows]
-    .sort((a, b) => (Number(b.outstanding) || 0) - (Number(a.outstanding) || 0))
-    .slice(0, 8)
-    .map((r) => ({
-      name: supplierByID.get(r.supplier_id)?.name ?? r.supplier_id.slice(0, 8),
-      outstanding: r.outstanding,
-    }));
+  // Totals come straight from the server (exact SQL sums), never re-summed here.
+  const totals = aging.data?.totals;
+  const totalOutstanding = totals?.outstanding ?? '0';
+  const openTotal = totals?.open_count ?? 0;
 
   return (
     <div className="flex flex-col gap-7">
       <PageHeader
         eyebrow="Finance · Payables"
         title="Payables Aging"
-        description="Every supplier with an outstanding payable balance, ranked by what's owed."
+        description="Outstanding supplier balances split into day-aged buckets by invoice due date."
         actions={
           <DocumentActions
             onFetch={() => api.supplierBalancesPdf()}
@@ -108,33 +116,15 @@ export default function PayablesAgingPage() {
             <Stat label="Suppliers with balance" value={String(rows.length)} icon={<Users />} />
             <Stat
               label="Total payable"
-              value={formatMoney(total)}
+              value={formatMoney(totalOutstanding)}
               hint={`${openTotal} open invoice${openTotal === 1 ? '' : 's'}`}
               icon={<Receipt />}
             />
           </section>
 
-          {topRows.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Top balances</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <BarChart
-                  data={topRows}
-                  xKey="name"
-                  series={[{ key: 'outstanding', label: 'Outstanding' }]}
-                  valueFormatter={(v) => formatMoney(v as string)}
-                  layout="vertical"
-                  height={Math.max(200, topRows.length * 36)}
-                />
-              </CardContent>
-            </Card>
-          ) : null}
-
           <Card>
             <CardHeader>
-              <CardTitle>Outstanding by supplier</CardTitle>
+              <CardTitle>Aging by supplier</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               {rows.length === 0 ? (
@@ -150,27 +140,99 @@ export default function PayablesAgingPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Supplier</TableHead>
-                      <TableHead>Code</TableHead>
-                      <TableHead className="text-right">Open invoices</TableHead>
-                      <TableHead className="text-right">Outstanding</TableHead>
+                      <TableHead className="text-right">Open</TableHead>
+                      {BUCKETS.map((b) => (
+                        <TableHead key={b.key} className="text-right">
+                          {b.label}
+                        </TableHead>
+                      ))}
+                      <TableHead className="text-right">Total</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {rows.map((r) => {
                       const sup = supplierByID.get(r.supplier_id);
+                      const isOpen = expanded.has(r.supplier_id);
                       return (
-                        <TableRow key={r.supplier_id}>
-                          <TableCell>{sup?.name ?? '—'}</TableCell>
-                          <TableCell className="font-mono text-[11px] text-muted-foreground">
-                            {sup?.code ?? r.supplier_id}
-                          </TableCell>
-                          <TableCell className="text-right tabular-nums">{r.open_count}</TableCell>
-                          <TableCell className="text-right font-mono font-medium tabular-nums">
-                            {formatMoney(r.outstanding)}
-                          </TableCell>
-                        </TableRow>
+                        <React.Fragment key={r.supplier_id}>
+                          <TableRow>
+                            <TableCell>
+                              <button
+                                type="button"
+                                onClick={() => toggle(r.supplier_id)}
+                                aria-expanded={isOpen}
+                                aria-label={`Toggle bucket detail for ${sup?.name ?? r.supplier_id}`}
+                                className="flex items-center gap-1.5 text-left hover:underline"
+                              >
+                                {isOpen ? (
+                                  <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                                ) : (
+                                  <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                                )}
+                                <span>{sup?.name ?? '—'}</span>
+                              </button>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              {r.open_count}
+                            </TableCell>
+                            {BUCKETS.map((b) => (
+                              <TableCell
+                                key={b.key}
+                                className="text-right font-mono tabular-nums text-muted-foreground"
+                              >
+                                {formatMoney(r[b.key] as string)}
+                              </TableCell>
+                            ))}
+                            <TableCell className="text-right font-mono font-medium tabular-nums">
+                              {formatMoney(r.outstanding)}
+                            </TableCell>
+                          </TableRow>
+                          {isOpen ? (
+                            <TableRow className="bg-muted/30">
+                              <TableCell colSpan={BUCKETS.length + 3} className="py-3">
+                                <dl className="flex flex-wrap gap-x-8 gap-y-2 px-7 text-xs">
+                                  <div>
+                                    <dt className="text-muted-foreground">Code</dt>
+                                    <dd className="font-mono">{sup?.code ?? r.supplier_id}</dd>
+                                  </div>
+                                  {BUCKETS.map((b) => (
+                                    <div key={b.key}>
+                                      <dt className="text-muted-foreground">{b.label}</dt>
+                                      <dd className="font-mono tabular-nums">
+                                        {formatMoney(r[b.key] as string)}
+                                      </dd>
+                                    </div>
+                                  ))}
+                                  <div>
+                                    <dt className="text-muted-foreground">Open invoices</dt>
+                                    <dd className="tabular-nums">{r.open_count}</dd>
+                                  </div>
+                                </dl>
+                              </TableCell>
+                            </TableRow>
+                          ) : null}
+                        </React.Fragment>
                       );
                     })}
+                    {totals ? (
+                      <TableRow className="border-t-2 bg-muted/40 font-medium">
+                        <TableCell className="font-medium">Totals</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {totals.open_count}
+                        </TableCell>
+                        {BUCKETS.map((b) => (
+                          <TableCell
+                            key={b.key}
+                            className="text-right font-mono font-medium tabular-nums"
+                          >
+                            {formatMoney(totals[b.key] as string)}
+                          </TableCell>
+                        ))}
+                        <TableCell className="text-right font-mono font-semibold tabular-nums">
+                          {formatMoney(totals.outstanding)}
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
                   </TableBody>
                 </Table>
               )}
