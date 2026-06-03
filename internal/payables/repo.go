@@ -137,17 +137,53 @@ func (r *Repo) ApplyPayment(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UU
 	return &p, nil
 }
 
-// AgingBucket is a supplier's outstanding payables total.
+// SupplierAging is a supplier's outstanding payables, split into day-aged
+// buckets by invoice due date (computed server-side as decimal strings). The
+// Outstanding/OpenCount rollup is retained for callers that only need the
+// total. Buckets are keyed on days past due relative to now():
+//
+//	Current : not yet due (due_date >= today) or no due date
+//	D1To30  : 1-30 days past due
+//	D31To60 : 31-60 days past due
+//	D61To90 : 61-90 days past due
+//	D90Plus : more than 90 days past due
+//
+// For any supplier, Current + D1To30 + D31To60 + D61To90 + D90Plus == Outstanding.
 type SupplierAging struct {
 	SupplierID  uuid.UUID
 	Outstanding string
 	OpenCount   int
+	Current     string
+	D1To30      string
+	D31To60     string
+	D61To90     string
+	D90Plus     string
 }
 
-// Aging returns suppliers with outstanding payables, largest first.
+// agingBucketsSQL is the shared CASE expression mapping each open payable's
+// outstanding amount into a day-aged bucket by due date. now()::date is the
+// reference; a NULL due date is treated as current (not yet due). It is used
+// both by Aging (per-supplier) and AgingTotals (grand total) so the two stay in
+// lockstep.
+const agingBucketsSQL = `
+	COALESCE(SUM(outstanding_amount) FILTER (
+		WHERE due_date IS NULL OR due_date >= now()::date), 0)::text AS current,
+	COALESCE(SUM(outstanding_amount) FILTER (
+		WHERE (now()::date - due_date) BETWEEN 1 AND 30), 0)::text AS d1_30,
+	COALESCE(SUM(outstanding_amount) FILTER (
+		WHERE (now()::date - due_date) BETWEEN 31 AND 60), 0)::text AS d31_60,
+	COALESCE(SUM(outstanding_amount) FILTER (
+		WHERE (now()::date - due_date) BETWEEN 61 AND 90), 0)::text AS d61_90,
+	COALESCE(SUM(outstanding_amount) FILTER (
+		WHERE (now()::date - due_date) > 90), 0)::text AS d90_plus
+`
+
+// Aging returns suppliers with outstanding payables split into day-aged buckets
+// (current / 1-30 / 31-60 / 61-90 / 90+) by invoice due date, largest balance
+// first. All money is summed in SQL (::numeric) and returned as decimal strings.
 func (r *Repo) Aging(ctx context.Context, tenantID uuid.UUID) ([]SupplierAging, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT supplier_id, SUM(outstanding_amount)::text, count(*)
+		SELECT supplier_id, SUM(outstanding_amount)::text, count(*),`+agingBucketsSQL+`
 		FROM payables
 		WHERE tenant_id = $1 AND status <> 'paid' AND status <> 'voided'
 		GROUP BY supplier_id
@@ -161,12 +197,30 @@ func (r *Repo) Aging(ctx context.Context, tenantID uuid.UUID) ([]SupplierAging, 
 	out := []SupplierAging{}
 	for rows.Next() {
 		var a SupplierAging
-		if err := rows.Scan(&a.SupplierID, &a.Outstanding, &a.OpenCount); err != nil {
+		if err := rows.Scan(&a.SupplierID, &a.Outstanding, &a.OpenCount,
+			&a.Current, &a.D1To30, &a.D31To60, &a.D61To90, &a.D90Plus); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// AgingTotals is the tenant-wide grand total across all suppliers, using the
+// same bucket definitions as Aging. SupplierID is the zero UUID.
+func (r *Repo) AgingTotals(ctx context.Context, tenantID uuid.UUID) (SupplierAging, error) {
+	var a SupplierAging
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(outstanding_amount), 0)::text, count(*),`+agingBucketsSQL+`
+		FROM payables
+		WHERE tenant_id = $1 AND status <> 'paid' AND status <> 'voided'
+		  AND outstanding_amount > 0
+	`, tenantID).Scan(&a.Outstanding, &a.OpenCount,
+		&a.Current, &a.D1To30, &a.D31To60, &a.D61To90, &a.D90Plus)
+	if err != nil {
+		return SupplierAging{}, err
+	}
+	return a, nil
 }
 
 func collect(rows pgx.Rows) ([]Payable, error) {

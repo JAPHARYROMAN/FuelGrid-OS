@@ -135,13 +135,28 @@ func (s *Server) handleAPaging(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	totals, err := s.payables.AgingTotals(r.Context(), actor.TenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
-		out = append(out, map[string]any{
-			"supplier_id": rows[i].SupplierID, "outstanding": rows[i].Outstanding, "open_count": rows[i].OpenCount,
-		})
+		out = append(out, agingDTO(rows[i]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": out, "count": len(out), "totals": agingDTO(totals),
+	})
+}
+
+// agingDTO serialises a supplier aging row (or the grand total) into the
+// per-supplier day-aged bucket shape. Money fields are decimal strings.
+func agingDTO(a payables.SupplierAging) map[string]any {
+	return map[string]any{
+		"supplier_id": a.SupplierID, "outstanding": a.Outstanding, "open_count": a.OpenCount,
+		"current": a.Current, "d1_30": a.D1To30, "d31_60": a.D31To60,
+		"d61_90": a.D61To90, "d90_plus": a.D90Plus,
+	}
 }
 
 type supplierPaymentRequest struct {

@@ -167,6 +167,89 @@ func TestPhase7_Payables(t *testing.T) {
 	}
 }
 
+// TestPhase7_APAgingBuckets seeds one open payable in each day-aged bucket for a
+// single supplier (due dates set relative to now() in SQL) and asserts the
+// GET /ap-aging response splits the outstanding amounts into the right buckets,
+// that the buckets sum to the rollup, and that the tenant-wide totals row
+// agrees. (Feature 7.4: server-side day bucketing.)
+func TestPhase7_APAgingBuckets(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	supplierID := uuid.New()
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO suppliers (id, tenant_id, code, name) VALUES ($1, $2, 'AGE-SUP-1', 'Aging Test Supplier')`,
+		supplierID, h.ids.tenantID); err != nil {
+		t.Fatalf("seed supplier: %v", err)
+	}
+
+	// daysPastDue -> outstanding amount. A negative offset is a future due date
+	// (current bucket); the NULL-due row also lands in current.
+	seed := []struct {
+		daysPastDue *int
+		amount      string
+	}{
+		{intPtr(-5), "100.00"},  // not yet due -> current
+		{nil, "50.00"},          // no due date -> current
+		{intPtr(10), "200.00"},  // 1-30
+		{intPtr(45), "300.00"},  // 31-60
+		{intPtr(75), "400.00"},  // 61-90
+		{intPtr(120), "500.00"}, // 90+
+	}
+	for i, s := range seed {
+		var due any
+		if s.daysPastDue != nil {
+			due = *s.daysPastDue
+		}
+		if _, err := h.pool.Exec(ctx, `
+			INSERT INTO payables (tenant_id, supplier_id, source_invoice_id, invoice_number, invoice_date, due_date, amount, outstanding_amount, status)
+			VALUES ($1, $2, $3, $4, now()::date,
+			        CASE WHEN $5::int IS NULL THEN NULL ELSE now()::date - $5::int END,
+			        $6, $6, 'open')
+		`, h.ids.tenantID, supplierID, uuid.New(), "AGE-INV-"+string(rune('A'+i)), due, s.amount); err != nil {
+			t.Fatalf("seed payable %d: %v", i, err)
+		}
+	}
+
+	code, aging := h.getJSON(t, "/api/v1/ap-aging", admin)
+	if code != http.StatusOK {
+		t.Fatalf("ap-aging: %d %v", code, aging)
+	}
+	items := aging["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("ap-aging items = %d, want 1: %v", len(items), aging)
+	}
+	row := items[0].(map[string]any)
+	wantRow := map[string]string{
+		"outstanding": "1550.00",
+		"current":     "150.00", // 100 (future) + 50 (null due)
+		"d1_30":       "200.00",
+		"d31_60":      "300.00",
+		"d61_90":      "400.00",
+		"d90_plus":    "500.00",
+	}
+	for k, want := range wantRow {
+		if got := row[k]; got != want {
+			t.Fatalf("aging row %s = %v, want %s", k, got, want)
+		}
+	}
+	if oc := row["open_count"].(float64); oc != 6 {
+		t.Fatalf("open_count = %v, want 6", oc)
+	}
+
+	// The grand-total row mirrors the single supplier here.
+	totals := aging["totals"].(map[string]any)
+	for k, want := range wantRow {
+		if got := totals[k]; got != want {
+			t.Fatalf("totals %s = %v, want %s", k, got, want)
+		}
+	}
+}
+
+func intPtr(n int) *int { return &n }
+
 // TestPhase7_PeriodCloseBlockedByChecklist covers ACCT-004: a period cannot be
 // closed while the close checklist has unresolved blockers (here, a draft
 // expense awaiting posting). Clearing the blocker lets the close proceed.
