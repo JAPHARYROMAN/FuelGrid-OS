@@ -33,6 +33,7 @@ import {
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 import { DocumentActions } from '@/components/document-actions';
+import { PermissionGate } from '@/components/permission-gate';
 
 interface FormState {
   code: string;
@@ -178,10 +179,12 @@ export default function ProductsPage() {
               filename="products.pdf"
               permission="station.read"
             />
-            <Button onClick={openCreate}>
-              <Plus className="size-4" />
-              New product
-            </Button>
+            <PermissionGate permission="products.manage">
+              <Button onClick={openCreate}>
+                <Plus className="size-4" />
+                New product
+              </Button>
+            </PermissionGate>
           </div>
         }
       />
@@ -210,7 +213,11 @@ export default function ProductsPage() {
         <EmptyState
           title="No products yet"
           description="Add the fuels and products this tenant sells before installing tanks and pumps."
-          action={<Button onClick={openCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="products.manage">
+              <Button onClick={openCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <Card>
@@ -251,18 +258,22 @@ export default function ProductsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-danger hover:text-danger"
-                          disabled={remove.isPending}
-                          onClick={() => confirmDelete(p)}
-                        >
-                          Delete
-                        </Button>
+                        <PermissionGate permission="products.manage">
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>
+                            Edit
+                          </Button>
+                        </PermissionGate>
+                        <PermissionGate permission="products.manage">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-danger hover:text-danger"
+                            disabled={remove.isPending}
+                            onClick={() => confirmDelete(p)}
+                          >
+                            Delete
+                          </Button>
+                        </PermissionGate>
                       </div>
                     </TableCell>
                   </TableRow>

@@ -32,6 +32,7 @@ import {
 
 import { api } from '@/lib/api';
 import { DocumentActions } from '@/components/document-actions';
+import { PermissionGate } from '@/components/permission-gate';
 
 interface FormState {
   code: string;
@@ -151,10 +152,12 @@ export default function SuppliersPage() {
               filename="suppliers.pdf"
               permission="purchase_order.read"
             />
-            <Button onClick={openCreate}>
-              <Plus className="size-4" />
-              New supplier
-            </Button>
+            <PermissionGate permission="supplier.manage">
+              <Button onClick={openCreate}>
+                <Plus className="size-4" />
+                New supplier
+              </Button>
+            </PermissionGate>
           </div>
         }
       />
@@ -177,7 +180,11 @@ export default function SuppliersPage() {
         <EmptyState
           title="No suppliers yet"
           description="Create supplier records before raising purchase orders."
-          action={<Button onClick={openCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="supplier.manage">
+              <Button onClick={openCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <Card>
@@ -209,18 +216,22 @@ export default function SuppliersPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
-                          Edit
-                        </Button>
-                        {s.status !== 'deactivated' ? (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => deactivate.mutate(s.id)}
-                            disabled={deactivate.isPending}
-                          >
-                            Deactivate
+                        <PermissionGate permission="supplier.manage">
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
+                            Edit
                           </Button>
+                        </PermissionGate>
+                        {s.status !== 'deactivated' ? (
+                          <PermissionGate permission="supplier.manage">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deactivate.mutate(s.id)}
+                              disabled={deactivate.isPending}
+                            >
+                              Deactivate
+                            </Button>
+                          </PermissionGate>
                         ) : null}
                       </div>
                     </TableCell>
