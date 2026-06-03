@@ -35,6 +35,7 @@ export type {
   TrialBalanceRow,
   ARentry,
   AuditLogEntry,
+  AuditExportResult,
   CalibratedVolume,
   CalibrationChart,
   CalibrationPreview,
