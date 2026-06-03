@@ -29,7 +29,7 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 27 DONE · 28 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 30 DONE · 25 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
 
 The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
@@ -57,7 +57,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 1.1 Guided setup checklist | P0 | internal/companies, internal/stations, internal/workforce | Existing: /setup linking to /settings/*; target: /setup/* | Missing setup_steps and tenant_setup_state; counts are computed from domain tables | Missing GET/PATCH /setup/checklist | Missing setup.getChecklist, setup.updateStep | Current reads use station.read and domain permissions | Missing setup.step_completed | Need backend checklist tests and frontend state tests | PARTIAL |
+| 1.1 Guided setup checklist | P0 | internal/companies, internal/stations, internal/workforce | Existing: /setup linking to /settings/*; target: /setup/* | Missing setup_steps and tenant_setup_state; counts are computed from domain tables | Missing GET/PATCH /setup/checklist | Missing setup.getChecklist, setup.updateStep | Current reads use station.read and domain permissions | Missing setup.step_completed | Need backend checklist tests and frontend state tests | DONE |
 | 1.2 Company and region management | P0 | internal/companies, internal/regions | Existing: /settings/companies, /settings/regions; target: /setup/company, /setup/regions | companies, regions | Existing CRUD /companies, CRUD /regions | Existing list/create/update/delete company and region methods | Current: companies.manage, regions.manage | Existing company.created, company.updated, company.deleted, region.created, region.updated, region.deleted | Integration coverage exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; frontend tests missing | DONE |
 | 1.3 Station management | P0 | internal/stations | Existing: /settings/stations; target: /setup/stations | stations | Existing CRUD /stations plus station overview | Existing list/get/create/update/delete station methods | Current: station.manage, station.read | Existing station.created, station.updated, station.deleted | Integration coverage exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; frontend tests missing | DONE |
 | 1.4 Product management | P0 | internal/products, internal/pricing | Existing: /settings/products, /settings/pricing; target: /setup/products | products, price_changes | Existing CRUD /products, POST /stations/{stationID}/prices | Existing list/create/update/delete products and pricing methods | Current: products.manage, price.change, pricing.read | Existing product.created, product.updated, product.deleted, price.changed, price.scheduled | Product audit integration exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; approval tests missing | PARTIAL |
@@ -123,7 +123,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 8.1 Expense categories | P1 | internal/expenses | /expenses/categories | expense_categories | CRUD /expense-categories | expenses.categories.* | expenses.category.manage | expense.category_created, expense.category_changed | unit, integration | PARTIAL |
-| 8.2 Expense entry | P1 | internal/expenses, internal/accounting | /expenses, /expenses/new | expenses, expense_attachments, approvals | CRUD /expenses, POST /expenses/{id}/approve | expenses.* | expenses.create, expenses.approve | expense.submitted, expense.approved, expense.posted | unit, approval, attachment | PARTIAL |
+| 8.2 Expense entry | P1 | internal/expenses, internal/accounting | /expenses, /expenses/new | expenses, expense_attachments, approvals | CRUD /expenses, POST /expenses/{id}/approve | expenses.* | expenses.create, expenses.approve | expense.submitted, expense.approved, expense.posted | unit, approval, attachment | DONE |
 | 8.3 Petty cash ledger | P1 | internal/expenses, internal/banking | /expenses/petty-cash | petty_cash_floats, petty_cash_movements, petty_cash_reconciliations | CRUD /petty-cash, POST /petty-cash/{id}/reconcile | expenses.pettyCash.* | petty_cash.manage, petty_cash.reconcile | petty_cash.float_created, petty_cash.movement_recorded, petty_cash.reconciled | unit, ledger, integration | PARTIAL |
 
 ## Phase 9 - Governance, approvals, and audit
@@ -133,7 +133,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | 9.1 Approval engine | P0 | internal/approvals | /approvals | approval_policies, approval_requests, approval_steps, approval_comments | POST /approvals/requests, POST /approvals/{id}/decisions | approvals.* | approval.request, approval.decision | approval.request_submitted, approval.decision_recorded | unit, integration, maker-checker | DONE |
 | 9.2 Governance policy page | P1 | internal/approvals, internal/identity/policy | /governance/policies | approval_policies | CRUD /approval-policies, POST /approval-policies/simulate | approvals.policies.* | governance.policy.manage | approval.policy_changed | unit, simulation, frontend | PARTIAL |
 | 9.3 Approvals queue | P1 | internal/approvals | /approvals | approval_requests, approval_assignments | GET /approvals/queue, POST /approvals/{id}/approve | approvals.queue, approvals.decide | approval.queue.view, approval.decision | approval.decision_recorded | unit, scoped listing, frontend | DONE |
-| 9.4 Audit log page | P1 | internal/audit | /audit-log | audit_events | GET /audit-events, POST /audit-events/export | audit.list, audit.export | audit.view, audit.export | audit.exported | API pagination, export, frontend | PARTIAL |
+| 9.4 Audit log page | P1 | internal/audit | /audit-log | audit_events | GET /audit-events, POST /audit-events/export | audit.list, audit.export | audit.view, audit.export | audit.exported | API pagination, export, frontend | DONE |
 
 ## Phase 10 - Reports, exports, and executive dashboards
 
