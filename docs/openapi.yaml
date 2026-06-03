@@ -2640,6 +2640,90 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Opening balance already exists }
         '422': { description: No dip reading exists when from_dip is true }
+  /api/v1/stock-adjustments:
+    get:
+      tags: [Inventory]
+      summary: List stock adjustments
+      description: >-
+        The request -> approve -> post lifecycle queue. Optionally filter by
+        status and/or tank_id. Gated by stock.adjust.
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [requested, approved, posted, rejected] } }
+        - { in: query, name: tank_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustmentList' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Inventory]
+      summary: Request a stock adjustment
+      description: >-
+        Record a manual book-stock correction (signed litre delta + reason +
+        classification) in 'requested' state. Gated by the station-scoped
+        stock.adjust at the tank's station.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RequestStockAdjustmentRequest' } } } }
+      responses:
+        '201': { description: Requested, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustment' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stock-adjustments/{id}:
+    get:
+      tags: [Inventory]
+      summary: Get a stock adjustment
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustment' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/stock-adjustments/{id}/approve:
+    post:
+      tags: [Inventory]
+      summary: Approve a requested stock adjustment
+      description: >-
+        Moves requested -> approved. Separation of duties: the requester cannot
+        approve their own adjustment (403). Gated by the station-scoped
+        stock.approve_adjustment at the tank's station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustmentDecision' } } } }
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustment' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/stock-adjustments/{id}/reject:
+    post:
+      tags: [Inventory]
+      summary: Reject a requested or approved stock adjustment
+      description: >-
+        Moves requested|approved -> rejected. The requester cannot decide their
+        own adjustment (403). Gated by stock.approve_adjustment at the tank's
+        station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustmentDecision' } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustment' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/stock-adjustments/{id}/post:
+    post:
+      tags: [Inventory]
+      summary: Post an approved stock adjustment to the tank ledger
+      description: >-
+        Appends a single 'adjustment' movement to the tank's stock ledger and
+        flips the adjustment to 'posted', linking the movement and snapshotting
+        before/after book stock. Idempotent and immutable — only an 'approved'
+        adjustment posts; a posted one never re-posts (409). Gated by
+        stock.approve_adjustment at the tank's station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Posted, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustment' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
   /api/v1/stock-transfers:
     get:
       tags: [Inventory]
@@ -4855,6 +4939,45 @@ components:
         - type: object
           properties:
             items: { type: array, items: { $ref: '#/components/schemas/StockMovement' } }
+
+    StockAdjustment:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        tank_id:        { type: string, format: uuid }
+        delta_litres:   { type: string, description: Signed exact-decimal litres delta (+in / -out; numeric -> text) }
+        reason:         { type: string }
+        classification: { type: string, enum: [evaporation, measurement_error, theft, spillage, temperature, data_entry, other] }
+        status:         { type: string, enum: [requested, approved, posted, rejected] }
+        balance_before: { type: string, description: Book stock before posting (set at post; numeric -> text) }
+        balance_after:  { type: string, description: Book stock after posting (set at post; numeric -> text) }
+        movement_id:    { type: string, format: uuid, description: The ledger movement produced at post }
+        requested_by:   { type: string, format: uuid }
+        approved_by:    { type: string, format: uuid }
+        posted_by:      { type: string, format: uuid }
+        rejected_by:    { type: string, format: uuid }
+        decision_note:  { type: string }
+        requested_at:   { type: string, format: date-time }
+        decided_at:     { type: string, format: date-time }
+        posted_at:      { type: string, format: date-time }
+    StockAdjustmentList:
+      allOf:
+        - $ref: '#/components/schemas/Paged'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/StockAdjustment' } }
+    RequestStockAdjustmentRequest:
+      type: object
+      required: [tank_id, delta_litres, reason, classification]
+      properties:
+        tank_id:        { type: string, format: uuid }
+        delta_litres:   { type: string, description: Signed, non-zero exact-decimal litres delta }
+        reason:         { type: string }
+        classification: { type: string, enum: [evaporation, measurement_error, theft, spillage, temperature, data_entry, other] }
+    StockAdjustmentDecision:
+      type: object
+      properties:
+        note: { type: string, description: Optional decision note }
 
     CalibrationChart:
       type: object

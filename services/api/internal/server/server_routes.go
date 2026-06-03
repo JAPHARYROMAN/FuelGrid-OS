@@ -284,6 +284,24 @@ func (s *Server) registerInventoryRoutes(r chi.Router) {
 	// reuse the station-scoped stock.adjust, authorized in-handler.
 	r.With(s.requirePermissionHeld("stock.adjust")).Post("/tanks/{id}/opening-balance", s.handleSetTankOpeningBalance)
 
+	// Stock adjustments (Feature 5.4): the request -> approve -> post
+	// lifecycle for manual book-stock corrections. Request is gated by the
+	// station-scoped stock.adjust; approve/reject/post by
+	// stock.approve_adjustment — both authorized in-handler against the
+	// adjustment's tank station (separation of duties enforced in the repo).
+	// The list/get ride stock.adjust; the held-permission gate on the list is
+	// a coarse filter, the per-row station check happens on get/decide.
+	r.With(s.requirePermissionHeld("stock.adjust")).Group(func(r chi.Router) {
+		r.Get("/stock-adjustments", s.handleListStockAdjustments)
+		r.Post("/stock-adjustments", s.handleRequestStockAdjustment)
+		r.Get("/stock-adjustments/{id}", s.handleGetStockAdjustment)
+	})
+	r.With(s.requirePermissionHeld("stock.approve_adjustment")).Group(func(r chi.Router) {
+		r.Post("/stock-adjustments/{id}/approve", s.handleApproveStockAdjustment)
+		r.Post("/stock-adjustments/{id}/reject", s.handleRejectStockAdjustment)
+		r.Post("/stock-adjustments/{id}/post", s.handlePostStockAdjustment)
+	})
+
 	// Deliveries (Phase 4, Stage 3): receive posts a +volume
 	// 'delivery' movement; reads ride inventory.read. Receive is
 	// station-scoped (delivery.receive), authorized in-handler.
