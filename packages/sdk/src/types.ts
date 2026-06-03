@@ -356,6 +356,53 @@ export interface SetTankOpeningBalanceRequest {
   notes?: string;
 }
 
+/** Coarse machine classification of why a stock adjustment is being made. */
+export type StockAdjustmentClassification =
+  | 'evaporation'
+  | 'measurement_error'
+  | 'theft'
+  | 'spillage'
+  | 'temperature'
+  | 'data_entry'
+  | 'other';
+
+export type StockAdjustmentStatus = 'requested' | 'approved' | 'posted' | 'rejected';
+
+/**
+ * A stock adjustment is a controlled correction to a tank's book stock that
+ * moves requested -> approved -> posted (or rejected). Posting appends a single
+ * 'adjustment' movement to the tank ledger; balance_before / balance_after are
+ * snapshotted at post time. Litres + balances are exact decimal STRINGS
+ * (numeric(14,3) -> text); delta_litres is signed (+in / -out).
+ */
+export interface StockAdjustment {
+  id: string;
+  tank_id: string;
+  delta_litres: string;
+  reason: string;
+  classification: StockAdjustmentClassification;
+  status: StockAdjustmentStatus;
+  balance_before?: string;
+  balance_after?: string;
+  movement_id?: string;
+  requested_by: string;
+  approved_by?: string;
+  posted_by?: string;
+  rejected_by?: string;
+  decision_note?: string;
+  requested_at: string;
+  decided_at?: string;
+  posted_at?: string;
+}
+
+export interface RequestStockAdjustmentRequest {
+  tank_id: string;
+  /** Signed exact-decimal litres delta (+in / -out); must be non-zero. */
+  delta_litres: string;
+  reason: string;
+  classification: StockAdjustmentClassification;
+}
+
 export type SetupStepStatus = 'pending' | 'completed' | 'skipped';
 
 export interface SetupBlocker {

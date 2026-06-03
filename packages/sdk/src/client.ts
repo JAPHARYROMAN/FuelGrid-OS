@@ -113,6 +113,8 @@ import type {
   Station,
   StationOverview,
   StockMovement,
+  StockAdjustment,
+  RequestStockAdjustmentRequest,
   Supplier,
   SupplierInvoice,
   Tank,
@@ -974,6 +976,70 @@ export class Client {
     return this.request<StockMovement>(
       `/api/v1/tanks/${encodeURIComponent(tankID)}/opening-balance`,
       { method: 'POST', body: req, signal },
+    );
+  }
+
+  // ----------- Stock adjustments (request -> approve -> post) -----------
+
+  listStockAdjustments(
+    opts: { status?: string; tank_id?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<StockAdjustment>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.tank_id) params.set('tank_id', opts.tank_id);
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    if (opts.offset != null) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.request<Paginated<StockAdjustment>>(
+      `/api/v1/stock-adjustments${qs ? `?${qs}` : ''}`,
+      { signal },
+    );
+  }
+
+  getStockAdjustment(id: string, signal?: AbortSignal): Promise<StockAdjustment> {
+    return this.request<StockAdjustment>(`/api/v1/stock-adjustments/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  requestStockAdjustment(
+    req: RequestStockAdjustmentRequest,
+    signal?: AbortSignal,
+  ): Promise<StockAdjustment> {
+    return this.request<StockAdjustment>('/api/v1/stock-adjustments', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  approveStockAdjustment(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<StockAdjustment> {
+    return this.request<StockAdjustment>(
+      `/api/v1/stock-adjustments/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  rejectStockAdjustment(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<StockAdjustment> {
+    return this.request<StockAdjustment>(
+      `/api/v1/stock-adjustments/${encodeURIComponent(id)}/reject`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  postStockAdjustment(id: string, signal?: AbortSignal): Promise<StockAdjustment> {
+    return this.request<StockAdjustment>(
+      `/api/v1/stock-adjustments/${encodeURIComponent(id)}/post`,
+      { method: 'POST', signal },
     );
   }
 
