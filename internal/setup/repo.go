@@ -280,15 +280,15 @@ func readinessFor(code string, c Counts) (ready, blocked bool, reason *string, c
 	case "suppliers":
 		return c.Suppliers > 0, false, nil, c.Suppliers, 1
 	case "tanks":
-		return readyWithStation(c.Stations, c.Tanks, 1, "Create a station before installing tanks")
+		return readyWithStation(c.Stations, c.Tanks, "Create a station before installing tanks")
 	case "pumps":
-		return readyWithStation(c.Stations, c.Pumps, 1, "Create a station before installing pumps")
+		return readyWithStation(c.Stations, c.Pumps, "Create a station before installing pumps")
 	case "nozzles":
 		if c.Pumps == 0 {
 			msg := "Create a pump before adding nozzles"
 			return false, true, &msg, c.Nozzles, 1
 		}
-		return readyWithStation(c.Stations, c.Nozzles, 1, "Create a station before adding nozzles")
+		return readyWithStation(c.Stations, c.Nozzles, "Create a station before adding nozzles")
 	case "opening_stock":
 		if c.Tanks == 0 {
 			msg := "Create tanks before setting opening stock"
@@ -296,7 +296,7 @@ func readinessFor(code string, c Counts) (ready, blocked bool, reason *string, c
 		}
 		return c.OpenedTanks >= c.RequiredOpenTanks, false, nil, c.OpenedTanks, c.RequiredOpenTanks
 	case "employees":
-		return readyWithStation(c.Stations, c.Employees, 1, "Create a station before adding employees")
+		return readyWithStation(c.Stations, c.Employees, "Create a station before adding employees")
 	case "teams":
 		if c.Employees == 0 {
 			msg := "Create employees before forming shift teams"
@@ -316,7 +316,9 @@ func readinessFor(code string, c Counts) (ready, blocked bool, reason *string, c
 	}
 }
 
-func readyWithStation(stations, count, required int, blockedReason string) (bool, bool, *string, int, int) {
+func readyWithStation(stations, count int, blockedReason string) (bool, bool, *string, int, int) {
+	// Every station-gated step requires at least one of the counted resource.
+	const required = 1
 	if stations == 0 {
 		msg := blockedReason
 		return false, true, &msg, count, required
