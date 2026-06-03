@@ -26,6 +26,7 @@ import type {
   Payable,
   SupplierAging,
   AuditLogEntry,
+  AuditExportResult,
   CalibratedVolume,
   CalibrationChart,
   CalibrationPreview,
@@ -3776,6 +3777,7 @@ export class Client {
       since?: string;
       until?: string;
       limit?: number;
+      offset?: number;
     } = {},
     signal?: AbortSignal,
   ): Promise<Paginated<AuditLogEntry>> {
@@ -3786,9 +3788,30 @@ export class Client {
     if (opts.actorID) qs.set('actor_id', opts.actorID);
     if (opts.since) qs.set('since', opts.since);
     if (opts.until) qs.set('until', opts.until);
-    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.limit != null) qs.set('limit', String(opts.limit));
+    if (opts.offset != null) qs.set('offset', String(opts.offset));
     const q = qs.toString();
     return this.request<Paginated<AuditLogEntry>>(`/api/v1/audit-logs${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  /**
+   * Export the tenant's audit trail for a date range as CSV (permission:
+   * audit.read). The act of exporting is itself audited server-side
+   * (export.generated). Returns the CSV text plus a row count and SHA-256
+   * checksum so the caller can hand the CSV to a browser download.
+   */
+  exportAuditLogs(
+    opts: { from?: string; to?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<AuditExportResult> {
+    const qs = new URLSearchParams();
+    if (opts.from) qs.set('from', opts.from);
+    if (opts.to) qs.set('to', opts.to);
+    const q = qs.toString();
+    return this.request<AuditExportResult>(`/api/v1/audit-logs/export${q ? `?${q}` : ''}`, {
+      method: 'POST',
       signal,
     });
   }

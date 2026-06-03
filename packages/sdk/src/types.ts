@@ -1727,6 +1727,22 @@ export interface AuditLogEntry {
   occurred_at: string;
 }
 
+/**
+ * Result of POST /audit-logs/export. The server returns the generated CSV
+ * inline as text alongside the run metadata (the export is itself audited as
+ * `export.generated`).
+ */
+export interface AuditExportResult {
+  export_id: string;
+  export_type: string;
+  format: string;
+  from: string;
+  to: string;
+  row_count: number;
+  checksum: string;
+  csv: string;
+}
+
 export interface Paginated<T> {
   items: T[];
   count: number;

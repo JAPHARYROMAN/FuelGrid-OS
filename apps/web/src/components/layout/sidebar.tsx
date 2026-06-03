@@ -19,6 +19,7 @@ import {
   Palette,
   Receipt,
   Scale,
+  ScrollText,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -28,6 +29,7 @@ import {
   Truck,
   Users,
   UserCog,
+  Wallet,
 } from 'lucide-react';
 
 import { cn } from '@fuelgrid/ui';
@@ -86,6 +88,8 @@ const navGroups: NavGroup[] = [
     label: 'Finance',
     items: [
       { label: 'Finance', href: '/finance', icon: DollarSign },
+      { label: 'Expenses', href: '/expenses', icon: Wallet },
+      { label: 'Payables Aging', href: '/payables/aging', icon: Receipt },
       { label: 'Reports', href: '/reports', icon: BarChart3 },
     ],
   },
@@ -96,6 +100,7 @@ const navGroups: NavGroup[] = [
       { label: 'Alerts', href: '/alerts', icon: AlertCircle },
       { label: 'Risk', href: '/risk', icon: ShieldCheck },
       { label: 'Audit', href: '/audit', icon: ShieldCheck },
+      { label: 'Audit log', href: '/audit-log', icon: ScrollText },
     ],
   },
   {

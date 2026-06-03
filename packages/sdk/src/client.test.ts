@@ -324,3 +324,55 @@ describe('Client list-document PDF exports (DOC-PDF)', () => {
     expect(client.productsPdfUrl()).toBe('http://api.test/api/v1/products.pdf');
   });
 });
+
+describe('Client audit log endpoints', () => {
+  it('listAuditLogs forwards filters and paging as query params', async () => {
+    const f = jsonFetch(200, { items: [], count: 0, has_more: false });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await client.listAuditLogs({
+      action: 'expense.approved',
+      entityType: 'expense',
+      entityID: 'e1',
+      actorID: 'a1',
+      since: '2026-01-01T00:00:00Z',
+      until: '2026-02-01T00:00:00Z',
+      limit: 25,
+      offset: 50,
+    });
+    const { url, init } = callArgs(f);
+    expect(init.method ?? 'GET').toBe('GET');
+    const u = new URL(url);
+    expect(u.pathname).toBe('/api/v1/audit-logs');
+    expect(u.searchParams.get('action')).toBe('expense.approved');
+    expect(u.searchParams.get('entity_type')).toBe('expense');
+    expect(u.searchParams.get('entity_id')).toBe('e1');
+    expect(u.searchParams.get('actor_id')).toBe('a1');
+    expect(u.searchParams.get('since')).toBe('2026-01-01T00:00:00Z');
+    expect(u.searchParams.get('until')).toBe('2026-02-01T00:00:00Z');
+    expect(u.searchParams.get('limit')).toBe('25');
+    expect(u.searchParams.get('offset')).toBe('50');
+  });
+
+  it('exportAuditLogs POSTs with from/to and returns the export result', async () => {
+    const f = jsonFetch(201, {
+      export_id: 'x1',
+      export_type: 'audit_logs',
+      format: 'csv',
+      from: '2026-01-01',
+      to: '2026-01-31',
+      row_count: 3,
+      checksum: 'abc',
+      csv: 'occurred_at,actor_id\n',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.exportAuditLogs({ from: '2026-01-01', to: '2026-01-31' });
+    const { url, init } = callArgs(f);
+    expect(init.method).toBe('POST');
+    const u = new URL(url);
+    expect(u.pathname).toBe('/api/v1/audit-logs/export');
+    expect(u.searchParams.get('from')).toBe('2026-01-01');
+    expect(u.searchParams.get('to')).toBe('2026-01-31');
+    expect(res.csv).toContain('occurred_at');
+    expect(res.row_count).toBe(3);
+  });
+});
