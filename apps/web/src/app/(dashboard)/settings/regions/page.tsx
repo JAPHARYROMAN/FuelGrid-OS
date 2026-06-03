@@ -31,6 +31,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { PermissionGate } from '@/components/permission-gate';
 
 interface FormState {
   company_id: string;
@@ -117,10 +118,12 @@ export default function RegionsPage() {
         title="Regions"
         description={`Group stations under a company — ${list.data?.count ?? 0} total.`}
         actions={
-          <Button onClick={openCreate} disabled={(companies.data?.items?.length ?? 0) === 0}>
-            <Plus className="size-4" />
-            New region
-          </Button>
+          <PermissionGate permission="regions.manage">
+            <Button onClick={openCreate} disabled={(companies.data?.items?.length ?? 0) === 0}>
+              <Plus className="size-4" />
+              New region
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -170,9 +173,11 @@ export default function RegionsPage() {
                       <Badge tone={r.status === 'active' ? 'success' : 'warning'}>{r.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(r)}>
-                        Edit
-                      </Button>
+                      <PermissionGate permission="regions.manage">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(r)}>
+                          Edit
+                        </Button>
+                      </PermissionGate>
                     </TableCell>
                   </TableRow>
                 ))}
