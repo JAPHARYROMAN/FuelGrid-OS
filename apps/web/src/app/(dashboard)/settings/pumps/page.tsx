@@ -26,6 +26,8 @@ import {
   Skeleton,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
+import { usePermission } from '@/hooks/use-permissions';
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 
@@ -66,6 +68,10 @@ export default function PumpsPage() {
   const [nozzleForm, setNozzleForm] = useState<NozzleFormState | null>(null);
   const [nozzleError, setNozzleError] = useState<string | null>(null);
 
+  // Inline deletes have no dialog of their own — surface their failure in a
+  // page-level banner so a failed delete isn't silent.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const stations = useQuery({
     queryKey: ['stations'],
     queryFn: ({ signal }) => api.listStations({}, signal),
@@ -76,6 +82,12 @@ export default function PumpsPage() {
   });
 
   const effectiveStation = stationID || stations.data?.items[0]?.id || '';
+
+  // pumps.manage is station-scoped and also covers nozzle mutations (see
+  // services/api server_routes.go). Gates the pump/nozzle create + delete
+  // submits defensively; PermissionGate hides/disables the controls, and the
+  // backend stays authoritative.
+  const canManage = usePermission('pumps.manage', { stationID: effectiveStation });
 
   const tanks = useQuery({
     queryKey: ['tanks', effectiveStation],
@@ -136,7 +148,12 @@ export default function PumpsPage() {
 
   const deletePump = useMutation({
     mutationFn: (id: string) => api.deletePump(id),
-    onSuccess: invalidateStation,
+    onSuccess: () => {
+      setDeleteError(null);
+      invalidateStation();
+    },
+    onError: (err) =>
+      setDeleteError(err instanceof SdkError ? err.message : 'Could not delete pump'),
   });
 
   const createNozzle = useMutation({
@@ -161,7 +178,12 @@ export default function PumpsPage() {
 
   const deleteNozzle = useMutation({
     mutationFn: (id: string) => api.deleteNozzle(id),
-    onSuccess: invalidateStation,
+    onSuccess: () => {
+      setDeleteError(null);
+      invalidateStation();
+    },
+    onError: (err) =>
+      setDeleteError(err instanceof SdkError ? err.message : 'Could not delete nozzle'),
   });
 
   function toggle(id: string) {
@@ -208,6 +230,10 @@ export default function PumpsPage() {
   }
 
   function submitPump() {
+    if (canManage === false) {
+      setPumpError("You don't have permission to manage pumps at this station");
+      return;
+    }
     if (!pumpForm.number || Number(pumpForm.number) <= 0) {
       setPumpError('A positive pump number is required');
       return;
@@ -217,6 +243,10 @@ export default function PumpsPage() {
 
   function submitNozzle() {
     if (!nozzleForm) return;
+    if (canManage === false) {
+      setNozzleError("You don't have permission to manage pumps at this station");
+      return;
+    }
     if (!nozzleForm.tank_id) {
       setNozzleError('Pick a tank — it sets the product');
       return;
@@ -258,13 +288,21 @@ export default function PumpsPage() {
                 ))}
               </select>
             </div>
-            <Button onClick={openPumpCreate} disabled={noStations || !effectiveStation}>
-              <Plus className="size-4" />
-              New pump
-            </Button>
+            <PermissionGate permission="pumps.manage" stationId={effectiveStation}>
+              <Button onClick={openPumpCreate} disabled={noStations || !effectiveStation}>
+                <Plus className="size-4" />
+                New pump
+              </Button>
+            </PermissionGate>
           </>
         }
       />
+
+      {deleteError ? (
+        <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+          {deleteError}
+        </p>
+      ) : null}
 
       {noStations ? (
         <EmptyState
@@ -287,7 +325,11 @@ export default function PumpsPage() {
         <EmptyState
           title="No pumps at this station"
           description="Add a pump, then attach nozzles that draw from this station's tanks."
-          action={<Button onClick={openPumpCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="pumps.manage" stationId={effectiveStation} mode="hide">
+              <Button onClick={openPumpCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <div className="flex flex-col gap-3">
@@ -322,19 +364,23 @@ export default function PumpsPage() {
                     <Button variant="ghost" size="sm" asChild>
                       <Link href={`/stations/${effectiveStation}/pumps/${pump.id}`}>Details</Link>
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => openNozzleCreate(pump)}>
-                      <Plus className="size-4" />
-                      Nozzle
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => deletePump.mutate(pump.id)}
-                      disabled={pumpNozzles.length > 0}
-                      title={pumpNozzles.length > 0 ? 'Remove its nozzles first' : 'Delete pump'}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <PermissionGate permission="pumps.manage" stationId={effectiveStation}>
+                      <Button variant="ghost" size="sm" onClick={() => openNozzleCreate(pump)}>
+                        <Plus className="size-4" />
+                        Nozzle
+                      </Button>
+                    </PermissionGate>
+                    <PermissionGate permission="pumps.manage" stationId={effectiveStation}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => deletePump.mutate(pump.id)}
+                        disabled={pumpNozzles.length > 0}
+                        title={pumpNozzles.length > 0 ? 'Remove its nozzles first' : 'Delete pump'}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </PermissionGate>
                   </div>
                 </CardHeader>
                 {isOpen ? (
@@ -376,13 +422,18 @@ export default function PumpsPage() {
                                   <span className="font-mono text-sm tabular-nums">
                                     {formatMoney(n.default_price)}
                                   </span>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => deleteNozzle.mutate(n.id)}
+                                  <PermissionGate
+                                    permission="pumps.manage"
+                                    stationId={effectiveStation}
                                   >
-                                    <Trash2 className="size-4" />
-                                  </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => deleteNozzle.mutate(n.id)}
+                                    >
+                                      <Trash2 className="size-4" />
+                                    </Button>
+                                  </PermissionGate>
                                 </div>
                               </div>
                             );
