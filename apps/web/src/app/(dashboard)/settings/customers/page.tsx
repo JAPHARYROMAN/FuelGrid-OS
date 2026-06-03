@@ -33,6 +33,7 @@ import {
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
 import { DocumentActions } from '@/components/document-actions';
+import { PermissionGate } from '@/components/permission-gate';
 
 interface FormState {
   code: string;
@@ -150,10 +151,12 @@ export default function CustomersSettingsPage() {
               filename="customers.pdf"
               permission="customer.read"
             />
-            <Button onClick={openCreate}>
-              <Plus className="size-4" />
-              New customer
-            </Button>
+            <PermissionGate permission="credit.manage">
+              <Button onClick={openCreate}>
+                <Plus className="size-4" />
+                New customer
+              </Button>
+            </PermissionGate>
           </div>
         }
       />
@@ -176,7 +179,11 @@ export default function CustomersSettingsPage() {
         <EmptyState
           title="No customers yet"
           description="Create customer accounts before issuing credit sales or invoices."
-          action={<Button onClick={openCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="credit.manage">
+              <Button onClick={openCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <Card>
@@ -212,22 +219,26 @@ export default function CustomersSettingsPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
-                            Edit
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={setStatus.isPending}
-                            onClick={() =>
-                              setStatus.mutate({
-                                id: c.id,
-                                status: suspended ? 'active' : 'suspended',
-                              })
-                            }
-                          >
-                            {suspended ? 'Reactivate' : 'Suspend'}
-                          </Button>
+                          <PermissionGate permission="credit.manage">
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
+                              Edit
+                            </Button>
+                          </PermissionGate>
+                          <PermissionGate permission="customer.manage">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={setStatus.isPending}
+                              onClick={() =>
+                                setStatus.mutate({
+                                  id: c.id,
+                                  status: suspended ? 'active' : 'suspended',
+                                })
+                              }
+                            >
+                              {suspended ? 'Reactivate' : 'Suspend'}
+                            </Button>
+                          </PermissionGate>
                         </div>
                       </TableCell>
                     </TableRow>
