@@ -31,6 +31,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { PermissionGate } from '@/components/permission-gate';
 
 interface CompanyFormState {
   name: string;
@@ -128,10 +129,12 @@ export default function CompaniesPage() {
         title="Companies"
         description={`The legal entities that own your stations — ${list.data?.count ?? 0} total.`}
         actions={
-          <Button onClick={openCreate}>
-            <Plus className="size-4" />
-            New company
-          </Button>
+          <PermissionGate permission="companies.manage">
+            <Button onClick={openCreate}>
+              <Plus className="size-4" />
+              New company
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -153,7 +156,11 @@ export default function CompaniesPage() {
         <EmptyState
           title="No companies yet"
           description="A company is the legal entity that owns stations. Most tenants need at least one."
-          action={<Button onClick={openCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="companies.manage" mode="hide">
+              <Button onClick={openCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <Card>
@@ -180,9 +187,11 @@ export default function CompaniesPage() {
                       <Badge tone={c.status === 'active' ? 'success' : 'warning'}>{c.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
-                        Edit
-                      </Button>
+                      <PermissionGate permission="companies.manage">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
+                          Edit
+                        </Button>
+                      </PermissionGate>
                     </TableCell>
                   </TableRow>
                 ))}

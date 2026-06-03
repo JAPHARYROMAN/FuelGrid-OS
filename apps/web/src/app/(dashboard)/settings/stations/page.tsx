@@ -31,6 +31,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { PermissionGate } from '@/components/permission-gate';
 
 interface FormState {
   company_id: string;
@@ -143,10 +144,12 @@ export default function StationsPage() {
         title="Stations"
         description={`Fueling locations under your companies — ${list.data?.count ?? 0} total.`}
         actions={
-          <Button onClick={openCreate} disabled={(companies.data?.items?.length ?? 0) === 0}>
-            <Plus className="size-4" />
-            New station
-          </Button>
+          <PermissionGate permission="station.manage">
+            <Button onClick={openCreate} disabled={(companies.data?.items?.length ?? 0) === 0}>
+              <Plus className="size-4" />
+              New station
+            </Button>
+          </PermissionGate>
         }
       />
 
@@ -168,7 +171,11 @@ export default function StationsPage() {
         <EmptyState
           title="No stations yet"
           description="At least one station is required before Phase 2 can install tanks and pumps."
-          action={<Button onClick={openCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="station.manage" mode="hide">
+              <Button onClick={openCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <Card>
@@ -199,9 +206,11 @@ export default function StationsPage() {
                       <Badge tone={s.status === 'active' ? 'success' : 'warning'}>{s.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
-                        Edit
-                      </Button>
+                      <PermissionGate permission="station.manage">
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
+                          Edit
+                        </Button>
+                      </PermissionGate>
                     </TableCell>
                   </TableRow>
                 ))}
