@@ -29,7 +29,7 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 34 DONE · 21 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 36 DONE · 19 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
 
 The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
@@ -97,7 +97,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | 5.1 Deliveries and goods receipt | P0 | internal/procurement, internal/inventory | /deliveries, /deliveries/new | deliveries, delivery_lines, delivery_receipts, attachments | CRUD /deliveries, POST /deliveries/{id}/receive | deliveries.*, inventory.receiveDelivery | inventory.delivery.manage, inventory.delivery.approve | delivery.expected_created, delivery.received, delivery.receipt_approved | unit, ledger integration | DONE |
 | 5.2 Tank dips and physical readings | P0 | internal/readings, internal/tanks | /inventory/dips | tank_dips, calibration_tables, attachments | POST /tank-dips, GET /tank-dips | inventory.captureDip, inventory.listDips | inventory.dip.capture | tank_dip.captured, tank_dip.corrected | unit, calibration, frontend | DONE |
 | 5.3 Stock reconciliation | P0 | internal/reconciliation, internal/inventory | /inventory/reconciliation | stock_reconciliations, stock_variances | POST /reconciliations, POST /reconciliations/{id}/approve | reconciliation.* | inventory.reconcile | stock.reconciliation_submitted, stock.reconciliation_approved | unit, variance, approval | DONE |
-| 5.4 Stock adjustments | P0 | internal/inventory, internal/approvals | /inventory/adjustments | stock_adjustments, inventory_ledger, approvals | POST /stock-adjustments, POST /stock-adjustments/{id}/post | inventory.adjustments.* | inventory.adjust.request, inventory.adjust.approve, inventory.adjust.post | stock.adjustment_requested, stock.adjustment_posted | unit, ledger, approval | PARTIAL |
+| 5.4 Stock adjustments | P0 | internal/inventory, internal/approvals | /inventory/adjustments | stock_adjustments, inventory_ledger, approvals | POST /stock-adjustments, POST /stock-adjustments/{id}/post | inventory.adjustments.* | inventory.adjust.request, inventory.adjust.approve, inventory.adjust.post | stock.adjustment_requested, stock.adjustment_posted | unit, ledger, approval | DONE |
 | 5.5 Transfers | P1 | internal/inventory | /inventory/transfers/tank-to-tank, /inventory/transfers/station-to-station | stock_transfers, transfer_lines, inventory_ledger | CRUD /stock-transfers, POST /stock-transfers/{id}/dispatch, POST /stock-transfers/{id}/receive | inventory.transfers.* | inventory.transfer.request, inventory.transfer.dispatch, inventory.transfer.receive | stock.transfer_requested, stock.transfer_dispatched, stock.transfer_received | unit, integration, variance | DONE |
 
 ## Phase 6 - Credit, receivables, and customer statements
@@ -116,7 +116,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | 7.1 Supplier management | P0 | internal/payables, internal/procurement | /suppliers | suppliers, supplier_products | CRUD /suppliers | suppliers.* | supplier.manage | supplier.created, supplier.updated, supplier.status_changed | unit, integration | DONE |
 | 7.2 Purchase orders | P1 | internal/procurement | /procurement/purchase-orders | purchase_orders, purchase_order_lines, approvals | CRUD /purchase-orders, POST /purchase-orders/{id}/approve | procurement.purchaseOrders.* | procurement.po.manage, procurement.po.approve | purchase_order.created, purchase_order.approved, purchase_order.cancelled | unit, approval, integration | PARTIAL |
 | 7.3 Supplier invoices | P1 | internal/payables | /payables/invoices | supplier_invoices, supplier_invoice_lines, payable_transactions | CRUD /supplier-invoices, POST /supplier-invoices/{id}/approve | payables.invoices.* | payables.invoice.manage, payables.invoice.approve | supplier_invoice.recorded, supplier_invoice.approved | unit, variance, approval | PARTIAL |
-| 7.4 Payables aging | P1 | internal/payables | /payables/aging | payable_transactions, aging_snapshots | GET /payables/aging | payables.aging | payables.aging.view | report.exported where exported | unit, report, frontend | PARTIAL |
+| 7.4 Payables aging | P1 | internal/payables | /payables/aging | payable_transactions, aging_snapshots | GET /payables/aging | payables.aging | payables.aging.view | report.exported where exported | unit, report, frontend | DONE |
 
 ## Phase 8 - Expenses, petty cash, and cash controls
 
