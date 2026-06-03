@@ -31,6 +31,8 @@ import {
   TableRow,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
+import { usePermission } from '@/hooks/use-permissions';
 import { api } from '@/lib/api';
 import { formatLitres } from '@/lib/money';
 
@@ -77,6 +79,12 @@ export default function TanksPage() {
 
   // Default the station picker to the first station once loaded.
   const effectiveStation = stationID || stations.data?.items[0]?.id || '';
+
+  // tanks.manage is station-scoped (see services/api server_routes.go) — the
+  // check needs the targeted station. Gates the create/edit submit defensively;
+  // PermissionGate hides/disables the controls, and the backend stays
+  // authoritative.
+  const canManage = usePermission('tanks.manage', { stationID: effectiveStation });
 
   const list = useQuery({
     queryKey: ['tanks', effectiveStation],
@@ -152,6 +160,10 @@ export default function TanksPage() {
   }
 
   function submit() {
+    if (canManage === false) {
+      setSubmitError("You don't have permission to manage tanks at this station");
+      return;
+    }
     if (!form.product_id || !form.name.trim() || !form.code.trim()) {
       setSubmitError('Product, name, and code are required');
       return;
@@ -198,10 +210,12 @@ export default function TanksPage() {
                 ))}
               </select>
             </div>
-            <Button onClick={openCreate} disabled={noStations || noProducts || !effectiveStation}>
-              <Plus className="size-4" />
-              New tank
-            </Button>
+            <PermissionGate permission="tanks.manage" stationId={effectiveStation}>
+              <Button onClick={openCreate} disabled={noStations || noProducts || !effectiveStation}>
+                <Plus className="size-4" />
+                New tank
+              </Button>
+            </PermissionGate>
           </>
         }
       />
@@ -234,7 +248,11 @@ export default function TanksPage() {
         <EmptyState
           title="No tanks at this station"
           description="Attach a tank to this station and bind it to a product."
-          action={<Button onClick={openCreate}>Create one</Button>}
+          action={
+            <PermissionGate permission="tanks.manage" stationId={effectiveStation} mode="hide">
+              <Button onClick={openCreate}>Create one</Button>
+            </PermissionGate>
+          }
         />
       ) : (
         <Card>
@@ -283,9 +301,11 @@ export default function TanksPage() {
                         <Button variant="ghost" size="sm" asChild>
                           <Link href={`/settings/tanks/${t.id}`}>Calibration</Link>
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(t)}>
-                          Edit
-                        </Button>
+                        <PermissionGate permission="tanks.manage" stationId={effectiveStation}>
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(t)}>
+                            Edit
+                          </Button>
+                        </PermissionGate>
                       </TableCell>
                     </TableRow>
                   );
