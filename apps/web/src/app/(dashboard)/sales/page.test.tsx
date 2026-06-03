@@ -137,7 +137,7 @@ describe('SalesPage', () => {
     );
     // The surviving row is the evening sale; the morning sale is gone from the
     // table (Morning still exists as a filter option, so scope to the row).
-    const [surviving] = screen.getAllByRole('button', { name: /^sale sale-/i });
+    const surviving = screen.getAllByRole('button', { name: /^sale sale-/i })[0]!;
     expect(within(surviving).getByText('Evening')).toBeInTheDocument();
     expect(within(surviving).queryByText('Morning')).not.toBeInTheDocument();
   });
