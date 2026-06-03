@@ -29,7 +29,7 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 30 DONE · 25 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 31 DONE · 24 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
 
 The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
@@ -86,7 +86,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 4.1 POS page | P0 | internal/revenue, internal/payments | /pos | sales, sale_lines, payments | POST /sales | sales.create | sale.create | sale.created, payment.created | unit, integration, frontend, e2e | PARTIAL |
-| 4.2 Sales transaction list | P0 | internal/revenue | /sales, /sales/[id] | sales, sale_lines, payments | GET /sales, GET /sales/{id} | sales.list, sales.get | sale.view | n/a | API pagination, frontend states | PARTIAL |
+| 4.2 Sales transaction list | P0 | internal/revenue | /sales, /sales/[id] | sales, sale_lines, payments | GET /sales, GET /sales/{id} | sales.list, sales.get | sale.view | n/a | API pagination, frontend states | DONE |
 | 4.3 Sale void workflow | P0 | internal/revenue, internal/approvals, internal/audit | /sales/[id] | sale_voids, reversals, approvals | POST /sales/{id}/void-requests, POST /sales/{id}/void-approve | sales.requestVoid, sales.approveVoid | sale.void.request, sale.void.approve | sale.void_requested, sale.void_approved, sale.reversed | unit, integration, approval | MISSING |
 | 4.4 Payment handling | P0 | internal/payments, internal/banking | /pos, /sales/[id] | payments, payment_attempts, payment_callbacks | POST /payments, POST /payment-callbacks | payments.create, payments.reconcile | payment.reconcile | payment.status_changed, payment.callback_received | idempotency, integration | PARTIAL |
 
