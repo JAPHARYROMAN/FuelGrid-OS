@@ -436,6 +436,29 @@ func (r *Repo) UpsertStep(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid
 	return st, err
 }
 
+// openShiftOperationalSteps is the minimal per-station operational set that must
+// be ready before a shift can open at a station. It deliberately excludes
+// tenant-wide checklist items (company, regions, products, suppliers, users) and
+// the rotation/team configuration (teams, rotation_anchor): those are either not
+// per-station prerequisites for running one shift, or are enforced separately by
+// the open-shift handler (a shift never opens without its scheduled team and its
+// login-linked members). What remains is the physical + stock + staffing
+// readiness that genuinely makes a single shift runnable.
+var openShiftOperationalSteps = map[string]bool{
+	"tanks":         true,
+	"pumps":         true,
+	"nozzles":       true,
+	"opening_stock": true,
+	"employees":     true,
+}
+
+// OpenShiftBlockers reports the per-station operational prerequisites that are
+// not yet satisfied for the given station, scoped to what makes a single shift
+// runnable: the station must exist, be active, and have at least one tank, pump,
+// nozzle, opening stock seeded for its tanks, and at least one active employee.
+// It reuses the setup readiness projection but restricts the blocking set to
+// those operational items — tenant-wide checklist items (regions, users, full
+// team rotation, rotation anchor) are intentionally not blockers here.
 func (r *Repo) OpenShiftBlockers(ctx context.Context, tenantID, stationID uuid.UUID) ([]Blocker, error) {
 	var stationStatus string
 	err := r.pool.QueryRow(ctx, `
@@ -460,8 +483,7 @@ func (r *Repo) OpenShiftBlockers(ctx context.Context, tenantID, stationID uuid.U
 		blockers = append(blockers, Blocker{Code: "stations", Message: "station is not active"})
 	}
 	for _, b := range all.Blocked {
-		switch b.Code {
-		case "company", "regions", "stations", "products", "tanks", "pumps", "nozzles", "opening_stock", "employees", "teams", "rotation_anchor", "users":
+		if openShiftOperationalSteps[b.Code] {
 			blockers = append(blockers, b)
 		}
 	}
