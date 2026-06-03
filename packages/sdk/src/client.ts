@@ -103,16 +103,19 @@ import type {
   ShiftPaymentReconciliation,
   CashSubmission,
   Session,
+  SetTankOpeningBalanceRequest,
   Shift,
   ShiftCloseSummary,
   ShiftDetail,
   ShiftException,
+  SetupChecklist,
   Station,
   StationOverview,
   StockMovement,
   Supplier,
   SupplierInvoice,
   Tank,
+  TankBookBalance,
   UnreadCount,
   UserSummary,
   Delivery,
@@ -875,6 +878,23 @@ export class Client {
     );
   }
 
+  // ----------- Setup checklist -----------
+
+  getSetupChecklist(signal?: AbortSignal): Promise<SetupChecklist> {
+    return this.request<SetupChecklist>('/api/v1/setup/checklist', { signal });
+  }
+
+  updateSetupStep(
+    req: { step_code: string; status: 'pending' | 'completed' | 'skipped'; notes?: string },
+    signal?: AbortSignal,
+  ): Promise<SetupChecklist> {
+    return this.request<SetupChecklist>('/api/v1/setup/checklist', {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
   // ----------- Tanks -----------
 
   listTanks(opts: { stationID?: string } = {}, signal?: AbortSignal): Promise<Paginated<Tank>> {
@@ -925,6 +945,35 @@ export class Client {
       body: { status, reason },
       signal,
     });
+  }
+
+  listTankLedger(
+    tankID: string,
+    params: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<StockMovement>> {
+    return this.request<Paginated<StockMovement>>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/ledger${pageQuery(params)}`,
+      { signal },
+    );
+  }
+
+  getTankBookBalance(tankID: string, signal?: AbortSignal): Promise<TankBookBalance> {
+    return this.request<TankBookBalance>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/book-balance`,
+      { signal },
+    );
+  }
+
+  setTankOpeningBalance(
+    tankID: string,
+    req: SetTankOpeningBalanceRequest,
+    signal?: AbortSignal,
+  ): Promise<StockMovement> {
+    return this.request<StockMovement>(
+      `/api/v1/tanks/${encodeURIComponent(tankID)}/opening-balance`,
+      { method: 'POST', body: req, signal },
+    );
   }
 
   // ----------- Tank calibration -----------

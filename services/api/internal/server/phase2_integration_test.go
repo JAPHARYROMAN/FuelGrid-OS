@@ -240,6 +240,34 @@ func seedTenant(t *testing.T, ctx context.Context, pool *database.Pool) seedIDs 
 	return ids
 }
 
+// seedOpeningStock posts a genuine 'opening' stock movement (idempotently) for
+// every non-deleted tank at the station, mirroring the predicate that
+// setup.Counts uses to recognise opening stock (movement_type='opening',
+// status='posted', source_ref_type IS NULL). This satisfies the per-station
+// open-shift operational prerequisite so shift-opening test fixtures pass the
+// readiness guard. recorded_by is the tenant's admin user.
+func seedOpeningStock(t *testing.T, ctx context.Context, pool *database.Pool, tenantID, stationID uuid.UUID) {
+	t.Helper()
+	var adminID uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT u.id FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id AND ur.tenant_id = u.tenant_id
+		JOIN roles r ON r.id = ur.role_id
+		WHERE u.tenant_id = $1 AND r.code = 'system_admin'
+		ORDER BY u.created_at LIMIT 1`, tenantID).Scan(&adminID); err != nil {
+		t.Fatalf("seed opening stock: lookup admin: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO stock_movements (tenant_id, tank_id, movement_type, litres, balance_after, recorded_by, status)
+		SELECT $1, t.id, 'opening', 10000.000, 10000.000, $2, 'posted'
+		FROM tanks t
+		WHERE t.tenant_id = $1 AND t.station_id = $3 AND t.status <> 'deleted'
+		ON CONFLICT DO NOTHING`,
+		tenantID, adminID, stationID); err != nil {
+		t.Fatalf("seed opening stock: %v", err)
+	}
+}
+
 func grantRole(t *testing.T, ctx context.Context, pool *database.Pool, tenantID, userID uuid.UUID, code string) {
 	t.Helper()
 	var roleID uuid.UUID

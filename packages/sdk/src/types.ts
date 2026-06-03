@@ -343,6 +343,54 @@ export interface Tank {
   current_dip_business_date?: string;
 }
 
+export interface TankBookBalance {
+  tank_id: string;
+  /** Exact decimal STRING (numeric(14,3) -> text). */
+  book_balance: string;
+}
+
+export interface SetTankOpeningBalanceRequest {
+  from_dip?: boolean;
+  /** Exact decimal litres; required when from_dip is false/omitted. */
+  litres?: string;
+  notes?: string;
+}
+
+export type SetupStepStatus = 'pending' | 'completed' | 'skipped';
+
+export interface SetupBlocker {
+  code: string;
+  message: string;
+}
+
+export interface SetupChecklistStep {
+  code: string;
+  title: string;
+  description: string;
+  href: string;
+  cta: string;
+  required: boolean;
+  status: SetupStepStatus;
+  ready: boolean;
+  blocked: boolean;
+  blocked_reason?: string;
+  count: number;
+  required_count: number;
+  completed_at?: string;
+  completed_by?: string;
+  updated_at?: string;
+  notes?: string;
+}
+
+export interface SetupChecklist {
+  steps: SetupChecklistStep[];
+  required_total: number;
+  required_ready: number;
+  required_completed: number;
+  operationally_ready: boolean;
+  blocked: SetupBlocker[];
+}
+
 export interface Pump {
   id: string;
   tenant_id: string;

@@ -128,6 +128,9 @@ func seedShiftRotation(t *testing.T, ctx context.Context, pool *database.Pool, t
 		tenantID, stationID); err != nil {
 		t.Fatalf("seed anchor: %v", err)
 	}
+	// Opening stock is a per-station operational prerequisite of opening a shift
+	// (the readiness guard rejects a station whose tanks have no opening balance).
+	seedOpeningStock(t, ctx, pool, tenantID, stationID)
 }
 
 // userID resolves a seeded user's id by email.

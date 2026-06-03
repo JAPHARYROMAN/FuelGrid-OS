@@ -54,6 +54,8 @@ func configureRotation(t *testing.T, h *harness) (teamIDs [3]uuid.UUID, opEmploy
 		h.ids.tenantID, h.ids.station1); err != nil {
 		t.Fatalf("seed anchor: %v", err)
 	}
+	// Opening stock is a per-station operational prerequisite of opening a shift.
+	seedOpeningStock(t, context.Background(), h.pool, h.ids.tenantID, h.ids.station1)
 	return teamIDs, opEmployeeID
 }
 
@@ -117,20 +119,47 @@ func TestPhase11_OpenShiftEnforcement(t *testing.T) {
 	}
 	dayID, _ := day["id"].(string)
 
-	// Without any rotation configured, opening a shift is rejected (400).
+	// Before the station is operationally ready (no opening stock, no active
+	// employee), the open-shift readiness guard rejects with 409 Conflict and
+	// lists ONLY the scoped per-station operational blockers — never tenant-wide
+	// checklist items (regions, users, teams, rotation_anchor).
 	code, body := h.postJSON(t, "/api/v1/stations/"+st+"/shifts", admin,
 		`{"operating_day_id":"`+dayID+`","name":"Morning","slot":"morning"}`)
-	if code != http.StatusBadRequest {
-		t.Fatalf("open shift w/o rotation: code=%d body=%v (want 400)", code, body)
+	if code != http.StatusConflict {
+		t.Fatalf("open shift before setup: code=%d body=%v (want 409)", code, body)
+	}
+	blockers, _ := body["blockers"].([]any)
+	if len(blockers) == 0 {
+		t.Fatalf("open shift before setup: no blockers listed, body=%v", body)
+	}
+	operational := map[string]bool{
+		"stations": true, "tanks": true, "pumps": true,
+		"nozzles": true, "opening_stock": true, "employees": true,
+	}
+	sawOperational := false
+	for _, b := range blockers {
+		bm, _ := b.(map[string]any)
+		bcode, _ := bm["code"].(string)
+		if !operational[bcode] {
+			t.Fatalf("open shift before setup: unexpected non-operational blocker %q (body=%v)", bcode, body)
+		}
+		if bcode == "opening_stock" || bcode == "employees" {
+			sawOperational = true
+		}
+	}
+	if !sawOperational {
+		t.Fatalf("open shift before setup: expected opening_stock/employees blocker, got %v", blockers)
 	}
 
-	// A missing/invalid slot is also a 400.
+	// A missing/invalid slot is a 400 — slot validation runs before the guard.
 	if code, _ := h.postJSON(t, "/api/v1/stations/"+st+"/shifts", admin,
 		`{"operating_day_id":"`+dayID+`","name":"Morning"}`); code != http.StatusBadRequest {
 		t.Fatalf("open shift w/o slot: code=%d (want 400)", code)
 	}
 
 	// Configure rotation: the operator's team (order 0) works morning on day 0.
+	// This also seeds opening stock + the operator's employee, satisfying the
+	// operational prerequisites.
 	configureRotation(t, h)
 
 	// Now opening the morning shift succeeds and auto-populates the operator as
