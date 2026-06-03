@@ -3,9 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Activity,
   AlertCircle,
   AlertTriangle,
   BarChart3,
+  Bell,
   Building2,
   CalendarClock,
   ClipboardCheck,
@@ -96,6 +98,8 @@ const navGroups: NavGroup[] = [
   {
     label: 'Monitoring',
     items: [
+      { label: 'Notifications', href: '/notifications', icon: Bell },
+      { label: 'Observability', href: '/observability', icon: Activity },
       { label: 'Incidents', href: '/incidents', icon: AlertTriangle },
       { label: 'Alerts', href: '/alerts', icon: AlertCircle },
       { label: 'Risk', href: '/risk', icon: ShieldCheck },
