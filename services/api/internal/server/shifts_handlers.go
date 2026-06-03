@@ -175,6 +175,22 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "operating day is not open")
 		return
 	}
+	if s.setup != nil {
+		blockers, err := s.setup.OpenShiftBlockers(ctx, actor.TenantID, stationID)
+		if err != nil {
+			s.logger.Error("open shift: setup readiness", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if len(blockers) > 0 {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":    "station setup is incomplete",
+				"status":   http.StatusConflict,
+				"blockers": blockers,
+			})
+			return
+		}
+	}
 
 	// Resolve the team rostered onto this slot for the operating day's business
 	// date. A shift never opens without its expected employees: reject when the

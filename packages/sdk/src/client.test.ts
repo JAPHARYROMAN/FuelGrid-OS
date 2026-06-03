@@ -211,6 +211,49 @@ describe('Client scoped runtime validation (SDK-01)', () => {
   });
 });
 
+describe('Client setup and tank inventory methods', () => {
+  it('GETs and PATCHes the persisted setup checklist', async () => {
+    const checklist = {
+      steps: [],
+      required_total: 0,
+      required_ready: 0,
+      required_completed: 0,
+      operationally_ready: false,
+      blocked: [],
+    };
+    const f = jsonFetch(200, checklist);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+
+    await expect(client.getSetupChecklist()).resolves.toEqual(checklist);
+    expect(callArgs(f).url).toBe('http://api.test/api/v1/setup/checklist');
+
+    await client.updateSetupStep({ step_code: 'opening_stock', status: 'completed' });
+    const second = callArgs(f, 1);
+    expect(second.url).toBe('http://api.test/api/v1/setup/checklist');
+    expect(second.init.method).toBe('PATCH');
+    expect(second.init.body).toBe(
+      JSON.stringify({ step_code: 'opening_stock', status: 'completed' }),
+    );
+  });
+
+  it('uses the real tank ledger, book-balance, and opening-balance paths', async () => {
+    const f = jsonFetch(200, { items: [], count: 0, has_more: false });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+
+    await client.listTankLedger('tank-1', { limit: 25, offset: 50 });
+    expect(callArgs(f).url).toBe('http://api.test/api/v1/tanks/tank-1/ledger?limit=25&offset=50');
+
+    await client.getTankBookBalance('tank-1');
+    expect(callArgs(f, 1).url).toBe('http://api.test/api/v1/tanks/tank-1/book-balance');
+
+    await client.setTankOpeningBalance('tank-1', { litres: '1200.000', notes: 'counted' });
+    const third = callArgs(f, 2);
+    expect(third.url).toBe('http://api.test/api/v1/tanks/tank-1/opening-balance');
+    expect(third.init.method).toBe('POST');
+    expect(third.init.body).toBe(JSON.stringify({ litres: '1200.000', notes: 'counted' }));
+  });
+});
+
 describe('Client.request transport errors (SDK-03)', () => {
   it('wraps a network failure as an SdkError with status 0, not a raw TypeError', async () => {
     const f = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));

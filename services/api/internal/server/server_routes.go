@@ -52,6 +52,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 						r.Use(s.requireAuth)
 						r.Use(s.rateLimitPerTenant)
 
+						s.registerSetupRoutes(r)
 						s.registerCommercialMasterRoutes(r)
 						s.registerInventoryRoutes(r)
 						s.registerProcurementRoutes(r)
@@ -80,6 +81,17 @@ func (s *Server) registerRoutes(r chi.Router) {
 			}
 		}
 	})
+}
+
+// registerSetupRoutes mounts the persisted tenant setup checklist.
+func (s *Server) registerSetupRoutes(r chi.Router) {
+	if s.setup == nil {
+		return
+	}
+	r.With(s.requirePermission("setup.read", nil)).
+		Get("/setup/checklist", s.handleGetSetupChecklist)
+	r.With(s.requirePermission("setup.manage", nil)).
+		Patch("/setup/checklist", s.handlePatchSetupChecklist)
 }
 
 // registerPlatformRoutes mounts the static-token platform provisioning route.

@@ -20,6 +20,8 @@ tags:
     description: Login, logout, refresh, password reset, MFA
   - name: Me
     description: Current actor's identity, permissions, sessions
+  - name: Setup
+    description: Tenant onboarding checklist and setup readiness
   - name: Companies
     description: Tenant CRUD over the companies hierarchy
   - name: Branding
@@ -527,6 +529,30 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/JobRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/setup/checklist:
+    get:
+      tags: [Setup]
+      summary: Tenant setup checklist with live readiness and persisted step state
+      parameters:
+        - in: query
+          name: station_id
+          required: false
+          schema: { type: string, format: uuid }
+          description: Restrict station-scoped readiness counts to one station.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SetupChecklist' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [Setup]
+      summary: Persist one setup checklist step status
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SetupStepPatch' } } } }
+      responses:
+        '200': { description: Updated checklist, content: { application/json: { schema: { $ref: '#/components/schemas/SetupChecklist' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -2569,7 +2595,7 @@ paths:
         - { $ref: '#/components/parameters/LimitParam' }
         - { $ref: '#/components/parameters/OffsetParam' }
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StockMovementList' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/tanks/{id}/book-balance:
@@ -2578,7 +2604,7 @@ paths:
       summary: Tank book balance (litres, decimal string)
       parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
       responses:
-        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TankBookBalance' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/tanks/{id}/opening-balance:
@@ -2586,12 +2612,14 @@ paths:
       tags: [Inventory]
       summary: Set a tank's opening balance
       parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SetOpeningBalanceRequest' } } } }
       responses:
-        '200': { description: Set, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '201': { description: Set, content: { application/json: { schema: { $ref: '#/components/schemas/StockMovement' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Opening balance already exists }
+        '422': { description: No dip reading exists when from_dip is true }
   /api/v1/stock-transfers:
     get:
       tags: [Inventory]
@@ -4393,6 +4421,50 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/Session' } }
         count: { type: integer }
 
+    SetupBlocker:
+      type: object
+      required: [code, message]
+      properties:
+        code:    { type: string }
+        message: { type: string }
+    SetupChecklistStep:
+      type: object
+      required: [code, title, description, href, cta, required, status, ready, blocked, count, required_count]
+      properties:
+        code:           { type: string }
+        title:          { type: string }
+        description:    { type: string }
+        href:           { type: string }
+        cta:            { type: string }
+        required:       { type: boolean }
+        status:         { type: string, enum: [pending, completed, skipped] }
+        ready:          { type: boolean }
+        blocked:        { type: boolean }
+        blocked_reason: { type: string }
+        count:          { type: integer }
+        required_count: { type: integer }
+        completed_at:   { type: string, format: date-time }
+        completed_by:   { type: string, format: uuid }
+        updated_at:     { type: string, format: date-time }
+        notes:          { type: string }
+    SetupChecklist:
+      type: object
+      required: [steps, required_total, required_ready, required_completed, operationally_ready, blocked]
+      properties:
+        steps: { type: array, items: { $ref: '#/components/schemas/SetupChecklistStep' } }
+        required_total:      { type: integer }
+        required_ready:      { type: integer }
+        required_completed:  { type: integer }
+        operationally_ready: { type: boolean }
+        blocked: { type: array, items: { $ref: '#/components/schemas/SetupBlocker' } }
+    SetupStepPatch:
+      type: object
+      required: [step_code, status]
+      properties:
+        step_code: { type: string }
+        status:    { type: string, enum: [pending, completed, skipped] }
+        notes:     { type: string }
+
     Company:
       type: object
       properties:
@@ -4710,6 +4782,44 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/Tank' } }
         count: { type: integer }
+    TankBookBalance:
+      type: object
+      required: [tank_id, book_balance]
+      properties:
+        tank_id:      { type: string, format: uuid }
+        book_balance: { type: string, description: Exact decimal litres (numeric -> text) }
+    SetOpeningBalanceRequest:
+      type: object
+      properties:
+        from_dip: { type: boolean, default: false }
+        litres:   { type: string, description: Exact decimal litres; required unless from_dip is true }
+        notes:    { type: string }
+    StockMovement:
+      type: object
+      properties:
+        id:                   { type: string, format: uuid }
+        tenant_id:            { type: string, format: uuid }
+        tank_id:              { type: string, format: uuid }
+        movement_type:        { type: string, enum: [opening, delivery, sales, adjustment, transfer] }
+        source_ref_type:      { type: string }
+        source_ref_id:        { type: string, format: uuid }
+        litres:               { type: string, description: Exact signed decimal litres (numeric -> text) }
+        balance_after:        { type: string, description: Exact decimal litres after this movement (numeric -> text) }
+        supplier_id:          { type: string, format: uuid }
+        purchase_order_id:    { type: string, format: uuid }
+        landed_cost_total:    { type: string }
+        landed_cost_per_litre: { type: string }
+        status:               { type: string, enum: [posted, reversed] }
+        supersedes_id:        { type: string, format: uuid }
+        recorded_by:          { type: string, format: uuid }
+        recorded_at:          { type: string, format: date-time }
+        notes:                { type: string }
+    StockMovementList:
+      allOf:
+        - $ref: '#/components/schemas/Paged'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/StockMovement' } }
 
     CalibrationChart:
       type: object
