@@ -131,10 +131,83 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: go run ./services/api/cmd/migrate version
 
+  deploy:
+    name: Roll out image to Fly.io (flyctl deploy)
+    runs-on: ubuntu-latest
+    needs: migrate
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      # Guard on FLY_API_TOKEN exactly like the migrate (DATABASE_URL) and smoke
+      # (DEPLOY_HEALTH_URL) gates: secrets can't be used in a job-level `if:`,
+      # so the gate lives in a first step that exports a flag. When the token is
+      # unset (no Fly runtime provisioned yet) the rollout is a clean no-op so
+      # the pipeline stays lint-valid and green before any infra exists.
+      - name: Check for FLY_API_TOKEN secret
+        id: gate
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -n "$FLY_API_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "FLY_API_TOKEN is configured — flyctl rollout will run."
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::FLY_API_TOKEN secret is not set; skipping Fly rollout (no-op until the runtime target is provisioned)."
+          fi
+
+      - name: Set up flyctl
+        if: steps.gate.outputs.configured == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # Resolve the immutable image just pushed by build-push. We re-derive the
+      # ghcr.io/<owner>/<repo>-api repo (lowercased) and pin the :sha-<full-sha>
+      # tag (build-push always publishes it), so the rollout deploys EXACTLY the
+      # image CI built for this commit — never a moving :latest.
+      - name: Compute image reference
+        id: image
+        if: steps.gate.outputs.configured == 'true'
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-api:sha-${GITHUB_SHA}"
+          echo "ref=$image" >> "$GITHUB_OUTPUT"
+          echo "Deploying image: $image"
+
+      # API rollout: image-based (no in-Fly build), pinned to the GHCR sha tag,
+      # using services/api/fly.toml. Runs AFTER migrate (schema first) and
+      # BEFORE smoke (health-assert last). --ha=false keeps the launch footprint
+      # to the configured single machine; drop it once you scale out.
+      - name: Deploy API to Fly
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          flyctl deploy \
+            --config services/api/fly.toml \
+            --image "${{ steps.image.outputs.ref }}" \
+            --ha=false
+
+      # Web rollout: gated additionally on a web image existing in GHCR. Until a
+      # web image is published the web app is deployed from source by the
+      # operator (see docs/deployment.md Go-live runbook), so this step is a
+      # documented no-op here and does not fail the pipeline.
+      - name: Deploy Web to Fly (if a web image is published)
+        if: steps.gate.outputs.configured == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          web_image="ghcr.io/${GITHUB_REPOSITORY,,}-web:sha-${GITHUB_SHA}"
+          if docker manifest inspect "$web_image" >/dev/null 2>&1; then
+            echo "Web image found — rolling out $web_image"
+            flyctl deploy --config apps/web/fly.toml --image "$web_image" --ha=false
+          else
+            echo "::notice::No web image at $web_image; skipping web rollout (deploy apps/web from source per the runbook)."
+          fi
+
   smoke:
     name: Post-deploy smoke (/readyz must be 200)
     runs-on: ubuntu-latest
-    needs: migrate
+    needs: deploy
     environment: production
     steps:
       # Guard on DEPLOY_HEALTH_URL the same way as the migrate job: skip

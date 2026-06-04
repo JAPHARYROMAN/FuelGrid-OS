@@ -1,0 +1,68 @@
+# =============================================================================
+# FuelGrid OS — Web (Next.js 15 standalone) Fly.io app config
+# =============================================================================
+# The web tier is a Next.js 15 app (apps/web) served on port 3000. The browser
+# never talks to the Go API directly — it calls the same-origin BFF proxy
+# (apps/web/src/app/api/bff/[...path]/route.ts), which forwards SERVER-SIDE to
+# the API origin resolved by apps/web/src/lib/server/api-origin.ts. That
+# resolver reads, in order: API_ORIGIN -> API_URL -> NEXT_PUBLIC_API_URL ->
+# http://localhost:8080. So in production the ONE required runtime wiring is
+# API_ORIGIN pointing at the API app's internal/public origin.
+#
+# SECRETS ARE NOT STORED HERE (set via `fly secrets set --app fuelgrid-web`).
+# Replace the placeholders: app name, primary_region, and the API origin.
+#
+# BUILD: unlike the API (which deploys a prebuilt GHCR image), the web app has
+# no published image yet, so this config builds from a Dockerfile on Fly's
+# remote builder. The operator adds apps/web/Dockerfile (Next.js standalone
+# multi-stage) before the first `fly deploy` — see the Go-live runbook in
+# docs/deployment.md. Once a web image is published to GHCR, switch to an
+# image-based rollout exactly like the API.
+# =============================================================================
+
+app            = "fuelgrid-web"   # PLACEHOLDER — your Fly app name
+primary_region = "jnb"            # PLACEHOLDER — match the API region for low BFF latency
+
+[build]
+  # PLACEHOLDER — operator provides a Next.js standalone Dockerfile here, or
+  # remove [build] and deploy `flyctl deploy --image ghcr.io/<owner>/<repo>-web:<tag>`
+  # once a web image is published.
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT     = "3000"
+  # Server-side upstream the BFF proxy forwards to. Point at the API app. On
+  # Fly you can use the private 6PN address for east-west traffic:
+  #   API_ORIGIN = "http://fuelgrid-api.internal:8080"
+  # or the public https origin if the web app is in a different org/region:
+  #   API_ORIGIN = "https://fuelgrid-api.fly.dev"
+  API_ORIGIN = "http://fuelgrid-api.internal:8080"   # PLACEHOLDER
+  # Public app name shown in metadata/manifest (non-secret).
+  NEXT_PUBLIC_APP_NAME = "FuelGrid OS"
+  NEXT_PUBLIC_APP_ENV  = "production"
+  # NEXT_PUBLIC_SENTRY_DSN (browser Sentry) is non-secret-ish but environment
+  # specific; set it here or via `fly secrets` if you prefer it out of config.
+
+[http_service]
+  internal_port        = 3000
+  force_https          = true
+  auto_stop_machines   = "suspend"
+  auto_start_machines  = true
+  min_machines_running = 1
+
+  # Health check: the login page is a stable, unauthenticated route that
+  # renders 200 when the Next.js server is up. Adjust to a dedicated health
+  # route if one is added later.
+  [[http_service.checks]]
+    method       = "get"
+    path         = "/login"
+    interval     = "15s"
+    timeout      = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size     = "shared-cpu-1x"
+  memory   = "512mb"
+  cpu_kind = "shared"
+  cpus     = 1
