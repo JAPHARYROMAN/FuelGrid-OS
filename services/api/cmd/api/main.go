@@ -439,6 +439,7 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			Projection:         cfg.SchedulerProjectionInterval,
 			OutboxSweep:        cfg.SchedulerOutboxSweepInterval,
 			SessionCleanup:     cfg.SchedulerSessionCleanupInterval,
+			RetentionSweep:     cfg.SchedulerRetentionSweepInterval,
 			ReportDigest:       reportInterval,
 			SessionRetention:   cfg.SchedulerSessionRetention,
 			OutboxRequeueAfter: cfg.SchedulerOutboxRequeueAfter,

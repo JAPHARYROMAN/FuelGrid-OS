@@ -169,6 +169,12 @@ type Config struct {
 	SchedulerProjectionInterval     time.Duration `envconfig:"SCHEDULER_PROJECTION_INTERVAL" default:"15m"`
 	SchedulerOutboxSweepInterval    time.Duration `envconfig:"SCHEDULER_OUTBOX_SWEEP_INTERVAL" default:"5m"`
 	SchedulerSessionCleanupInterval time.Duration `envconfig:"SCHEDULER_SESSION_CLEANUP_INTERVAL" default:"1h"`
+	// SchedulerRetentionSweepInterval is the cadence for the data-lifecycle
+	// retention sweep (Feature 13.2): it reads the per-tenant retention policies
+	// and records the audit-purge candidate count. It is a dry-run in this slice
+	// (it does not purge — the audit ledger is append-only), so a once-a-day tick
+	// is plenty. <= 0 disables it.
+	SchedulerRetentionSweepInterval time.Duration `envconfig:"SCHEDULER_RETENTION_SWEEP_INTERVAL" default:"24h"`
 	// SchedulerReportDigestInterval is the shared tick cadence for the canned
 	// scheduled-email digests (daily station-close + monthly P&L). It is
 	// deliberately sub-day: each job gates on REPORT_DIGEST_SEND_HOUR and a

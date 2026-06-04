@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
@@ -77,5 +79,84 @@ func sessionCleanupJob(pool *database.Pool, retention time.Duration) JobFunc {
 			return "", fmt.Errorf("delete stale sessions: %w", err)
 		}
 		return fmt.Sprintf("sessions_deleted=%d retention=%s", tag.RowsAffected(), retention), nil
+	}
+}
+
+// retentionSweepJob is the data-lifecycle sweep for the per-tenant retention
+// policies (Feature 13.2, migration 0090). For every active 'audit' policy it
+// counts the audit_logs rows older than now() - retention_days that WOULD be
+// purged and records that intent in the run detail.
+//
+// IMPORTANT — this slice does NOT purge. The audit_logs ledger is append-only
+// and immutable (migration 0070); deleting from it (and from the other scoped
+// sources) needs its own hardening pass that relaxes the immutability guard for
+// a controlled retention path. Until then this job is intentionally a dry-run:
+// it proves the policy is readable and surfaces the candidate count so operators
+// can see what a real purge would remove, without touching frozen records. The
+// 'session' scope is already pruned by sessionCleanupJob; 'export' purging is
+// likewise deferred. A deployment without migration 0090 (no retention_policies
+// table) is a safe no-op.
+func retentionSweepJob(pool *database.Pool) JobFunc {
+	return func(ctx context.Context) (string, error) {
+		rows, err := pool.Query(ctx, `
+			SELECT tenant_id, scope, retention_days
+			FROM retention_policies
+			WHERE status = 'active'
+			ORDER BY tenant_id, scope
+		`)
+		if err != nil {
+			if isMissingLedger(err) {
+				return "policies=0 (retention_policies table absent)", nil
+			}
+			return "", fmt.Errorf("list retention policies: %w", err)
+		}
+		type policy struct {
+			tenant uuid.UUID
+			scope  string
+			days   int
+		}
+		var policies []policy
+		for rows.Next() {
+			var p policy
+			if err := rows.Scan(&p.tenant, &p.scope, &p.days); err != nil {
+				rows.Close()
+				return "", fmt.Errorf("scan retention policy: %w", err)
+			}
+			policies = append(policies, p)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return "", fmt.Errorf("retention policy rows: %w", err)
+		}
+
+		var auditPolicies, auditCandidates int64
+		for _, p := range policies {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			// Only the 'audit' scope is counted here; 'session' is handled by
+			// sessionCleanupJob and 'export' purging is deferred.
+			if p.scope != "audit" {
+				continue
+			}
+			auditPolicies++
+			// retention_days is a validated positive integer; the cutoff
+			// arithmetic runs in SQL so there is no float involved.
+			var n int64
+			if err := pool.QueryRow(ctx, `
+				SELECT count(*) FROM audit_logs
+				WHERE tenant_id = $1 AND occurred_at < now() - ($2 || ' days')::interval
+			`, p.tenant, p.days).Scan(&n); err != nil {
+				return "", fmt.Errorf("count audit purge candidates: %w", err)
+			}
+			auditCandidates += n
+		}
+
+		// Dry-run: report the intent and the candidate count. No rows are deleted
+		// (audit_logs is immutable — see the job doc comment).
+		return fmt.Sprintf(
+			"policies=%d audit_policies=%d audit_purge_candidates=%d purged=0 (dry-run: audit ledger is append-only)",
+			len(policies), auditPolicies, auditCandidates,
+		), nil
 	}
 }

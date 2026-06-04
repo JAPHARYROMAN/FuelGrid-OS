@@ -580,6 +580,69 @@ export interface JobRunList {
   count: number;
 }
 
+// --------------------------------------------------------------------------
+// Data lifecycle & retention (Feature 13.2)
+// --------------------------------------------------------------------------
+
+/** The data scopes a retention policy can cover. */
+export type RetentionScope = 'audit' | 'session' | 'export';
+
+/** A retention policy: keep <scope> data for retention_days days. */
+export interface RetentionPolicy {
+  id: string;
+  scope: RetentionScope;
+  retention_days: number;
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RetentionPolicyList {
+  items: RetentionPolicy[];
+  count: number;
+}
+
+export interface CreateRetentionPolicyRequest {
+  scope: RetentionScope;
+  retention_days: number;
+  /** Defaults to 'active' when omitted. */
+  status?: 'active' | 'disabled';
+}
+
+export interface UpdateRetentionPolicyRequest {
+  retention_days?: number;
+  status?: 'active' | 'disabled';
+}
+
+/** The kind of change a closed-period change request asks for. */
+export type ClosedPeriodChangeType = 'reopen' | 'relock';
+
+export type ClosedPeriodChangeStatus = 'requested' | 'approved' | 'rejected';
+
+/**
+ * A closed-period change request (maker-checker): a request to reopen or relock
+ * a CLOSED/LOCKED accounting period. A different user approves or rejects it
+ * (separation of duties); approving authorizes the period transition but does
+ * not itself perform it.
+ */
+export interface ClosedPeriodChangeRequest {
+  id: string;
+  period_id: string;
+  change_type: ClosedPeriodChangeType;
+  reason: string;
+  status: ClosedPeriodChangeStatus;
+  requested_by: string;
+  decided_by?: string;
+  decision_note?: string;
+  requested_at: string;
+  decided_at?: string;
+}
+
+export interface RequestClosedPeriodChangeRequest {
+  change_type: ClosedPeriodChangeType;
+  reason: string;
+}
+
 export interface StationOverview {
   station: Station;
   tanks: Tank[];

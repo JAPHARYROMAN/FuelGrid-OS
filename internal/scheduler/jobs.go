@@ -48,6 +48,11 @@ type Intervals struct {
 	Projection     time.Duration
 	OutboxSweep    time.Duration
 	SessionCleanup time.Duration
+	// RetentionSweep is the cadence for the data-lifecycle retention sweep
+	// (Feature 13.2): it reads the per-tenant retention policies and records the
+	// audit-purge candidate count (dry-run; it does not purge yet). <= 0 disables
+	// it.
+	RetentionSweep time.Duration
 	// ReportDigest is the tick cadence for BOTH canned email digests (daily
 	// station-close, monthly P&L). It is deliberately sub-day (e.g. 1h): the job
 	// bodies gate on a configured send hour and a job_runs ledger guard, so a
@@ -81,6 +86,7 @@ func BuildJobs(d Deps, iv Intervals) []Job {
 		{Name: "enterprise_projection", Interval: iv.Projection, Run: d.projectionJob},
 		{Name: "outbox_dead_letter_sweep", Interval: iv.OutboxSweep, Run: outboxSweepJob(d.Pool, iv.OutboxRequeueAfter, iv.JobRunRetention)},
 		{Name: "session_token_cleanup", Interval: iv.SessionCleanup, Run: sessionCleanupJob(d.Pool, iv.SessionRetention)},
+		{Name: "retention_sweep", Interval: iv.RetentionSweep, Run: retentionSweepJob(d.Pool)},
 		{Name: "report_daily_close_digest", Interval: iv.ReportDigest, Run: dailyDigestJob(report)},
 		{Name: "report_monthly_pnl", Interval: iv.ReportDigest, Run: monthlyPnLJob(report)},
 	}
