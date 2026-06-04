@@ -157,6 +157,15 @@ jobs:
     env:
       DATABASE_URL: postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable
       REDIS_URL: redis://localhost:6379/0
+      # The shell smoke steps below boot the API binary and act as the freshly
+      # seeded system_admin, which has no MFA enrolled. The SR-M1 privileged-role
+      # MFA gate (requireMFASatisfied) would 403 those plumbing checks (role
+      # grant, tenant provisioning) before they can exercise audit/outbox/RLS.
+      # Disable the gate for THIS job only — it validates plumbing, not MFA. The
+      # gate's behaviour is covered authoritatively by the dedicated
+      # mfa_enforcement_integration_test.go (TestMfaEnforcement_SRM1). Production
+      # defaults this to true (see config.Load).
+      AUTH_ENFORCE_MFA_FOR_PRIVILEGED_ROLES: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
