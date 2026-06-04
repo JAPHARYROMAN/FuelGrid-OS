@@ -1019,6 +1019,60 @@ func (s *Server) handleRecordSupplierInvoice(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, toSupplierInvoiceDTO(inv))
 }
 
+func (s *Server) handleListSupplierInvoices(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	filter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
+	}
+	var supplierID *uuid.UUID
+	if raw := r.URL.Query().Get("supplier_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid supplier_id")
+			return
+		}
+		supplierID = &id
+	}
+	var purchaseOrderID *uuid.UUID
+	if raw := r.URL.Query().Get("purchase_order_id"); raw != "" {
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid purchase_order_id")
+			return
+		}
+		purchaseOrderID = &id
+	}
+	var status *string
+	if raw := r.URL.Query().Get("status"); raw != "" {
+		status = &raw
+	}
+	limit, offset, pok := s.parsePage(w, r)
+	if !pok {
+		return
+	}
+	rows, err := s.procurement.ListSupplierInvoicesPage(r.Context(), actor.TenantID, procurement.SupplierInvoiceFilter{
+		StationIDs: filter, SupplierID: supplierID, PurchaseOrderID: purchaseOrderID, Status: status,
+	}, limit+1, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	out := make([]supplierInvoiceDTO, 0, len(rows))
+	for i := range rows {
+		out = append(out, toSupplierInvoiceDTO(&rows[i]))
+	}
+	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
+}
+
 func (s *Server) handleGetSupplierInvoice(w http.ResponseWriter, r *http.Request) {
 	_, inv, ok := s.invoiceForStationPermission(w, r, "invoice.manage")
 	if !ok {

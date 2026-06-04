@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
-import { FileStack, PackageCheck, Truck, Wallet } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileStack, PackageCheck, Truck, Wallet } from 'lucide-react';
 
-import { SdkError, type PurchaseOrder } from '@fuelgrid/sdk';
+import { SdkError, type Delivery, type PurchaseOrder } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -73,6 +73,26 @@ export default function ProcurementPage() {
     queryFn: ({ signal }) => api.getProcurementOverview(stationID, signal),
     enabled: !!stationID,
   });
+
+  // Station deliveries (goods receipts) drive the PO -> receipt linkage. Group
+  // them by purchase_order_id so each PO row can surface its receipts without a
+  // per-row request. A receipt without a PO link is omitted from the grouping.
+  const deliveries = useQuery({
+    queryKey: ['station-deliveries', stationID],
+    queryFn: ({ signal }) => api.listStationDeliveries(stationID, signal),
+    enabled: !!stationID,
+  });
+
+  const deliveriesByPO = useMemo(() => {
+    const map = new Map<string, Delivery[]>();
+    for (const d of deliveries.data?.items ?? []) {
+      if (!d.purchase_order_id) continue;
+      const arr = map.get(d.purchase_order_id) ?? [];
+      arr.push(d);
+      map.set(d.purchase_order_id, arr);
+    }
+    return map;
+  }, [deliveries.data]);
 
   const supplierName = useMemo(() => {
     const map = new Map<string, string>();
@@ -211,11 +231,13 @@ export default function ProcurementPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-8" />
                       <TableHead>Supplier</TableHead>
                       <TableHead>Product</TableHead>
                       <TableHead className="text-right">Ordered</TableHead>
                       <TableHead className="text-right">Received</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Linked</TableHead>
                       <TableHead className="text-right">Document</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -228,6 +250,7 @@ export default function ProcurementPage() {
                           supplierName.get(po.supplier_id) ?? po.supplier_id.slice(0, 8)
                         }
                         productName={productName}
+                        deliveries={deliveriesByPO.get(po.id) ?? []}
                       />
                     ))}
                   </TableBody>
@@ -349,39 +372,146 @@ function PORow({
   po,
   supplierName,
   productName,
+  deliveries,
 }: {
   po: PurchaseOrder;
   supplierName: string;
   productName: Map<string, string>;
+  deliveries: Delivery[];
 }) {
+  const [open, setOpen] = useState(false);
   const firstLine = po.lines[0];
   // ordered/received litres are decimal strings; parse each for a display-only
   // per-PO total (formatLitres rounds for the column).
   const ordered = po.lines.reduce((sum, ln) => sum + parseDecimal(ln.ordered_litres), 0);
   const received = po.lines.reduce((sum, ln) => sum + parseDecimal(ln.received_litres), 0);
+
+  // Supplier invoices linked to this PO are fetched lazily on expand via the
+  // purchase_order_id filter — never duplicating the invoice CRUD here.
+  const invoices = useQuery({
+    queryKey: ['supplier-invoices', 'po', po.id],
+    queryFn: ({ signal }) => api.listSupplierInvoices({ purchaseOrderID: po.id }, signal),
+    enabled: open,
+  });
+  const invoiceItems = invoices.data?.items ?? [];
+
   return (
-    <TableRow>
-      <TableCell className="font-medium">{supplierName}</TableCell>
-      <TableCell className="text-muted-foreground">
-        {firstLine
-          ? (productName.get(firstLine.product_id) ?? firstLine.product_id.slice(0, 8))
-          : '-'}
-      </TableCell>
-      <TableCell className="text-right font-mono tabular-nums">{litres(ordered)} L</TableCell>
-      <TableCell className="text-right font-mono tabular-nums">{litres(received)} L</TableCell>
-      <TableCell>
-        <Badge tone={statusTone(po.status)}>{po.status.replace('_', ' ')}</Badge>
-      </TableCell>
-      <TableCell>
-        <div className="flex justify-end">
-          <DocumentActions
-            onFetch={() => api.purchaseOrderPdf(po.id)}
-            filename={`purchase-order-${po.id.slice(0, 8)}.pdf`}
-            permission="purchase_order.read"
-            stationId={po.station_id}
-          />
-        </div>
-      </TableCell>
-    </TableRow>
+    <Fragment>
+      <TableRow>
+        <TableCell className="align-middle">
+          <button
+            type="button"
+            aria-label={open ? 'Collapse linkage' : 'Expand linkage'}
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            {open ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+          </button>
+        </TableCell>
+        <TableCell className="font-medium">{supplierName}</TableCell>
+        <TableCell className="text-muted-foreground">
+          {firstLine
+            ? (productName.get(firstLine.product_id) ?? firstLine.product_id.slice(0, 8))
+            : '-'}
+        </TableCell>
+        <TableCell className="text-right font-mono tabular-nums">{litres(ordered)} L</TableCell>
+        <TableCell className="text-right font-mono tabular-nums">{litres(received)} L</TableCell>
+        <TableCell>
+          <Badge tone={statusTone(po.status)}>{po.status.replace('_', ' ')}</Badge>
+        </TableCell>
+        <TableCell>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <PackageCheck className="size-3.5" />
+              {deliveries.length}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <Wallet className="size-3.5" />
+              {open ? invoiceItems.length : '·'}
+            </span>
+          </div>
+        </TableCell>
+        <TableCell>
+          <div className="flex justify-end">
+            <DocumentActions
+              onFetch={() => api.purchaseOrderPdf(po.id)}
+              filename={`purchase-order-${po.id.slice(0, 8)}.pdf`}
+              permission="purchase_order.read"
+              stationId={po.station_id}
+            />
+          </div>
+        </TableCell>
+      </TableRow>
+      {open ? (
+        <TableRow>
+          <TableCell colSpan={8} className="bg-muted/30">
+            <div className="grid gap-4 p-2 md:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-medium text-foreground">Goods receipts (deliveries)</p>
+                {deliveries.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No goods receipts linked to this purchase order yet.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1.5 text-sm">
+                    {deliveries.map((d) => (
+                      <li
+                        key={d.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2"
+                      >
+                        <span className="font-mono tabular-nums">{litres(d.volume_litres)} L</span>
+                        <span className="flex items-center gap-2">
+                          <Badge tone={statusTone(d.match_status)}>{d.match_status}</Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(d.received_at).toLocaleDateString()}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-medium text-foreground">Supplier invoices</p>
+                {invoices.isPending ? (
+                  <Skeleton className="h-12 rounded" />
+                ) : invoices.isError ? (
+                  <p className="text-xs text-muted-foreground">
+                    {invoices.error instanceof SdkError && invoices.error.status === 403
+                      ? "You don't have permission to view supplier invoices (invoice.manage)."
+                      : "Couldn't load linked supplier invoices."}
+                  </p>
+                ) : invoiceItems.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No supplier invoices recorded against this purchase order yet.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-1.5 text-sm">
+                    {invoiceItems.map((inv) => (
+                      <li
+                        key={inv.id}
+                        className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2"
+                      >
+                        <Link
+                          href="/payables/invoices"
+                          className="font-mono text-xs underline-offset-2 hover:underline"
+                        >
+                          {inv.invoice_number}
+                        </Link>
+                        <span className="flex items-center gap-2">
+                          <span className="font-mono tabular-nums">{money(inv.total_amount)}</span>
+                          <Badge tone={statusTone(inv.status)}>{inv.status}</Badge>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </Fragment>
   );
 }

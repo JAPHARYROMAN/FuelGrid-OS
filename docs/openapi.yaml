@@ -2342,6 +2342,34 @@ paths:
         '200': { description: PDF document, content: { application/pdf: { schema: { type: string, format: binary } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/supplier-invoices:
+    get:
+      tags: [Payables]
+      summary: List supplier invoices
+      description: >
+        Returns supplier invoices in the actor's station read scope, newest
+        received first. Each item is hydrated with its lines and matching
+        discrepancies so a payables list can show invoiced-vs-ordered variance
+        without a per-row round-trip. Optional filters narrow by station,
+        supplier, purchase order, or status. Requires invoice.manage.
+      parameters:
+        - in: query
+          name: station_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: supplier_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: purchase_order_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema: { type: string }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Payables]
       summary: Create a supplier invoice
