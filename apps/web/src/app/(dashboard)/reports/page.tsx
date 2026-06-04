@@ -13,6 +13,8 @@ import {
   Receipt,
   Scale,
   ShieldCheck,
+  TrendingUp,
+  Trophy,
   Users,
 } from 'lucide-react';
 
@@ -45,6 +47,8 @@ const CATEGORY_META: Record<string, CategoryMeta> = {
   'cash-reconciliation': { href: '/reports/cash-reconciliation', icon: <Receipt /> },
   'fuel-loss': { href: '/reports/fuel-loss', icon: <Droplet /> },
   receivables: { href: '/reports/customer-aging', icon: <Users /> },
+  profitability: { href: '/reports/profitability', icon: <TrendingUp /> },
+  'station-comparison': { href: '/reports/station-comparison', icon: <Trophy /> },
 };
 
 /** Format the category headline by its declared unit. */

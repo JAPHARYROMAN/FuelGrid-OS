@@ -300,3 +300,156 @@ func CustomerAging(in CustomerAgingInput) Report {
 	}
 	return rep
 }
+
+// ---- Profitability (Feature 10.4) ----
+
+// ProfitabilityInput is a station's already-computed P&L slice over a window.
+// Every field is an exact decimal string (summed in SQL ::numeric); the
+// heuristics below parse them to float64 for DISPLAY math only.
+type ProfitabilityInput struct {
+	NetRevenue   string // net (ex-tax) revenue recognized
+	Cogs         string // cost of goods sold
+	GrossMargin  string // net revenue − COGS
+	Expenses     string // operating expenses booked to the station
+	NetOperating string // gross margin − operating expenses
+	HasSales     bool   // any recognized sales in the window
+	PeriodLocked bool   // every revenue day in the window is locked
+}
+
+// Profitability builds the Profitability report annotations: a negative net
+// operating result is critical; a thin gross margin (< 5% of revenue) warns;
+// expenses outrunning gross margin warns; and an unlocked window is flagged as
+// provisional data-quality.
+func Profitability(in ProfitabilityInput) Report {
+	var rep Report
+	if !in.HasSales {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "No recognized sales in this period — profitability figures are empty.",
+		})
+		return rep
+	}
+	net, okNet := parseDec(in.NetOperating)
+	rev, okRev := parseDec(in.NetRevenue)
+	margin, okMargin := parseDec(in.GrossMargin)
+	expenses, okExp := parseDec(in.Expenses)
+
+	switch {
+	case okNet && net < 0:
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityCritical,
+			Message:           fmt.Sprintf("Net operating result is negative (%s) — the station is running at a loss for the period.", in.NetOperating),
+			RecommendedAction: "Review pump pricing, COGS, and operating expenses before locking the period.",
+		})
+	case okMargin && margin < 0:
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityCritical,
+			Message:           "Gross margin is negative — sales are running below cost.",
+			RecommendedAction: "Check pump pricing against the costing basis (below-cost guard).",
+		})
+	case okRev && okMargin && rev > 0:
+		if pct := margin / rev * 100; pct < 5 {
+			rep.Insights = append(rep.Insights, Insight{
+				Severity: SeverityWarning,
+				Message:  fmt.Sprintf("Gross margin is thin at %.1f%% of revenue.", pct),
+			})
+		}
+	}
+	if okExp && okMargin && expenses > 0 && margin > 0 && expenses > margin {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityWarning,
+			Message:           "Operating expenses exceed gross margin for the period.",
+			RecommendedAction: "Review the expense ledger for the station and reduce discretionary spend.",
+		})
+	}
+	if !in.PeriodLocked {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "Not all revenue days in this period are locked — the result is provisional.",
+		})
+	}
+	return rep
+}
+
+// ---- Station comparison (Feature 10.6) ----
+
+// ComparisonStation is one station's already-computed comparison line.
+type ComparisonStation struct {
+	Name         string
+	NetOperating string // decimal string; signed
+	GrossMargin  string
+	NetRevenue   string
+	RiskAlerts   int
+}
+
+// StationComparisonInput bundles the stations being compared plus whether the
+// caller's view was scoped to a subset of the tenant's stations.
+type StationComparisonInput struct {
+	Stations []ComparisonStation
+	Scoped   bool // the caller sees only a subset of the tenant's stations
+}
+
+// StationComparison builds the cross-station comparison annotations: it names
+// the strongest and weakest stations by net operating result, flags any
+// loss-making station, surfaces a station carrying open risk alerts, and notes
+// when the comparison is scoped to the caller's accessible stations.
+func StationComparison(in StationComparisonInput) Report {
+	var rep Report
+	if len(in.Stations) == 0 {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "No stations in scope for this comparison.",
+		})
+		return rep
+	}
+
+	var best, worst *ComparisonStation
+	var bestVal, worstVal float64
+	var lossMakers, alertCarriers int
+	var topAlertName string
+	var topAlerts int
+	for i := range in.Stations {
+		s := &in.Stations[i]
+		if v, ok := parseDec(s.NetOperating); ok {
+			if best == nil || v > bestVal {
+				best, bestVal = s, v
+			}
+			if worst == nil || v < worstVal {
+				worst, worstVal = s, v
+			}
+			if v < 0 {
+				lossMakers++
+			}
+		}
+		if s.RiskAlerts > 0 {
+			alertCarriers++
+			if s.RiskAlerts > topAlerts {
+				topAlerts, topAlertName = s.RiskAlerts, s.Name
+			}
+		}
+	}
+
+	if best != nil && len(in.Stations) > 1 {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity: SeverityInfo,
+			Message:  fmt.Sprintf("%s leads on net operating result (%s).", best.Name, best.NetOperating),
+		})
+	}
+	if lossMakers > 0 && worst != nil {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityWarning,
+			Message:           fmt.Sprintf("%d station(s) ran a negative net operating result; %s is the lowest (%s).", lossMakers, worst.Name, worst.NetOperating),
+			RecommendedAction: "Open the profitability report for the lowest station to find the driver.",
+		})
+	}
+	if topAlerts > 0 {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityWarning,
+			Message:           fmt.Sprintf("%s carries the most open risk alerts (%d).", topAlertName, topAlerts),
+			RecommendedAction: "Review the station's open risk alerts and loss reconciliations.",
+		})
+	}
+	if in.Scoped {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "This comparison is limited to the stations you have access to.",
+		})
+	}
+	return rep
+}
