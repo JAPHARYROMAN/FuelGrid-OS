@@ -5,6 +5,7 @@ package payments
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,18 +15,19 @@ import (
 )
 
 type Payment struct {
-	ID         uuid.UUID
-	TenantID   uuid.UUID
-	StationID  uuid.UUID
-	ShiftID    *uuid.UUID
-	CustomerID *uuid.UUID
-	TenderType string
-	Amount     string
-	Reference  *string
-	ReceivedBy uuid.UUID
-	ReceivedAt time.Time
-	Status     string
-	Notes      *string
+	ID             uuid.UUID
+	TenantID       uuid.UUID
+	StationID      uuid.UUID
+	ShiftID        *uuid.UUID
+	CustomerID     *uuid.UUID
+	TenderType     string
+	Amount         string
+	Reference      *string
+	ReceivedBy     uuid.UUID
+	ReceivedAt     time.Time
+	Status         string
+	Notes          *string
+	IdempotencyKey *string
 }
 
 type RecordInput struct {
@@ -37,6 +39,11 @@ type RecordInput struct {
 	Reference  *string
 	ReceivedBy uuid.UUID
 	Notes      *string
+	// IdempotencyKey is an optional client-supplied key (SR-M2). When set, a
+	// replay carrying the same key for the same tenant returns the
+	// already-recorded payment instead of inserting a duplicate. When nil, the
+	// prior behaviour (always insert) is preserved.
+	IdempotencyKey *string
 }
 
 // ShiftReconciliation compares a shift's recorded tenders to its recognized
@@ -53,29 +60,83 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
     id, tenant_id, station_id, shift_id, customer_id, tender_type, amount::text,
-    reference, received_by, received_at, status, notes
+    reference, received_by, received_at, status, notes, idempotency_key
 `
 
 func scan(row pgx.Row, p *Payment) error {
 	return row.Scan(
 		&p.ID, &p.TenantID, &p.StationID, &p.ShiftID, &p.CustomerID, &p.TenderType, &p.Amount,
-		&p.Reference, &p.ReceivedBy, &p.ReceivedAt, &p.Status, &p.Notes,
+		&p.Reference, &p.ReceivedBy, &p.ReceivedAt, &p.Status, &p.Notes, &p.IdempotencyKey,
 	)
 }
 
-func (r *Repo) Record(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in RecordInput) (*Payment, error) {
+// RecordResult is the outcome of Record. Replayed reports whether the returned
+// payment is a pre-existing row matched by idempotency key (true) rather than a
+// freshly inserted one (false). The handler uses it to skip side effects (AR
+// charge, GL journal, audit event) on a replay so the amount is not applied
+// twice — the whole point of SR-M2.
+type RecordResult struct {
+	Payment  *Payment
+	Replayed bool
+}
+
+// Record inserts a payment. When in.IdempotencyKey is supplied and a payment
+// already exists for (tenant_id, idempotency_key), the existing row is returned
+// with Replayed=true instead of inserting a duplicate (SR-M2). The dedup is
+// tenant-scoped: the same key under a different tenant inserts normally.
+//
+// It relies on the partial unique index uq_payments_tenant_idempotency_key
+// (migration 0096) via INSERT ... ON CONFLICT, so the dedup is enforced by the
+// database under concurrency, not by a check-then-insert race.
+func (r *Repo) Record(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in RecordInput) (*RecordResult, error) {
+	// No key supplied: preserve the prior always-insert behaviour.
+	if in.IdempotencyKey == nil {
+		var p Payment
+		if err := scan(tx.QueryRow(ctx, `
+			INSERT INTO payments
+			    (tenant_id, station_id, shift_id, customer_id, tender_type, amount, reference, received_by, notes)
+			VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, $9)
+			RETURNING `+columns,
+			tenantID, in.StationID, in.ShiftID, in.CustomerID, in.TenderType, in.Amount,
+			in.Reference, in.ReceivedBy, in.Notes,
+		), &p); err != nil {
+			return nil, err
+		}
+		return &RecordResult{Payment: &p, Replayed: false}, nil
+	}
+
+	// Key supplied: insert, but on a (tenant_id, idempotency_key) conflict do
+	// nothing so we can return the already-recorded row unchanged. ON CONFLICT
+	// DO NOTHING yields no RETURNING row, so an empty result means the key
+	// already existed — we then SELECT the original.
 	var p Payment
-	if err := scan(tx.QueryRow(ctx, `
+	err := scan(tx.QueryRow(ctx, `
 		INSERT INTO payments
-		    (tenant_id, station_id, shift_id, customer_id, tender_type, amount, reference, received_by, notes)
-		VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, $9)
+		    (tenant_id, station_id, shift_id, customer_id, tender_type, amount, reference, received_by, notes, idempotency_key)
+		VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8, $9, $10)
+		ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+		DO NOTHING
 		RETURNING `+columns,
 		tenantID, in.StationID, in.ShiftID, in.CustomerID, in.TenderType, in.Amount,
-		in.Reference, in.ReceivedBy, in.Notes,
-	), &p); err != nil {
+		in.Reference, in.ReceivedBy, in.Notes, *in.IdempotencyKey,
+	), &p)
+	if err == nil {
+		return &RecordResult{Payment: &p, Replayed: false}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
-	return &p, nil
+
+	// Conflict: a payment with this key already exists for the tenant. Return it
+	// so the caller responds idempotently rather than erroring.
+	var existing Payment
+	if err := scan(tx.QueryRow(ctx, `
+		SELECT `+columns+` FROM payments
+		WHERE tenant_id = $1 AND idempotency_key = $2
+	`, tenantID, *in.IdempotencyKey), &existing); err != nil {
+		return nil, err
+	}
+	return &RecordResult{Payment: &existing, Replayed: true}, nil
 }
 
 func (r *Repo) ListForShift(ctx context.Context, tenantID, shiftID uuid.UUID) ([]Payment, error) {
