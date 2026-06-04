@@ -33,6 +33,11 @@ type saleDTO struct {
 	CogsAmount     *string   `json:"cogs_amount,omitempty"`
 	MarginAmount   *string   `json:"margin_amount,omitempty"`
 	RecordedAt     string    `json:"recorded_at"`
+	// VoidStatus is the sale's current (non-rejected) void status —
+	// "requested" while a void awaits approval, "approved" once it is reversed,
+	// or omitted when the sale has no active void. It lets the list/reports
+	// visibly distinguish a reversed sale (Feature 4.3).
+	VoidStatus *string `json:"void_status,omitempty"`
 }
 
 func toSaleDTO(s *revenue.Sale) saleDTO {
@@ -75,13 +80,34 @@ func (s *Server) recognizeShiftRevenue(w http.ResponseWriter, r *http.Request, a
 	return true
 }
 
-// saleDTOs maps a slice of sales to their DTOs.
-func saleDTOs(rows []revenue.Sale) []saleDTO {
+// saleDTOs maps a slice of sales to their DTOs, attaching each sale's current
+// (non-rejected) void status from voidStatuses when present.
+func saleDTOs(rows []revenue.Sale, voidStatuses map[uuid.UUID]string) []saleDTO {
 	out := make([]saleDTO, 0, len(rows))
 	for i := range rows {
-		out = append(out, toSaleDTO(&rows[i]))
+		dto := toSaleDTO(&rows[i])
+		if st, ok := voidStatuses[rows[i].ID]; ok {
+			s := st
+			dto.VoidStatus = &s
+		}
+		out = append(out, dto)
 	}
 	return out
+}
+
+// saleVoidStatuses fetches the current void status for a page of sales,
+// returning an empty map (and logging) on error so the list still renders.
+func (s *Server) saleVoidStatuses(r *http.Request, tenantID uuid.UUID, rows []revenue.Sale) map[uuid.UUID]string {
+	ids := make([]uuid.UUID, 0, len(rows))
+	for i := range rows {
+		ids = append(ids, rows[i].ID)
+	}
+	statuses, err := s.revenue.VoidStatuses(r.Context(), s.deps.DB, tenantID, ids)
+	if err != nil {
+		s.logger.Error("sale void statuses", "error", err)
+		return map[uuid.UUID]string{}
+	}
+	return statuses
 }
 
 func (s *Server) handleListShiftSales(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +148,7 @@ func (s *Server) handleListShiftSales(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		rows = rows[:limit]
 	}
-	out := saleDTOs(rows)
+	out := saleDTOs(rows, s.saleVoidStatuses(r, actor.TenantID, rows))
 	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 
@@ -156,7 +182,7 @@ func (s *Server) handleListStationSales(w http.ResponseWriter, r *http.Request) 
 	if hasMore {
 		rows = rows[:limit]
 	}
-	out := saleDTOs(rows)
+	out := saleDTOs(rows, s.saleVoidStatuses(r, actor.TenantID, rows))
 	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
 }
 

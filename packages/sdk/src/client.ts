@@ -78,6 +78,8 @@ import type {
   ReportExportResult,
   Role,
   Sale,
+  SaleVoid,
+  RequestSaleVoidRequest,
   TankValuation,
   ARentry,
   CreditAlert,
@@ -1774,6 +1776,61 @@ export class Client {
       `/api/v1/stations/${encodeURIComponent(stationID)}/inventory-valuation`,
       { signal },
     );
+  }
+
+  // ----------- Sale void (request -> approve|reject) (Feature 4.3) -----------
+
+  /** Open a void request against a recognized sale (gated by sale.void.request). */
+  requestSaleVoid(
+    saleID: string,
+    req: RequestSaleVoidRequest,
+    signal?: AbortSignal,
+  ): Promise<SaleVoid> {
+    return this.request<SaleVoid>(`/api/v1/sales/${encodeURIComponent(saleID)}/void-requests`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Get a sale's current (non-rejected) void, or 404 when it has none. */
+  getSaleVoid(saleID: string, signal?: AbortSignal): Promise<SaleVoid> {
+    return this.request<SaleVoid>(`/api/v1/sales/${encodeURIComponent(saleID)}/void`, { signal });
+  }
+
+  /** List sale voids — the approval queue (gated by sale.void.approve). */
+  listSaleVoids(
+    opts: { status?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<SaleVoid>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    if (opts.offset != null) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.request<Paginated<SaleVoid>>(`/api/v1/sale-voids${qs ? `?${qs}` : ''}`, { signal });
+  }
+
+  /** Approve a requested void; records the reversal (gated by sale.void.approve). */
+  approveSaleVoid(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<SaleVoid> {
+    return this.request<SaleVoid>(`/api/v1/sale-voids/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Reject a requested void (gated by sale.void.approve). */
+  rejectSaleVoid(id: string, req: { note?: string } = {}, signal?: AbortSignal): Promise<SaleVoid> {
+    return this.request<SaleVoid>(`/api/v1/sale-voids/${encodeURIComponent(id)}/reject`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   // ----------- Tender & receivables (Phase 6) -----------

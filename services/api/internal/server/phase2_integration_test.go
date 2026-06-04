@@ -343,6 +343,7 @@ func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID)
 		`DELETE FROM accounting_periods WHERE tenant_id = $1`,
 		`DELETE FROM accounts WHERE tenant_id = $1`,
 		`DELETE FROM revenue_days WHERE tenant_id = $1`,
+		`DELETE FROM sale_voids WHERE tenant_id = $1`,
 		`DELETE FROM sales WHERE tenant_id = $1`,
 		`DELETE FROM payments WHERE tenant_id = $1`,
 		`DELETE FROM ar_entries WHERE tenant_id = $1`,

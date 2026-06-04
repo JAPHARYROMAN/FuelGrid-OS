@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Receipt } from 'lucide-react';
 
 import { SdkError, type Sale } from '@fuelgrid/sdk';
 import {
   Badge,
+  type BadgeProps,
   Button,
   Card,
   CardContent,
@@ -15,10 +16,12 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   EmptyState,
   ErrorState,
+  Input,
   Label,
   PageHeader,
   Skeleton,
@@ -30,9 +33,11 @@ import {
   TableRow,
 } from '@fuelgrid/ui';
 
+import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 import { usePermission } from '@/hooks/use-permissions';
 import { formatLitres, formatMoney } from '@/lib/money';
+import { toast } from '@/lib/toast';
 
 const PAGE_SIZE = 50;
 
@@ -42,6 +47,20 @@ function money(n?: string) {
 
 function shortId(id: string) {
   return id.slice(0, 8);
+}
+
+// A reversed (approved-void) sale reads danger; a pending void request reads
+// warning. No active void → no badge.
+function voidTone(status?: string): BadgeProps['tone'] {
+  if (status === 'approved') return 'danger';
+  if (status === 'requested') return 'warning';
+  return 'neutral';
+}
+
+function voidLabel(status?: string): string {
+  if (status === 'approved') return 'Reversed';
+  if (status === 'requested') return 'Void pending';
+  return '';
 }
 
 export default function SalesPage() {
@@ -57,6 +76,7 @@ export default function SalesPage() {
   const [productFilter, setProductFilter] = useState('');
   const [offset, setOffset] = useState(0);
   const [detail, setDetail] = useState<Sale | null>(null);
+  const qc = useQueryClient();
 
   // Page-level read gate. revenue.read is station-scoped, so the answer is
   // meaningful only once a station is chosen; until then we treat it as the
@@ -315,6 +335,7 @@ export default function SalesPage() {
                     <TableHead className="text-right">Gross</TableHead>
                     <TableHead className="text-right">Net</TableHead>
                     <TableHead className="text-right">Margin</TableHead>
+                    <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -352,8 +373,19 @@ export default function SalesPage() {
                       <TableCell className="text-right font-mono text-sm tabular-nums text-muted-foreground">
                         {money(s.net_amount)}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums">
+                      <TableCell
+                        className={`text-right font-mono text-sm tabular-nums ${
+                          s.void_status === 'approved' ? 'text-muted-foreground line-through' : ''
+                        }`}
+                      >
                         {s.margin_amount ? money(s.margin_amount) : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {s.void_status ? (
+                          <Badge tone={voidTone(s.void_status)}>{voidLabel(s.void_status)}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -393,7 +425,9 @@ export default function SalesPage() {
       )}
 
       {/* Sale detail — the row carries the full valued breakdown; there is no
-          per-id endpoint, so the detail view reads the selected row. */}
+          per-id endpoint, so the detail view reads the selected row. The void
+          controls (request / approve / reject) live here and read the live void
+          status from the API. */}
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
         <DialogContent>
           <DialogHeader>
@@ -444,10 +478,178 @@ export default function SalesPage() {
                 <Field label="Nozzle" value={shortId(detail.nozzle_id)} mono />
                 <Field label="Tank" value={shortId(detail.tank_id)} mono />
               </dl>
+
+              <SaleVoidControls
+                sale={detail}
+                onChanged={() => {
+                  void qc.invalidateQueries({ queryKey: ['station-sales'] });
+                }}
+              />
             </div>
           ) : null}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// SaleVoidControls renders the void lifecycle for one sale (Feature 4.3):
+//   - no active void → a "Request void" form (reason required), gated by
+//     sale.void.request at the sale's station;
+//   - a pending request → approve / reject controls, gated by sale.void.approve;
+//   - an approved void → a read-only "reversed" notice with the reversal totals.
+// It reads the live void from the API so the dialog reflects the current state
+// even when the row's denormalized void_status is stale.
+function SaleVoidControls({ sale, onChanged }: { sale: Sale; onChanged: () => void }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState('');
+
+  const canRequest = usePermission('sale.void.request', { stationID: sale.station_id });
+  const canApprove = usePermission('sale.void.approve', { stationID: sale.station_id });
+
+  // The sale carries no active void when void_status is absent; only fetch the
+  // live void when there is (or might be) one to show its decision details.
+  const voidQuery = useQuery({
+    queryKey: ['sale-void', sale.id],
+    queryFn: ({ signal }) => api.getSaleVoid(sale.id, signal),
+    enabled: !!sale.void_status,
+    // A 404 means "no active void" — surface it as null rather than an error.
+    retry: (count, err) => !(err instanceof SdkError && err.status === 404) && count < 2,
+  });
+
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: ['sale-void', sale.id] });
+    onChanged();
+  };
+
+  const request = useMutation({
+    mutationFn: () => api.requestSaleVoid(sale.id, { reason: reason.trim() }),
+    onSuccess: () => {
+      toast.success('Void requested');
+      setReason('');
+      refresh();
+    },
+    onError: (err) =>
+      toast.error('Could not request void', err instanceof SdkError ? err.message : undefined),
+  });
+
+  const approve = useMutation({
+    mutationFn: (id: string) => api.approveSaleVoid(id),
+    onSuccess: () => {
+      toast.success('Void approved — sale reversed');
+      refresh();
+    },
+    onError: (err) =>
+      toast.error('Could not approve void', err instanceof SdkError ? err.message : undefined),
+  });
+
+  const reject = useMutation({
+    mutationFn: (id: string) => api.rejectSaleVoid(id),
+    onSuccess: () => {
+      toast.success('Void rejected');
+      refresh();
+    },
+    onError: (err) =>
+      toast.error('Could not reject void', err instanceof SdkError ? err.message : undefined),
+  });
+
+  const busy = request.isPending || approve.isPending || reject.isPending;
+  const v = voidQuery.data;
+  const status = v?.status ?? sale.void_status;
+
+  return (
+    <div className="mt-1 flex flex-col gap-3 border-t border-border pt-4">
+      <div className="flex items-center justify-between gap-2">
+        <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Void
+        </Label>
+        {status ? <Badge tone={voidTone(status)}>{voidLabel(status)}</Badge> : null}
+      </div>
+
+      {status === 'approved' ? (
+        <p className="text-sm text-muted-foreground" role="status">
+          This sale has been reversed. The original sale is preserved; a reversal of{' '}
+          <span className="font-mono">{money(v?.reversal_gross)}</span> nets it out of revenue.
+        </p>
+      ) : status === 'requested' ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            A void has been requested
+            {v?.reason ? (
+              <>
+                {' '}
+                — <span className="italic">{v.reason}</span>
+              </>
+            ) : null}
+            . A different user with approval rights must approve or reject it.
+          </p>
+          <DialogFooter>
+            <PermissionGate permission="sale.void.approve" stationId={sale.station_id}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy || !v}
+                onClick={() => v && reject.mutate(v.id)}
+              >
+                Reject
+              </Button>
+            </PermissionGate>
+            <PermissionGate permission="sale.void.approve" stationId={sale.station_id}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy || !v}
+                onClick={() => v && approve.mutate(v.id)}
+              >
+                {approve.isPending ? 'Approving…' : 'Approve void'}
+              </Button>
+            </PermissionGate>
+          </DialogFooter>
+          {canApprove === false ? (
+            <p className="text-xs text-muted-foreground">
+              Approving a void needs sale.void.approve at this station.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <form
+          className="flex flex-col gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (reason.trim().length > 0 && canRequest !== false) request.mutate();
+          }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="void-reason">Reason</Label>
+            <Input
+              id="void-reason"
+              placeholder="Why should this sale be voided?"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={reason.trim().length === 0 || canRequest === false || request.isPending}
+              title={
+                canRequest === false
+                  ? "You don't have permission at this sale's station"
+                  : undefined
+              }
+            >
+              {request.isPending ? 'Requesting…' : 'Request void'}
+            </Button>
+          </DialogFooter>
+          {canRequest === false ? (
+            <p className="text-xs text-muted-foreground">
+              Requesting a void needs sale.void.request at this station.
+            </p>
+          ) : null}
+        </form>
+      )}
     </div>
   );
 }

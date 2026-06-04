@@ -195,15 +195,26 @@ func (r *Repo) list(ctx context.Context, where string, args ...any) ([]Sale, err
 	return out, rows.Err()
 }
 
-// DaySummary rolls up a station-day's recognized revenue, COGS, and margin.
+// DaySummary rolls up a station-day's recognized revenue, COGS, and margin,
+// NET of any approved sale voids (Feature 4.3). An approved void carries the
+// sale's amounts negated (reversal_*), so adding them to the sale sums reverses
+// the voided revenue without mutating the append-only sale row. SaleCount is the
+// count of sales NOT currently reversed by an approved void.
 func (r *Repo) DaySummary(ctx context.Context, q database.Querier, tenantID, stationID, dayID uuid.UUID) (DaySummary, error) {
 	var d DaySummary
 	err := q.QueryRow(ctx, `
-		SELECT COALESCE(SUM(gross_amount), 0)::text, COALESCE(SUM(net_amount), 0)::text,
-		       COALESCE(SUM(tax_amount), 0)::text, COALESCE(SUM(cogs_amount), 0)::text,
-		       COALESCE(SUM(margin_amount), 0)::text, COALESCE(SUM(litres), 0), count(*)
-		FROM sales
-		WHERE tenant_id = $1 AND station_id = $2 AND operating_day_id = $3
+		SELECT
+		    (COALESCE(SUM(s.gross_amount),  0) + COALESCE(SUM(v.reversal_gross),  0))::text,
+		    (COALESCE(SUM(s.net_amount),    0) + COALESCE(SUM(v.reversal_net),    0))::text,
+		    (COALESCE(SUM(s.tax_amount),    0) + COALESCE(SUM(v.reversal_tax),    0))::text,
+		    (COALESCE(SUM(s.cogs_amount),   0) + COALESCE(SUM(v.reversal_cogs),   0))::text,
+		    (COALESCE(SUM(s.margin_amount), 0) + COALESCE(SUM(v.reversal_margin), 0))::text,
+		    (COALESCE(SUM(s.litres),        0) + COALESCE(SUM(v.reversal_litres), 0)),
+		    COUNT(*) FILTER (WHERE v.id IS NULL)
+		FROM sales s
+		LEFT JOIN sale_voids v
+		    ON v.tenant_id = s.tenant_id AND v.sale_id = s.id AND v.status = 'approved'
+		WHERE s.tenant_id = $1 AND s.station_id = $2 AND s.operating_day_id = $3
 	`, tenantID, stationID, dayID).Scan(
 		&d.GrossAmount, &d.NetAmount, &d.TaxAmount, &d.CogsAmount, &d.MarginAmount, &d.LitresSold, &d.SaleCount,
 	)
