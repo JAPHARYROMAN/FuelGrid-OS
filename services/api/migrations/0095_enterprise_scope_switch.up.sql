@@ -1,4 +1,4 @@
--- 0093_enterprise_scope_switch: the permission that gates the enterprise
+-- 0095_enterprise_scope_switch: the permission that gates the enterprise
 -- context scope-switcher (Feature 13.1). A user holding this permission may
 -- list the company / region / station scopes their enterprise grants resolve
 -- to and switch the active reporting scope they view the chain through.
