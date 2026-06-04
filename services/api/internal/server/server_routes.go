@@ -77,6 +77,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 						s.registerAttachmentRoutes(r)
 						s.registerUserAdminRoutes(r)
 						s.registerAdminJobRoutes(r)
+						s.registerRetentionRoutes(r)
 					})
 				}
 			}
@@ -93,6 +94,32 @@ func (s *Server) registerSetupRoutes(r chi.Router) {
 		Get("/setup/checklist", s.handleGetSetupChecklist)
 	r.With(s.requirePermission("setup.manage", nil)).
 		Patch("/setup/checklist", s.handlePatchSetupChecklist)
+}
+
+// registerRetentionRoutes mounts the data lifecycle / governance surface
+// (Feature 13.2): retention-policy CRUD (gated retention.manage), the
+// retention-sweep job-run history (any authenticated admin-console user — it is
+// read-only operational telemetry filtered to this tenant's view), and the
+// closed-period change-request maker-checker (gated closed_period.change;
+// separation of duties — no self-approve — enforced in the repo). All
+// permissions are tenant-wide.
+func (s *Server) registerRetentionRoutes(r chi.Router) {
+	if s.retention == nil {
+		return
+	}
+	r.With(s.requirePermission("retention.manage", nil)).Group(func(r chi.Router) {
+		r.Get("/retention-policies", s.handleListRetentionPolicies)
+		r.Post("/retention-policies", s.handleCreateRetentionPolicy)
+		r.Patch("/retention-policies/{id}", s.handleUpdateRetentionPolicy)
+		r.Delete("/retention-policies/{id}", s.handleDeleteRetentionPolicy)
+		r.Get("/retention-policies/job-runs", s.handleListRetentionJobRuns)
+	})
+	r.With(s.requirePermission("closed_period.change", nil)).Group(func(r chi.Router) {
+		r.Get("/closed-period-change-requests", s.handleListChangeRequests)
+		r.Post("/accounting-periods/{id}/change-requests", s.handleRequestPeriodChange)
+		r.Post("/closed-period-change-requests/{id}/approve", s.handleApprovePeriodChange)
+		r.Post("/closed-period-change-requests/{id}/reject", s.handleRejectPeriodChange)
+	})
 }
 
 // registerAttachmentRoutes mounts the generic per-entity Attachments framework

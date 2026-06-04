@@ -3132,6 +3132,137 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Invalid state transition }
+  # ---------------------------------------------------------------------------
+  # Data lifecycle & retention / governance (Feature 13.2)
+  # ---------------------------------------------------------------------------
+  /api/v1/retention-policies:
+    get:
+      tags: [Governance]
+      summary: List retention policies
+      description: >-
+        The tenant's data-retention policies, one per scope (audit | session |
+        export). Gated by retention.manage.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicyList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Governance]
+      summary: Create a retention policy
+      description: >-
+        Declare a retention window for a data scope. A tenant may have at most
+        one policy per scope (409 on a duplicate). Gated by retention.manage.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/CreateRetentionPolicyRequest' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicy' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A policy already exists for this scope }
+  /api/v1/retention-policies/{id}:
+    patch:
+      tags: [Governance]
+      summary: Update a retention policy
+      description: Update a policy's retention_days and/or status. Gated by retention.manage.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UpdateRetentionPolicyRequest' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/RetentionPolicy' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Governance]
+      summary: Delete a retention policy
+      description: Remove a retention policy. Gated by retention.manage.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/retention-policies/job-runs:
+    get:
+      tags: [Governance]
+      summary: Retention-sweep job-run history
+      description: >-
+        Recent runs of the retention-sweep background job (when it ran, its
+        terminal status, and the candidate count it found). The sweep is a
+        dry-run in this slice — it does not purge. Gated by retention.manage.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, count]
+                properties:
+                  count: { type: integer }
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/JobRun' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/closed-period-change-requests:
+    get:
+      tags: [Governance]
+      summary: List closed-period change requests
+      description: >-
+        The maker-checker queue for reopening/relocking closed accounting
+        periods. Optionally filter by status. Gated by closed_period.change.
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [requested, approved, rejected] } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/accounting-periods/{id}/change-requests:
+    post:
+      tags: [Governance]
+      summary: Request a closed-period change
+      description: >-
+        Open a change request to reopen or relock a CLOSED/LOCKED accounting
+        period (422 if the period is not closed/locked). At most one pending
+        request per period (409). Gated by closed_period.change.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RequestClosedPeriodChangeRequest' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/ClosedPeriodChangeRequest' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A pending change request already exists for this period }
+        '422': { description: The period is not closed or locked }
+  /api/v1/closed-period-change-requests/{id}/approve:
+    post:
+      tags: [Governance]
+      summary: Approve a closed-period change request
+      description: >-
+        Moves requested -> approved. Separation of duties: the requester cannot
+        approve their own request (403). Idempotent — a second approve of a
+        decided request is a 409. Approving authorizes the period transition but
+        does not itself perform it. Gated by closed_period.change.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/ChangeRequestDecision' } } } }
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/ClosedPeriodChangeRequest' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/closed-period-change-requests/{id}/reject:
+    post:
+      tags: [Governance]
+      summary: Reject a closed-period change request
+      description: >-
+        Moves requested -> rejected. The requester cannot reject their own
+        request (403). Gated by closed_period.change.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/ChangeRequestDecision' } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/ClosedPeriodChangeRequest' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+
   /api/v1/shifts/{id}/payments:
     get:
       tags: [Revenue]
@@ -5440,6 +5571,59 @@ components:
         status:      { type: string, enum: [running, success, failure, skipped] }
         detail:      { type: string, description: Short human-readable run summary or error. }
         duration_ms: { type: integer, format: int64, description: Derived wall-clock run time in milliseconds; absent while in progress. }
+
+    RetentionPolicy:
+      type: object
+      required: [id, scope, retention_days, status, created_at, updated_at]
+      properties:
+        id:             { type: string, format: uuid }
+        scope:          { type: string, enum: [audit, session, export] }
+        retention_days: { type: integer, description: Keep <scope> data for this many days. Positive. }
+        status:         { type: string, enum: [active, disabled] }
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+    RetentionPolicyList:
+      type: object
+      required: [items, count]
+      properties:
+        count: { type: integer }
+        items: { type: array, items: { $ref: '#/components/schemas/RetentionPolicy' } }
+    CreateRetentionPolicyRequest:
+      type: object
+      required: [scope, retention_days]
+      properties:
+        scope:          { type: string, enum: [audit, session, export] }
+        retention_days: { type: integer }
+        status:         { type: string, enum: [active, disabled], description: Defaults to active when omitted. }
+    UpdateRetentionPolicyRequest:
+      type: object
+      properties:
+        retention_days: { type: integer }
+        status:         { type: string, enum: [active, disabled] }
+    ClosedPeriodChangeRequest:
+      type: object
+      required: [id, period_id, change_type, reason, status, requested_by, requested_at]
+      properties:
+        id:            { type: string, format: uuid }
+        period_id:     { type: string, format: uuid }
+        change_type:   { type: string, enum: [reopen, relock] }
+        reason:        { type: string }
+        status:        { type: string, enum: [requested, approved, rejected] }
+        requested_by:  { type: string, format: uuid }
+        decided_by:    { type: string, format: uuid }
+        decision_note: { type: string }
+        requested_at:  { type: string, format: date-time }
+        decided_at:    { type: string, format: date-time }
+    RequestClosedPeriodChangeRequest:
+      type: object
+      required: [change_type, reason]
+      properties:
+        change_type: { type: string, enum: [reopen, relock] }
+        reason:      { type: string }
+    ChangeRequestDecision:
+      type: object
+      properties:
+        note: { type: string, description: Optional decision note recorded on the request. }
 
     PumpWithNozzles:
       allOf:

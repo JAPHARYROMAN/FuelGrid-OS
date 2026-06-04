@@ -64,7 +64,7 @@ func TestJobLockKeyStableAndDistinct(t *testing.T) {
 	names := []string{
 		"revenue_compute", "aging_refresh", "risk_detect",
 		"enterprise_projection", "outbox_dead_letter_sweep", "session_token_cleanup",
-		"report_daily_close_digest", "report_monthly_pnl",
+		"retention_sweep", "report_daily_close_digest", "report_monthly_pnl",
 	}
 	seen := map[int64]string{}
 	for _, n := range names {
@@ -120,11 +120,13 @@ func TestBuildJobsCatalog(t *testing.T) {
 		Projection:     time.Hour,
 		OutboxSweep:    time.Hour,
 		SessionCleanup: time.Hour,
+		RetentionSweep: time.Hour,
 		ReportDigest:   time.Hour,
 	})
 	want := map[string]bool{
 		"revenue_compute": false, "aging_refresh": false, "risk_detect": false,
 		"enterprise_projection": false, "outbox_dead_letter_sweep": false, "session_token_cleanup": false,
+		"retention_sweep":           false,
 		"report_daily_close_digest": false, "report_monthly_pnl": false,
 	}
 	if len(jobs) != len(want) {

@@ -37,6 +37,8 @@ import type {
   TenantBranding,
   TenantBrandingUpdate,
   DipReading,
+  ClosedPeriodChangeRequest,
+  CreateRetentionPolicyRequest,
   Expense,
   ExpenseCategory,
   Incident,
@@ -70,6 +72,9 @@ import type {
   Reconciliation,
   ReconciliationOverview,
   Region,
+  RequestClosedPeriodChangeRequest,
+  RetentionPolicy,
+  RetentionPolicyList,
   ReportInsights,
   ReportKey,
   ReportSpec,
@@ -81,6 +86,7 @@ import type {
   Sale,
   SaleVoid,
   RequestSaleVoidRequest,
+  UpdateRetentionPolicyRequest,
   TankValuation,
   ARentry,
   CreditAlert,
@@ -4098,6 +4104,113 @@ export class Client {
    */
   listJobRuns(signal?: AbortSignal): Promise<JobRunList> {
     return this.request<JobRunList>('/api/v1/admin/jobs', { signal });
+  }
+
+  // ----------- Data lifecycle & retention (Feature 13.2) -----------
+
+  /** List the tenant's retention policies (gated by retention.manage). */
+  listRetentionPolicies(signal?: AbortSignal): Promise<RetentionPolicyList> {
+    return this.request<RetentionPolicyList>('/api/v1/retention-policies', { signal });
+  }
+
+  /** Create a retention policy for a scope (gated by retention.manage). */
+  createRetentionPolicy(
+    req: CreateRetentionPolicyRequest,
+    signal?: AbortSignal,
+  ): Promise<RetentionPolicy> {
+    return this.request<RetentionPolicy>('/api/v1/retention-policies', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Update a retention policy's window/status (gated by retention.manage). */
+  updateRetentionPolicy(
+    id: string,
+    req: UpdateRetentionPolicyRequest,
+    signal?: AbortSignal,
+  ): Promise<RetentionPolicy> {
+    return this.request<RetentionPolicy>(`/api/v1/retention-policies/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Delete a retention policy (gated by retention.manage). */
+  deleteRetentionPolicy(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/retention-policies/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  /**
+   * Recent runs of the retention-sweep background job (gated by
+   * retention.manage), so the governance page can show when the sweep last ran
+   * and what it found.
+   */
+  listRetentionJobRuns(signal?: AbortSignal): Promise<JobRunList> {
+    return this.request<JobRunList>('/api/v1/retention-policies/job-runs', { signal });
+  }
+
+  /** List the tenant's closed-period change requests (gated by closed_period.change). */
+  listClosedPeriodChangeRequests(
+    opts: { status?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<ClosedPeriodChangeRequest>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    if (opts.offset != null) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.request<Paginated<ClosedPeriodChangeRequest>>(
+      `/api/v1/closed-period-change-requests${qs ? `?${qs}` : ''}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Open a change request against a CLOSED/LOCKED accounting period (gated by
+   * closed_period.change).
+   */
+  requestClosedPeriodChange(
+    periodID: string,
+    req: RequestClosedPeriodChangeRequest,
+    signal?: AbortSignal,
+  ): Promise<ClosedPeriodChangeRequest> {
+    return this.request<ClosedPeriodChangeRequest>(
+      `/api/v1/accounting-periods/${encodeURIComponent(periodID)}/change-requests`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /**
+   * Approve a requested closed-period change (gated by closed_period.change).
+   * Separation of duties: the requester cannot approve their own request (403).
+   */
+  approveClosedPeriodChange(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<ClosedPeriodChangeRequest> {
+    return this.request<ClosedPeriodChangeRequest>(
+      `/api/v1/closed-period-change-requests/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /** Reject a requested closed-period change (gated by closed_period.change). */
+  rejectClosedPeriodChange(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<ClosedPeriodChangeRequest> {
+    return this.request<ClosedPeriodChangeRequest>(
+      `/api/v1/closed-period-change-requests/${encodeURIComponent(id)}/reject`,
+      { method: 'POST', body: req, signal },
+    );
   }
 }
 
