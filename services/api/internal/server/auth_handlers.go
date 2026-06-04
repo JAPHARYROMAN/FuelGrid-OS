@@ -272,6 +272,16 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	})
 }
 
+// writeErrorCode is writeError with an additional machine-readable error code
+// so clients can branch on the failure programmatically (e.g. "mfa_required").
+func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]any{
+		"error":  msg,
+		"code":   code,
+		"status": status,
+	})
+}
+
 // clientIP returns the best-effort client IP for audit / rate-limit bucketing.
 // X-Forwarded-For is honored only when trustedProxyDepth > 0 (set from
 // API_TRUSTED_PROXY_DEPTH) — otherwise the header is client-spoofable and is

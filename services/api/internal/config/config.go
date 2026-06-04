@@ -100,6 +100,21 @@ type Config struct {
 	AuthLoginLockFor     time.Duration `envconfig:"AUTH_LOGIN_LOCK_FOR" default:"30m"`
 	AuthPasswordResetTTL time.Duration `envconfig:"AUTH_PASSWORD_RESET_TTL" default:"1h"`
 
+	// AuthEnforceMfaForPrivilegedRoles gates the requireMFASatisfied middleware
+	// (SR-M1): when true, an actor whose role mandates a second factor
+	// (identity.RoleRequiresMfa) is refused the sensitive admin-console routes
+	// with 403 mfa_required unless their session satisfied MFA. The MFA
+	// enrollment routes, /me and /auth stay reachable so an unenrolled
+	// privileged user can still set up a second factor (no lockout).
+	//
+	// It defaults to true via Load() (the production path). A Config built
+	// directly as config.Config{} (the integration harness) gets the Go zero
+	// value false, so the gate is OFF there — keeping the many multi-privileged-
+	// user maker-checker tests, which seed second approvers without MFA, working
+	// unchanged. The dedicated SR-M1 test opts the flag back on to prove
+	// enforcement.
+	AuthEnforceMfaForPrivilegedRoles bool `envconfig:"AUTH_ENFORCE_MFA_FOR_PRIVILEGED_ROLES" default:"true"`
+
 	// Request throttling (REL-4). Two independent guards layered on top of the
 	// login limiter, both fail-open when Redis is unavailable:
 	//

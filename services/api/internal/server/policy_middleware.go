@@ -166,6 +166,61 @@ func (s *Server) requirePermissionHeld(perm string) func(http.Handler) http.Hand
 	}
 }
 
+// requireMFASatisfied gates a route group so that an actor whose role makes a
+// second factor mandatory (identity.RoleRequiresMfa) cannot reach the wrapped
+// routes unless their session actually completed MFA (actor.MfaSatisfied).
+//
+// This closes SR-M1: RoleRequiresMfa + Actor.MfaSatisfied were previously
+// report-only (surfaced by /me, never enforced), so a privileged-but-unenrolled
+// user could drive sensitive API endpoints directly. The MFA enrollment/verify
+// routes, /me, logout and /auth all live OUTSIDE the wrapped group, so a
+// privileged user who has not yet enrolled can still reach them and set up a
+// second factor — there is no enrollment lockout.
+//
+// The role lookup reuses identity.MfaState (the same RequiredByRole the /me
+// handler reports), keeping the policy in one place. A read/lookup error fails
+// closed (500) rather than silently letting the request through.
+func (s *Server) requireMFASatisfied(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Enforcement is config-gated (AUTH_ENFORCE_MFA_FOR_PRIVILEGED_ROLES,
+		// default true in production via config.Load). When off, the middleware
+		// is a transparent pass-through.
+		if !s.cfg.AuthEnforceMfaForPrivilegedRoles {
+			next.ServeHTTP(w, r)
+			return
+		}
+		actor, err := identity.Require(r.Context())
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		// Already satisfied MFA this session — nothing to check.
+		if actor.MfaSatisfied {
+			next.ServeHTTP(w, r)
+			return
+		}
+		state, err := s.identity.MfaState(r.Context(), actor.TenantID, actor.UserID)
+		if err != nil {
+			if errors.Is(err, identity.ErrUnauthenticated) {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
+			s.logger.Error("mfa state load", "error", err)
+			writeError(w, http.StatusInternalServerError, "authorization error")
+			return
+		}
+		if state.RequiredByRole {
+			// Privileged role without a satisfied second factor: refuse the
+			// sensitive surface with a machine-readable code so the client can
+			// route the user into enrollment.
+			writeErrorCode(w, http.StatusForbidden, "mfa_required",
+				"multi-factor authentication is required for this role")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // requirePermission builds a middleware enforcing a single permission.
 // extract may be nil for tenant-wide permissions.
 func (s *Server) requirePermission(perm string, extract stationExtractor) func(http.Handler) http.Handler {
