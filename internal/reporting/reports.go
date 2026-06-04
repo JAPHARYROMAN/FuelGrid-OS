@@ -453,3 +453,88 @@ func StationComparison(in StationComparisonInput) Report {
 	}
 	return rep
 }
+
+// ---- Credit & cashflow (Feature 10.5) ----
+
+// CashflowInput is a station's already-computed credit & cashflow slice over a
+// window. Every figure is an exact decimal string (summed in SQL ::numeric); the
+// heuristics below parse them to float64 for DISPLAY math only.
+type CashflowInput struct {
+	CreditSales      string // credit tenders billed to AR
+	TotalTendered    string // all tenders (cash + mobile + card + credit + voucher)
+	Collections      string // posted customer payments against the station's invoices
+	OutstandingAR    string // outstanding balance on the station's invoices
+	OverdueAR        string // outstanding balance past due
+	SupplierPayments string // supplier payments in the window (tenant-wide)
+	CashVariance     string // sum of cash-reconciliation variances (signed)
+	ProjectedCashPos string // realized net cash movement in the window (signed)
+	HasActivity      bool   // any tender, collection, or receivable in the window
+	PeriodLocked     bool   // every revenue day in the window is locked
+}
+
+// CreditCashflow builds the Credit & Cashflow report annotations: overdue
+// receivables warn (escalating to critical when overdue dominates outstanding);
+// a credit-heavy sales mix warns (collections are deferred); a negative realized
+// cash position warns; a cash variance is flagged; and an unlocked window is
+// noted as provisional data-quality.
+func CreditCashflow(in CashflowInput) Report {
+	var rep Report
+	if !in.HasActivity {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "No tenders, collections, or receivables for this station in the period — cashflow figures are empty.",
+		})
+		return rep
+	}
+
+	outstanding, okOut := parseDec(in.OutstandingAR)
+	overdue, okOver := parseDec(in.OverdueAR)
+	if okOver && overdue > 0 {
+		sev := SeverityWarning
+		if okOut && outstanding > 0 && overdue/outstanding >= 0.5 {
+			sev = SeverityCritical
+		}
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          sev,
+			Message:           fmt.Sprintf("%s of receivables is overdue.", in.OverdueAR),
+			RecommendedAction: "Chase the overdue balances and review the affected customers' credit standing.",
+		})
+	}
+
+	credit, okCredit := parseDec(in.CreditSales)
+	total, okTotal := parseDec(in.TotalTendered)
+	if okCredit && okTotal && total > 0 && credit > 0 {
+		if share := credit / total * 100; share >= 40 {
+			rep.Insights = append(rep.Insights, Insight{
+				Severity: SeverityWarning,
+				Message:  fmt.Sprintf("Credit sales are %.0f%% of tendered revenue — a large share is deferred to collections.", share),
+			})
+		}
+	}
+
+	if proj, ok := parseDec(in.ProjectedCashPos); ok && proj < 0 {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityWarning,
+			Message:           fmt.Sprintf("Realized cash movement is negative (%s) — cash out (supplier payments) outran cash in for the period.", in.ProjectedCashPos),
+			RecommendedAction: "Review supplier payment timing against collections to protect the cash position.",
+		})
+	}
+
+	if v, ok := parseDec(in.CashVariance); ok && v != 0 {
+		dir := "over"
+		if v < 0 {
+			dir = "short"
+		}
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityWarning,
+			Message:           fmt.Sprintf("Cumulative cash variance is %s by %s across reconciliations in the period.", dir, in.CashVariance),
+			RecommendedAction: "Reconcile the till against expected cash before locking the period.",
+		})
+	}
+
+	if !in.PeriodLocked {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "Not all revenue days in this period are locked — the cash position is provisional.",
+		})
+	}
+	return rep
+}

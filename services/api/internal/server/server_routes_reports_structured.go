@@ -36,6 +36,10 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/profitability", s.handleProfitabilityReport)
 
+	// Credit & cashflow (station-scoped via ?station_id; Feature 10.5).
+	r.With(s.requirePermissionHeld("revenue.read")).
+		Get("/reports/credit-cashflow", s.handleCreditCashflowReport)
+
 	// Station comparison (tenant-wide gate; rows filtered to the actor's
 	// accessible stations in-handler; Feature 10.6).
 	r.With(s.requirePermissionHeld("revenue.read")).
@@ -44,4 +48,13 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	// Unified export entry point — delegates to the existing export endpoints.
 	r.With(s.requirePermissionHeld("finance.read")).
 		Post("/reports/export", s.handleExportReport)
+
+	// Export-jobs surface (Feature 10.7): a durable receipt + history of report
+	// exports, gated by reports.export. POST records a job and maps it onto the
+	// existing synchronous export file URL; GET lists/reads the history.
+	r.With(s.requirePermissionHeld("reports.export")).Group(func(r chi.Router) {
+		r.Post("/exports", s.handleCreateExportJob)
+		r.Get("/exports", s.handleListExportJobs)
+		r.Get("/exports/{id}", s.handleGetExportJob)
+	})
 }

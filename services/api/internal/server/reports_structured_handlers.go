@@ -132,6 +132,12 @@ func (s *Server) handleReportsOverview(w http.ResponseWriter, r *http.Request) {
 				Headline:    "", HeadlineUnit: "",
 				AlertCount: openAlerts, Href: "/api/v1/reports/station-comparison",
 			},
+			{
+				Key: "credit-cashflow", Title: "Credit & Cashflow",
+				Description: "Sales by tender, collections, outstanding and overdue receivables, supplier payments, cash variance and projected cash position.",
+				Headline:    arTotal, HeadlineUnit: "TZS",
+				AlertCount: 0, Href: "/api/v1/reports/credit-cashflow",
+			},
 		},
 	}
 	writeJSON(w, http.StatusOK, out)

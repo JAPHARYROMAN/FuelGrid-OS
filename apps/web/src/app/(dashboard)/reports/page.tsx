@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Trophy,
   Users,
+  Wallet,
 } from 'lucide-react';
 
 import type { ReportCategory } from '@fuelgrid/sdk';
@@ -49,6 +50,7 @@ const CATEGORY_META: Record<string, CategoryMeta> = {
   receivables: { href: '/reports/customer-aging', icon: <Users /> },
   profitability: { href: '/reports/profitability', icon: <TrendingUp /> },
   'station-comparison': { href: '/reports/station-comparison', icon: <Trophy /> },
+  'credit-cashflow': { href: '/reports/credit-cashflow', icon: <Wallet /> },
 };
 
 /** Format the category headline by its declared unit. */

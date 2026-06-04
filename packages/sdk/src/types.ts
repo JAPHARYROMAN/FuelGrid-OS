@@ -1621,6 +1621,32 @@ export interface ReportExportResult {
   url: string;
 }
 
+/** The body to record a report export job (Feature 10.7). */
+export interface ExportJobRequest {
+  report_key: string;
+  format: 'csv' | 'pdf' | 'xlsx';
+  filters?: Record<string, string>;
+}
+
+/**
+ * A recorded report export job: a durable receipt of an export request and the
+ * resulting file's metadata, powering the reporting hub's export history.
+ */
+export interface ExportJob {
+  id: string;
+  report_key: string;
+  format: string;
+  filters: Record<string, string>;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  file_url: string | null;
+  file_name: string | null;
+  file_size: number | null;
+  error: string | null;
+  requested_by: string;
+  /** RFC3339 creation timestamp. */
+  created_at: string;
+}
+
 // ---- Phase 7: Finance & Accounting Control ----
 
 export interface Account {

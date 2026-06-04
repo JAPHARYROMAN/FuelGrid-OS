@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Download, FileSpreadsheet, FileText, History, ShieldCheck } from 'lucide-react';
 
 import { type GeneralLedgerFormat, type ReportPeriod, type ReportSpec } from '@fuelgrid/sdk';
@@ -12,6 +13,8 @@ import {
   CardHeader,
   CardTitle,
   EmptyState,
+  ErrorState,
+  LoadingState,
   PageHeader,
 } from '@fuelgrid/ui';
 
@@ -22,8 +25,9 @@ import { PeriodSelect } from '../_components/filters';
 
 /**
  * Export center — the accountant-ready exports that sit outside the structured
- * envelope API (statements + general ledger), plus a placeholder for export
- * history. Each download streams the existing report endpoint and is audited.
+ * envelope API (statements + general ledger), plus the export-job history
+ * (Feature 10.7). Each download streams the existing report endpoint and is
+ * audited; every recorded export job appears in the history table.
  */
 
 const GL_FORMATS: { value: GeneralLedgerFormat; label: string }[] = [
@@ -87,6 +91,105 @@ function ExportButton({
       {icon}
       {busy ? 'Preparing…' : label}
     </Button>
+  );
+}
+
+/**
+ * Export history — the durable receipts of report exports (Feature 10.7),
+ * newest first. Gated by reports.export; the query only fires for permitted
+ * users so a denied actor sees an explanatory empty state rather than a 403.
+ */
+function ExportHistory() {
+  const allowed = usePermission('reports.export');
+  const history = useQuery({
+    queryKey: ['export-jobs'],
+    queryFn: ({ signal }) => api.listExportJobs({ limit: 20 }, signal),
+    enabled: allowed === true,
+  });
+
+  if (allowed === false) {
+    return (
+      <EmptyState
+        title="No access"
+        description="You don't have permission to view the export history."
+      />
+    );
+  }
+  if (allowed === null || history.isPending) {
+    return <LoadingState title="Loading export history…" />;
+  }
+  if (history.isError) {
+    return (
+      <ErrorState
+        title="Couldn't load the export history"
+        description={String((history.error as Error).message)}
+        onRetry={() => history.refetch()}
+      />
+    );
+  }
+
+  const jobs = history.data?.items ?? [];
+  if (jobs.length === 0) {
+    return (
+      <EmptyState
+        title="No exports yet"
+        description="Exports you generate from the report views will appear here. Every export is also recorded in the system audit log."
+      />
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <th className="py-2 pr-4 font-medium">Report</th>
+            <th className="py-2 pr-4 font-medium">Format</th>
+            <th className="py-2 pr-4 font-medium">Status</th>
+            <th className="py-2 pr-4 font-medium">Requested</th>
+            <th className="py-2 pr-4 font-medium">File</th>
+          </tr>
+        </thead>
+        <tbody>
+          {jobs.map((j) => (
+            <tr key={j.id} className="border-b border-border/60 last:border-0">
+              <td className="py-2 pr-4 font-medium">{j.report_key}</td>
+              <td className="py-2 pr-4 uppercase text-muted-foreground">{j.format}</td>
+              <td className="py-2 pr-4">
+                <Badge
+                  tone={
+                    j.status === 'completed'
+                      ? 'success'
+                      : j.status === 'failed'
+                        ? 'danger'
+                        : 'neutral'
+                  }
+                >
+                  {j.status}
+                </Badge>
+              </td>
+              <td className="py-2 pr-4 text-muted-foreground">
+                {new Date(j.created_at).toLocaleString()}
+              </td>
+              <td className="py-2 pr-4">
+                {j.file_url ? (
+                  <a
+                    className="text-accent underline-offset-2 hover:underline"
+                    href={j.file_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {j.file_name ?? 'Download'}
+                  </a>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -191,10 +294,7 @@ export default function ExportsPage() {
           <CardTitle>Export history</CardTitle>
         </CardHeader>
         <CardContent>
-          <EmptyState
-            title="History coming soon"
-            description="A searchable log of every generated export will appear here. For now, all exports are recorded in the system audit log."
-          />
+          <ExportHistory />
         </CardContent>
       </Card>
 
