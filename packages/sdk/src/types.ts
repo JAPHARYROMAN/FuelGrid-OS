@@ -422,6 +422,39 @@ export interface RequestStockAdjustmentRequest {
   classification: StockAdjustmentClassification;
 }
 
+export type OpeningStockRequestStatus = 'draft' | 'approved' | 'rejected';
+
+/**
+ * An opening-stock request is a controlled draft of a tank's opening balance
+ * that moves draft -> approved(locked) / rejected (Feature 1.6). Approval posts
+ * the genesis 'opening' movement to the tank ledger and LOCKS the request,
+ * linking the movement and snapshotting the balance. litres + balance_after are
+ * exact decimal STRINGS (numeric(14,3) -> text).
+ */
+export interface OpeningStockRequest {
+  id: string;
+  tank_id: string;
+  litres: string;
+  notes?: string;
+  status: OpeningStockRequestStatus;
+  movement_id?: string;
+  balance_after?: string;
+  requested_by: string;
+  approved_by?: string;
+  rejected_by?: string;
+  decision_note?: string;
+  requested_at: string;
+  decided_at?: string;
+}
+
+export interface RequestOpeningStockRequest {
+  tank_id: string;
+  /** Non-negative exact-decimal litres; required when from_dip is false/omitted. */
+  litres?: string;
+  from_dip?: boolean;
+  notes?: string;
+}
+
 export type SetupStepStatus = 'pending' | 'completed' | 'skipped';
 
 export interface SetupBlocker {
@@ -1923,7 +1956,10 @@ export interface CustomerPayment {
 export interface ExpenseCategory {
   id: string;
   name: string;
+  /** GL account this category maps spend to (accounting mapping). */
   account_key: string;
+  /** Optional money amount at/above which an expense warrants approval; null when unset. */
+  approval_threshold?: string | null;
   status: string;
 }
 

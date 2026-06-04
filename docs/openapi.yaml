@@ -2271,11 +2271,38 @@ paths:
     post:
       tags: [Expenses]
       summary: Create an expense category
+      description: Name, accounting mapping (account_key), and optional approval_threshold. Gated by expense.manage.
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
       responses:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A category with this name already exists }
+  /api/v1/expense-categories/{id}:
+    patch:
+      tags: [Expenses]
+      summary: Update an expense category
+      description: Edit name, accounting mapping (account_key), and approval threshold. Gated by expense.manage.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A category with this name already exists }
+  /api/v1/expense-categories/{id}/status:
+    post:
+      tags: [Expenses]
+      summary: Activate or archive (deactivate) an expense category
+      description: Sets status to active or archived. Gated by expense.manage.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/expenses:
     get:
       tags: [Expenses]
@@ -2886,6 +2913,79 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Opening balance already exists }
         '422': { description: No dip reading exists when from_dip is true }
+  /api/v1/opening-stock-requests:
+    get:
+      tags: [Inventory]
+      summary: List opening-stock requests
+      description: >-
+        The opening-stock draft -> approve(lock) / reject lifecycle queue
+        (Feature 1.6). Optionally filter by status and/or tank_id. Gated by
+        stock.adjust.
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [draft, approved, rejected] } }
+        - { in: query, name: tank_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OpeningStockRequestList' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Inventory]
+      summary: Enter a draft opening stock
+      description: >-
+        Record a tank's opening litres (non-negative decimal, or from_dip) in
+        'draft' state for review. Gated by the station-scoped stock.adjust at the
+        tank's station.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RequestOpeningStockRequest' } } } }
+      responses:
+        '201': { description: Drafted, content: { application/json: { schema: { $ref: '#/components/schemas/OpeningStockRequest' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A live or locked opening stock already exists for this tank }
+        '422': { description: No dip reading exists when from_dip is true }
+  /api/v1/opening-stock-requests/{id}:
+    get:
+      tags: [Inventory]
+      summary: Get an opening-stock request
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OpeningStockRequest' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/opening-stock-requests/{id}/approve:
+    post:
+      tags: [Inventory]
+      summary: Approve (lock) a draft opening stock
+      description: >-
+        Posts the genesis 'opening' movement to the tank's ledger and LOCKS the
+        request. Separation of duties: the requester cannot approve their own
+        opening stock (403). Idempotent and immutable — only a 'draft' approves;
+        a locked one never re-approves (409). Gated by the station-scoped
+        stock.approve_adjustment at the tank's station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustmentDecision' } } } }
+      responses:
+        '200': { description: Approved and locked, content: { application/json: { schema: { $ref: '#/components/schemas/OpeningStockRequest' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition, or opening already exists }
+  /api/v1/opening-stock-requests/{id}/reject:
+    post:
+      tags: [Inventory]
+      summary: Reject a draft opening stock
+      description: >-
+        Moves a draft -> rejected, recording a reason. The requester cannot
+        decide their own request (403). A rejected request frees the tank for a
+        corrected figure. Gated by stock.approve_adjustment at the tank's station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/StockAdjustmentDecision' } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/OpeningStockRequest' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
   /api/v1/stock-adjustments:
     get:
       tags: [Inventory]
@@ -5479,6 +5579,41 @@ components:
       type: object
       properties:
         note: { type: string, description: Optional decision note }
+
+    OpeningStockRequest:
+      type: object
+      description: >-
+        An opening-stock lifecycle row (Feature 1.6): draft -> approve(lock) /
+        reject. On approve the movement_id + balance_after are set (the genesis
+        opening movement) and the request is locked.
+      properties:
+        id:            { type: string, format: uuid }
+        tank_id:       { type: string, format: uuid }
+        litres:        { type: string, description: Non-negative exact-decimal opening litres (numeric -> text) }
+        notes:         { type: string }
+        status:        { type: string, enum: [draft, approved, rejected] }
+        movement_id:   { type: string, format: uuid, description: The genesis opening movement produced at approval }
+        balance_after: { type: string, description: Book stock after the opening posts (set at approval; numeric -> text) }
+        requested_by:  { type: string, format: uuid }
+        approved_by:   { type: string, format: uuid }
+        rejected_by:   { type: string, format: uuid }
+        decision_note: { type: string }
+        requested_at:  { type: string, format: date-time }
+        decided_at:    { type: string, format: date-time }
+    OpeningStockRequestList:
+      allOf:
+        - $ref: '#/components/schemas/Paged'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/OpeningStockRequest' } }
+    RequestOpeningStockRequest:
+      type: object
+      required: [tank_id]
+      properties:
+        tank_id:  { type: string, format: uuid }
+        litres:   { type: string, description: Non-negative exact-decimal litres; required unless from_dip is true }
+        from_dip: { type: boolean, default: false }
+        notes:    { type: string }
 
     SaleVoid:
       type: object

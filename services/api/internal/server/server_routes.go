@@ -329,6 +329,22 @@ func (s *Server) registerInventoryRoutes(r chi.Router) {
 	// reuse the station-scoped stock.adjust, authorized in-handler.
 	r.With(s.requirePermissionHeld("stock.adjust")).Post("/tanks/{id}/opening-balance", s.handleSetTankOpeningBalance)
 
+	// Opening stock approval/lock (Feature 1.6): the draft -> approve(lock) /
+	// reject lifecycle for a tank's opening stock. Entering a draft is gated by
+	// the station-scoped stock.adjust; approve/reject by stock.approve_adjustment
+	// — both authorized in-handler against the request's tank station (separation
+	// of duties enforced in the repo). Approval posts the genesis 'opening'
+	// movement and locks the request. The list/get ride stock.adjust.
+	r.With(s.requirePermissionHeld("stock.adjust")).Group(func(r chi.Router) {
+		r.Get("/opening-stock-requests", s.handleListOpeningStockRequests)
+		r.Post("/opening-stock-requests", s.handleRequestOpeningStock)
+		r.Get("/opening-stock-requests/{id}", s.handleGetOpeningStockRequest)
+	})
+	r.With(s.requirePermissionHeld("stock.approve_adjustment")).Group(func(r chi.Router) {
+		r.Post("/opening-stock-requests/{id}/approve", s.handleApproveOpeningStock)
+		r.Post("/opening-stock-requests/{id}/reject", s.handleRejectOpeningStock)
+	})
+
 	// Stock adjustments (Feature 5.4): the request -> approve -> post
 	// lifecycle for manual book-stock corrections. Request is gated by the
 	// station-scoped stock.adjust; approve/reject/post by
@@ -824,6 +840,8 @@ func (s *Server) registerFinanceRoutes(r chi.Router) {
 	})
 	r.With(s.requirePermission("expense.manage", nil)).Group(func(r chi.Router) {
 		r.Post("/expense-categories", s.handleCreateExpenseCategory)
+		r.Patch("/expense-categories/{id}", s.handleUpdateExpenseCategory)
+		r.Post("/expense-categories/{id}/status", s.handleSetExpenseCategoryStatus)
 		r.Post("/expenses", s.handleCreateExpense)
 		r.Post("/expenses/{id}/submit", s.handleSubmitExpense)
 	})

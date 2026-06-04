@@ -132,6 +132,8 @@ import type {
   StockMovement,
   StockAdjustment,
   RequestStockAdjustmentRequest,
+  OpeningStockRequest,
+  RequestOpeningStockRequest,
   Supplier,
   SupplierInvoice,
   Tank,
@@ -1131,6 +1133,64 @@ export class Client {
     return this.request<StockAdjustment>(
       `/api/v1/stock-adjustments/${encodeURIComponent(id)}/post`,
       { method: 'POST', signal },
+    );
+  }
+
+  // ----------- Opening stock approval/lock (draft -> approve(lock) / reject) -----------
+
+  listOpeningStockRequests(
+    opts: { status?: string; tank_id?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<OpeningStockRequest>> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.tank_id) params.set('tank_id', opts.tank_id);
+    if (opts.limit != null) params.set('limit', String(opts.limit));
+    if (opts.offset != null) params.set('offset', String(opts.offset));
+    const qs = params.toString();
+    return this.request<Paginated<OpeningStockRequest>>(
+      `/api/v1/opening-stock-requests${qs ? `?${qs}` : ''}`,
+      { signal },
+    );
+  }
+
+  getOpeningStockRequest(id: string, signal?: AbortSignal): Promise<OpeningStockRequest> {
+    return this.request<OpeningStockRequest>(
+      `/api/v1/opening-stock-requests/${encodeURIComponent(id)}`,
+      { signal },
+    );
+  }
+
+  requestOpeningStock(
+    req: RequestOpeningStockRequest,
+    signal?: AbortSignal,
+  ): Promise<OpeningStockRequest> {
+    return this.request<OpeningStockRequest>('/api/v1/opening-stock-requests', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  approveOpeningStock(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<OpeningStockRequest> {
+    return this.request<OpeningStockRequest>(
+      `/api/v1/opening-stock-requests/${encodeURIComponent(id)}/approve`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  rejectOpeningStock(
+    id: string,
+    req: { note?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<OpeningStockRequest> {
+    return this.request<OpeningStockRequest>(
+      `/api/v1/opening-stock-requests/${encodeURIComponent(id)}/reject`,
+      { method: 'POST', body: req, signal },
     );
   }
 
@@ -3409,7 +3469,7 @@ export class Client {
   }
 
   createExpenseCategory(
-    req: { name: string; account_key?: string },
+    req: { name: string; account_key?: string; approval_threshold?: string },
     signal?: AbortSignal,
   ): Promise<ExpenseCategory> {
     return this.request<ExpenseCategory>('/api/v1/expense-categories', {
@@ -3417,6 +3477,29 @@ export class Client {
       body: req,
       signal,
     });
+  }
+
+  updateExpenseCategory(
+    id: string,
+    req: { name: string; account_key?: string; approval_threshold?: string },
+    signal?: AbortSignal,
+  ): Promise<ExpenseCategory> {
+    return this.request<ExpenseCategory>(`/api/v1/expense-categories/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  setExpenseCategoryStatus(
+    id: string,
+    status: 'active' | 'archived',
+    signal?: AbortSignal,
+  ): Promise<ExpenseCategory> {
+    return this.request<ExpenseCategory>(
+      `/api/v1/expense-categories/${encodeURIComponent(id)}/status`,
+      { method: 'POST', body: { status }, signal },
+    );
   }
 
   listExpenses(opts: { status?: string } = {}, signal?: AbortSignal): Promise<Paginated<Expense>> {

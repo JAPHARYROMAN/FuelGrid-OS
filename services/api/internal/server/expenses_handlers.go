@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -58,6 +59,31 @@ func paymentModeAccount(mode string) string {
 
 // ---- Expense categories ----
 
+func toCategoryMap(c *expenses.Category) map[string]any {
+	return map[string]any{
+		"id": c.ID, "name": c.Name, "account_key": c.AccountKey,
+		"approval_threshold": c.ApprovalThreshold, "status": c.Status,
+	}
+}
+
+// parseCategoryThreshold validates an optional approval-threshold money string:
+// nil/empty clears it, otherwise it must be a non-negative decimal. Returns the
+// trimmed pointer (nil when cleared) and ok=false (after writing) on a bad value.
+func parseCategoryThreshold(w http.ResponseWriter, raw *string) (*string, bool) {
+	if raw == nil {
+		return nil, true
+	}
+	v := strings.TrimSpace(*raw)
+	if v == "" {
+		return nil, true
+	}
+	if n, ok := parseDecimal(v); !ok || n < 0 {
+		writeError(w, http.StatusBadRequest, "approval_threshold must be a non-negative decimal")
+		return nil, false
+	}
+	return &v, true
+}
+
 func (s *Server) handleCreateExpenseCategory(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {
@@ -65,19 +91,26 @@ func (s *Server) handleCreateExpenseCategory(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req struct {
-		Name       string `json:"name"`
-		AccountKey string `json:"account_key,omitempty"`
+		Name              string  `json:"name"`
+		AccountKey        string  `json:"account_key,omitempty"`
+		ApprovalThreshold *string `json:"approval_threshold,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	threshold, ok := parseCategoryThreshold(w, req.ApprovalThreshold)
+	if !ok {
+		return
+	}
 	var cat *expenses.Category
-	ok := s.txAudit(w, r, audit.TxRecord{
+	ok = s.txAudit(w, r, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "expense_category.created", EventType: "ExpenseCategoryCreated", EntityType: "expense_category",
 	}, func(tx pgx.Tx) (string, error) {
-		c, err := s.expenses.CreateCategory(r.Context(), tx, actor.TenantID, req.Name, req.AccountKey)
+		c, err := s.expenses.CreateCategory(r.Context(), tx, actor.TenantID, expenses.CategoryInput{
+			Name: strings.TrimSpace(req.Name), AccountKey: strings.TrimSpace(req.AccountKey), ApprovalThreshold: threshold,
+		})
 		if err != nil {
 			if isUniqueViolation(err) {
 				writeError(w, http.StatusConflict, "a category with this name already exists")
@@ -92,9 +125,7 @@ func (s *Server) handleCreateExpenseCategory(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"id": cat.ID, "name": cat.Name, "account_key": cat.AccountKey, "status": cat.Status,
-	})
+	writeJSON(w, http.StatusCreated, toCategoryMap(cat))
 }
 
 func (s *Server) handleListExpenseCategories(w http.ResponseWriter, r *http.Request) {
@@ -118,11 +149,111 @@ func (s *Server) handleListExpenseCategories(w http.ResponseWriter, r *http.Requ
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for i := range rows {
-		out = append(out, map[string]any{
-			"id": rows[i].ID, "name": rows[i].Name, "account_key": rows[i].AccountKey, "status": rows[i].Status,
-		})
+		out = append(out, toCategoryMap(&rows[i]))
 	}
 	writePagedMore(w, http.StatusOK, out, len(out), limit, offset, hasMore)
+}
+
+// handleUpdateExpenseCategory edits a category's name, accounting mapping, and
+// approval threshold. Gated tenant-wide by expense.manage at the route.
+func (s *Server) handleUpdateExpenseCategory(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Name              string  `json:"name"`
+		AccountKey        string  `json:"account_key,omitempty"`
+		ApprovalThreshold *string `json:"approval_threshold,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	threshold, ok := parseCategoryThreshold(w, req.ApprovalThreshold)
+	if !ok {
+		return
+	}
+	var cat *expenses.Category
+	ok = s.txAudit(w, r, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "expense_category.updated", EventType: "ExpenseCategoryUpdated", EntityType: "expense_category", EntityID: id.String(),
+	}, func(tx pgx.Tx) (string, error) {
+		c, err := s.expenses.UpdateCategory(r.Context(), tx, actor.TenantID, id, expenses.CategoryInput{
+			Name: strings.TrimSpace(req.Name), AccountKey: strings.TrimSpace(req.AccountKey), ApprovalThreshold: threshold,
+		})
+		if errors.Is(err, expenses.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "category not found")
+			return "", err
+		}
+		if err != nil {
+			if isUniqueViolation(err) {
+				writeError(w, http.StatusConflict, "a category with this name already exists")
+				return "", err
+			}
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return "", err
+		}
+		cat = c
+		return id.String(), nil
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, toCategoryMap(cat))
+}
+
+// handleSetExpenseCategoryStatus activates or archives (deactivates) a category.
+// Gated tenant-wide by expense.manage at the route.
+func (s *Server) handleSetExpenseCategoryStatus(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Status != "active" && req.Status != "archived" {
+		writeError(w, http.StatusBadRequest, "status must be active or archived")
+		return
+	}
+	var cat *expenses.Category
+	ok := s.txAudit(w, r, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "expense_category." + req.Status, EventType: "ExpenseCategoryStatusChanged", EntityType: "expense_category", EntityID: id.String(),
+	}, func(tx pgx.Tx) (string, error) {
+		c, err := s.expenses.SetCategoryStatus(r.Context(), tx, actor.TenantID, id, req.Status)
+		if errors.Is(err, expenses.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "category not found")
+			return "", err
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return "", err
+		}
+		cat = c
+		return id.String(), nil
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, toCategoryMap(cat))
 }
 
 // ---- Expenses ----
