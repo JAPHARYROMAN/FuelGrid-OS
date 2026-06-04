@@ -3414,6 +3414,23 @@ paths:
         '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/customer-payments/{id}/reverse:
+    post:
+      tags: [Receivables]
+      summary: Reverse (void) a posted customer payment
+      description: >-
+        Restores the affected invoices' outstanding balances and posts a
+        balanced reversal of the payment's journal entry. Append-only — the
+        original payment and its allocations are preserved; the payment status
+        becomes `voided`. Reversing a payment that is not posted is refused.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Reversed, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Payment is not in a reversible state }
   /api/v1/customer-statements/{id}/issue:
     post:
       tags: [Receivables]

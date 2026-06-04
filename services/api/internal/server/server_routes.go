@@ -737,8 +737,10 @@ func (s *Server) registerFinanceRoutes(r chi.Router) {
 		Post("/customer-invoices", s.handleCreateCustomerInvoice)
 	r.With(s.requirePermission("customer_invoice.issue", nil)).
 		Post("/customer-invoices/{id}/issue", s.handleIssueCustomerInvoice)
-	r.With(s.requirePermission("customer_payment.manage", nil)).
-		Post("/customer-payments", s.handlePostCustomerPayment)
+	r.With(s.requirePermission("customer_payment.manage", nil)).Group(func(r chi.Router) {
+		r.Post("/customer-payments", s.handlePostCustomerPayment)
+		r.Post("/customer-payments/{id}/reverse", s.handleReverseCustomerPayment)
+	})
 
 	// Expenses & petty cash (Phase 7, Stages 11-12).
 	r.With(s.requirePermissionHeld("finance.read")).Group(func(r chi.Router) {
