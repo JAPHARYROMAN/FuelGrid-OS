@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { SdkError, type OperationsShift } from '@fuelgrid/sdk';
@@ -331,8 +332,20 @@ function ShiftCard({
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-        <CardTitle className="text-base">{shift.name}</CardTitle>
-        <Badge tone={shiftTone(shift.status)}>{shift.status}</Badge>
+        <CardTitle className="text-base">
+          <Link
+            href={`/operations/shifts/${shift.id}`}
+            className="hover:text-accent hover:underline"
+          >
+            {shift.name}
+          </Link>
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <Button asChild variant="ghost" size="sm">
+            <Link href={`/operations/shifts/${shift.id}`}>Timeline</Link>
+          </Button>
+          <Badge tone={shiftTone(shift.status)}>{shift.status}</Badge>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
         {/* Attendants */}
