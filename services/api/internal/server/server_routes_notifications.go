@@ -21,6 +21,15 @@ func (s *Server) registerNotificationRoutes(r chi.Router) {
 	r.Get("/notifications/unread-count", s.handleNotificationUnreadCount)
 	r.Post("/notifications/{id}/read", s.handleMarkNotificationRead)
 	r.Post("/notifications/read-all", s.handleMarkAllNotificationsRead)
+
+	// Notification preferences (Feature 11.1): the same self-service trust model
+	// as the feed — a user reads and writes only their OWN per-category/channel
+	// delivery toggles. No extra permission gate beyond the session. Upserts
+	// audit notification.preference_changed via the existing writer.
+	if s.notifPrefs != nil {
+		r.Get("/notifications/preferences", s.handleListNotificationPreferences)
+		r.Put("/notifications/preferences", s.handleUpsertNotificationPreference)
+	}
 }
 
 // notificationDTO is the wire shape for one notification.

@@ -2,10 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { ShieldAlert } from 'lucide-react';
+import { ExternalLink, Lightbulb, ShieldAlert } from 'lucide-react';
 
-import { SdkError, type RiskAlert } from '@fuelgrid/sdk';
+import { SdkError, type Insight, type RiskAlert } from '@fuelgrid/sdk';
 import {
+  Badge,
   Button,
   Card,
   CardContent,
@@ -33,6 +34,17 @@ function alertTitle(a: RiskAlert): string {
   return a.alert_type.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+/** Humanize a snake/kebab slug for display. */
+function humanize(slug: string): string {
+  return slug.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function insightTone(sev: string): 'danger' | 'warning' | 'info' {
+  if (sev === 'critical' || sev === 'high') return 'danger';
+  if (sev === 'medium') return 'warning';
+  return 'info';
+}
+
 export default function RiskPage() {
   const qc = useQueryClient();
   const overview = useQuery({
@@ -43,12 +55,17 @@ export default function RiskPage() {
     queryKey: ['risk-alerts', 'open'],
     queryFn: ({ signal }) => api.listRiskAlerts({ status: 'open' }, signal),
   });
+  const insights = useQuery({
+    queryKey: ['insights', 'open'],
+    queryFn: ({ signal }) => api.listInsights({ status: 'open' }, signal),
+  });
   const detect = useMutation({
     mutationFn: () => api.runRiskDetection(),
     onSuccess: async () => {
       await api.recomputeRiskScores();
       qc.invalidateQueries({ queryKey: ['risk-overview'] });
       qc.invalidateQueries({ queryKey: ['risk-alerts', 'open'] });
+      qc.invalidateQueries({ queryKey: ['insights', 'open'] });
     },
   });
   const resolve = useMutation({
@@ -56,6 +73,7 @@ export default function RiskPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['risk-overview'] });
       qc.invalidateQueries({ queryKey: ['risk-alerts', 'open'] });
+      qc.invalidateQueries({ queryKey: ['insights', 'open'] });
     },
   });
 
@@ -114,6 +132,81 @@ export default function RiskPage() {
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Insights</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm">
+          {insights.isPending ? (
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: 2 }).map((_, i) => (
+                <Skeleton key={i} className="h-12 rounded-lg" />
+              ))}
+            </div>
+          ) : insights.isError ? (
+            <ErrorState
+              title={
+                insights.error instanceof SdkError && insights.error.status === 403
+                  ? 'No insights access'
+                  : "Couldn't load insights"
+              }
+              description={String((insights.error as Error).message)}
+              onRetry={
+                insights.error instanceof SdkError && insights.error.status === 403
+                  ? undefined
+                  : () => insights.refetch()
+              }
+            />
+          ) : (insights.data?.items?.length ?? 0) === 0 ? (
+            <EmptyState
+              title="No insights"
+              description="Deterministic, rule-based insights appear here as detection runs."
+              icon={<Lightbulb />}
+            />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {insights.data!.items.map((ins: Insight) => (
+                <div
+                  key={ins.id}
+                  className="flex flex-col gap-2 rounded-lg border border-border bg-card/40 p-3"
+                >
+                  <div className="flex items-center gap-2">
+                    <Badge tone={insightTone(ins.severity)}>{ins.severity}</Badge>
+                    <span className="font-medium text-foreground">{humanize(ins.type)}</span>
+                    {ins.rule_code ? (
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {ins.rule_code}
+                      </span>
+                    ) : null}
+                  </div>
+                  {ins.detail ? <p className="text-muted-foreground">{ins.detail}</p> : null}
+                  {ins.recommended_action ? (
+                    <p className="text-xs text-muted-foreground">
+                      Recommended: {ins.recommended_action}
+                    </p>
+                  ) : null}
+                  {ins.source ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-muted-foreground">
+                        Source: {humanize(ins.source.kind)}
+                      </span>
+                      {ins.source.href ? (
+                        <Button asChild variant="ghost" size="sm">
+                          <a href={ins.source.href}>
+                            <ExternalLink className="size-3.5" />
+                            View source
+                          </a>
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

@@ -134,6 +134,7 @@ type Server struct {
 	revenue        *revenue.Repo
 	risk           *risk.Repo
 	notifications  *notifications.Repo
+	notifPrefs     *notifications.PreferenceRepo
 	jobRuns        *scheduler.ReadRepo
 	setup          *setupdomain.Repo
 	workforce      *workforce.Repo
@@ -234,6 +235,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
 		s.notifications = notifications.New(deps.DB)
+		s.notifPrefs = notifications.NewPreferenceRepo(deps.DB)
 		// job_runs is an owner-only SYSTEM table (no RLS); the scheduler read
 		// repo always runs on the owner pool (deps.DB), never appDB.
 		s.jobRuns = scheduler.NewReadRepo(deps.DB)
