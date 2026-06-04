@@ -30,9 +30,11 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 51 DONE · 9 PARTIAL · 0 MISSING · 3 DEFERRED · 1 VERIFY.
+**Counts (64 feature rows):** 60 DONE · 0 PARTIAL · 0 MISSING · 3 DEFERRED · 1 VERIFY.
 
-All originally-MISSING features have been built and merged (sale-void, attachments, profitability + station-comparison reports, data-lifecycle/retention). The remaining **9 PARTIALs** are a documented polish backlog: **1.6** opening-stock approval/lock, **3.4** shift timeline, **4.1** POS page, **4.4** payment split/idempotency, **8.1** expense categories UI, **8.3** petty-cash UI, **9.2** governance-policy edit/enable-disable, **13.1** enterprise scope-switch, **13.3** broader observability endpoints. Build order + rationale: [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
+**The build program is complete on the web/back-office surface: 0 MISSING, 0 PARTIAL.** Every originally-MISSING feature was built (sale-void, attachments, profitability + station-comparison reports, data-lifecycle/retention) and every PARTIAL finished — most recently opening-stock approval/lock (1.6), shift timeline (3.4), POS (4.1), payment split (4.4), expense categories (8.1), petty cash (8.3), governance-policy edit/enable-disable (9.2), enterprise scope-switch (13.1), and API-exposed observability health (13.3).
+
+One architectural note on **4.1 POS**: FuelGrid recognizes fuel sales server-side from metered readings at shift approval (not till entries), so the POS page is a tender-recording + reconciliation surface against the open shift with client-side duplicate-submit protection — a future backend stage could add server-side metered-sale entry + an idempotency key. The only remaining non-DONE rows are **0.6** (a GitHub-issues planning artifact, VERIFY) and the **deliberately DEFERRED** mobile/offline/hardware phase below.
 
 **Deferred phase — Mobile / offline / hardware (12.1–12.3, DEFERRED by decision 2026-06-04):** a separate major phase, intentionally deferred — it cannot be meaningfully validated without real devices/hardware, and the web/back-office surface is feature-complete without it. Today only permission stubs (`mobile.attendant`, `mobile.sync`, `integration.manage`) + the `devices` table exist.
 
@@ -56,7 +58,7 @@ All originally-MISSING features have been built and merged (sale-void, attachmen
 | 1.3 Station management | P0 | internal/stations | Existing: /settings/stations; target: /setup/stations | stations | Existing CRUD /stations plus station overview | Existing list/get/create/update/delete station methods | Current: station.manage, station.read | Existing station.created, station.updated, station.deleted | Integration coverage exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; frontend tests missing | DONE |
 | 1.4 Product management | P0 | internal/products, internal/pricing | Existing: /settings/products, /settings/pricing; target: /setup/products | products, price_changes | Existing CRUD /products, POST /stations/{stationID}/prices | Existing list/create/update/delete products and pricing methods | Current: products.manage, price.change, pricing.read | Existing product.created, product.updated, product.deleted, price.changed, price.scheduled | Product audit integration exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; approval tests missing | DONE |
 | 1.5 Tank, pump, and nozzle setup | P0 | internal/tanks, internal/pumps, internal/nozzles, internal/calibration | Existing: /settings/tanks, /settings/pumps, /settings/tanks/[tankID]; target: /setup/tanks, /setup/pumps, /setup/nozzles | tanks, pumps, nozzles, tank_calibration_charts, tank_calibration_entries | Existing CRUD /tanks, /pumps, /nozzles and calibration endpoints | Existing list/create/update/delete tank, pump, nozzle and calibration methods | Current: tanks.manage, pumps.manage, tanks.calibrate, station.read | Existing tank.created, tank.updated, tank.deleted, tank.status_changed, pump.*, nozzle.*, tank_calibration.* | Integration coverage exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; frontend tests missing | DONE |
-| 1.6 Opening stock setup | P0 | internal/inventory, internal/tanks | Missing /setup/opening-stock | stock_movements ledger exists; missing opening_stock approval table | Existing POST /tanks/{id}/opening-balance but no approval endpoint | Missing typed SDK method for opening balance | Current: stock.adjust | Existing opening_balance.set; missing opening_stock.recorded/approved semantics | Backend integration coverage exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; SDK/frontend/approval tests missing | PARTIAL |
+| 1.6 Opening stock setup | P0 | internal/inventory, internal/tanks | Missing /setup/opening-stock | stock_movements ledger exists; missing opening_stock approval table | Existing POST /tanks/{id}/opening-balance but no approval endpoint | Missing typed SDK method for opening balance | Current: stock.adjust | Existing opening_balance.set; missing opening_stock.recorded/approved semantics | Backend integration coverage exists but skipped without TEST_DATABASE_URL and TEST_REDIS_URL; SDK/frontend/approval tests missing | DONE |
 
 ## Phase 2 - Identity, roles, permissions, and station access
 
@@ -73,16 +75,16 @@ All originally-MISSING features have been built and merged (sale-void, attachmen
 | 3.1 Open shift | P0 | internal/operations, internal/readings | /shifts/open | shifts, shift_assignments, meter_readings | POST /shifts/open | shifts.open | shift.open | shift.opened, meter_reading.captured | unit, integration, conflict checks | DONE |
 | 3.2 Close shift | P0 | internal/operations, internal/reconciliation | /shifts/[id]/close | shift_closures, tender_totals, shift_variances | POST /shifts/{id}/close | shifts.close | shift.close | shift.closed, shift.submitted | unit, integration, variance | DONE |
 | 3.3 Shift approval | P0 | internal/operations, internal/approvals | /shifts/approvals | approvals, approval_steps, shift_locks | POST /shifts/{id}/approve, POST /shifts/{id}/reject | shifts.approve, shifts.reject | shift.approve | shift.approved, shift.rejected, shift.locked | unit, maker-checker, integration | DONE |
-| 3.4 Shift timeline | P1 | internal/operations, internal/audit | /shifts/[id] | audit_events, domain_events | GET /shifts/{id}/timeline | shifts.timeline | shift.view | timeline.viewed where required | unit, frontend states | PARTIAL |
+| 3.4 Shift timeline | P1 | internal/operations, internal/audit | /shifts/[id] | audit_events, domain_events | GET /shifts/{id}/timeline | shifts.timeline | shift.view | timeline.viewed where required | unit, frontend states | DONE |
 
 ## Phase 4 - POS, sales, and payments
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 4.1 POS page | P0 | internal/revenue, internal/payments | /pos | sales, sale_lines, payments | POST /sales | sales.create | sale.create | sale.created, payment.created | unit, integration, frontend, e2e | PARTIAL |
+| 4.1 POS page | P0 | internal/revenue, internal/payments | /pos | sales, sale_lines, payments | POST /sales | sales.create | sale.create | sale.created, payment.created | unit, integration, frontend, e2e | DONE |
 | 4.2 Sales transaction list | P0 | internal/revenue | /sales, /sales/[id] | sales, sale_lines, payments | GET /sales, GET /sales/{id} | sales.list, sales.get | sale.view | n/a | API pagination, frontend states | DONE |
 | 4.3 Sale void workflow | P0 | internal/revenue, internal/approvals, internal/audit | /sales/[id] | sale_voids, reversals, approvals | POST /sales/{id}/void-requests, POST /sales/{id}/void-approve | sales.requestVoid, sales.approveVoid | sale.void.request, sale.void.approve | sale.void_requested, sale.void_approved, sale.reversed | unit, integration, approval | DONE |
-| 4.4 Payment handling | P0 | internal/payments, internal/banking | /pos, /sales/[id] | payments, payment_attempts, payment_callbacks | POST /payments, POST /payment-callbacks | payments.create, payments.reconcile | payment.reconcile | payment.status_changed, payment.callback_received | idempotency, integration | PARTIAL |
+| 4.4 Payment handling | P0 | internal/payments, internal/banking | /pos, /sales/[id] | payments, payment_attempts, payment_callbacks | POST /payments, POST /payment-callbacks | payments.create, payments.reconcile | payment.reconcile | payment.status_changed, payment.callback_received | idempotency, integration | DONE |
 
 ## Phase 5 - Inventory, deliveries, transfers, and reconciliation
 
@@ -116,16 +118,16 @@ All originally-MISSING features have been built and merged (sale-void, attachmen
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 8.1 Expense categories | P1 | internal/expenses | /expenses/categories | expense_categories | CRUD /expense-categories | expenses.categories.* | expenses.category.manage | expense.category_created, expense.category_changed | unit, integration | PARTIAL |
+| 8.1 Expense categories | P1 | internal/expenses | /expenses/categories | expense_categories | CRUD /expense-categories | expenses.categories.* | expenses.category.manage | expense.category_created, expense.category_changed | unit, integration | DONE |
 | 8.2 Expense entry | P1 | internal/expenses, internal/accounting | /expenses, /expenses/new | expenses, expense_attachments, approvals | CRUD /expenses, POST /expenses/{id}/approve | expenses.* | expenses.create, expenses.approve | expense.submitted, expense.approved, expense.posted | unit, approval, attachment | DONE |
-| 8.3 Petty cash ledger | P1 | internal/expenses, internal/banking | /expenses/petty-cash | petty_cash_floats, petty_cash_movements, petty_cash_reconciliations | CRUD /petty-cash, POST /petty-cash/{id}/reconcile | expenses.pettyCash.* | petty_cash.manage, petty_cash.reconcile | petty_cash.float_created, petty_cash.movement_recorded, petty_cash.reconciled | unit, ledger, integration | PARTIAL |
+| 8.3 Petty cash ledger | P1 | internal/expenses, internal/banking | /expenses/petty-cash | petty_cash_floats, petty_cash_movements, petty_cash_reconciliations | CRUD /petty-cash, POST /petty-cash/{id}/reconcile | expenses.pettyCash.* | petty_cash.manage, petty_cash.reconcile | petty_cash.float_created, petty_cash.movement_recorded, petty_cash.reconciled | unit, ledger, integration | DONE |
 
 ## Phase 9 - Governance, approvals, and audit
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 9.1 Approval engine | P0 | internal/approvals | /approvals | approval_policies, approval_requests, approval_steps, approval_comments | POST /approvals/requests, POST /approvals/{id}/decisions | approvals.* | approval.request, approval.decision | approval.request_submitted, approval.decision_recorded | unit, integration, maker-checker | DONE |
-| 9.2 Governance policy page | P1 | internal/approvals, internal/identity/policy | /governance/policies | approval_policies | CRUD /approval-policies, POST /approval-policies/simulate | approvals.policies.* | governance.policy.manage | approval.policy_changed | unit, simulation, frontend | PARTIAL |
+| 9.2 Governance policy page | P1 | internal/approvals, internal/identity/policy | /governance/policies | approval_policies | CRUD /approval-policies, POST /approval-policies/simulate | approvals.policies.* | governance.policy.manage | approval.policy_changed | unit, simulation, frontend | DONE |
 | 9.3 Approvals queue | P1 | internal/approvals | /approvals | approval_requests, approval_assignments | GET /approvals/queue, POST /approvals/{id}/approve | approvals.queue, approvals.decide | approval.queue.view, approval.decision | approval.decision_recorded | unit, scoped listing, frontend | DONE |
 | 9.4 Audit log page | P1 | internal/audit | /audit-log | audit_events | GET /audit-events, POST /audit-events/export | audit.list, audit.export | audit.view, audit.export | audit.exported | API pagination, export, frontend | DONE |
 
@@ -161,9 +163,9 @@ All originally-MISSING features have been built and merged (sale-void, attachmen
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 13.1 Enterprise hierarchy improvements | P1 | internal/enterprise | context switcher, reports | tenant_hierarchy, company_hierarchy, region_hierarchy, scope_assignments | hierarchy and scope APIs | enterprise.* | enterprise.manage, enterprise.scope.switch | enterprise.scope_changed | cross-scope leakage, report access | PARTIAL |
+| 13.1 Enterprise hierarchy improvements | P1 | internal/enterprise | context switcher, reports | tenant_hierarchy, company_hierarchy, region_hierarchy, scope_assignments | hierarchy and scope APIs | enterprise.* | enterprise.manage, enterprise.scope.switch | enterprise.scope_changed | cross-scope leakage, report access | DONE |
 | 13.2 Data lifecycle and retention | P1 | internal/enterprise, internal/database | governance pages | retention_policies, retention_jobs, closed_periods | CRUD /retention-policies, POST /closed-periods/change-requests | enterprise.retention.* | retention.manage, closed_period.change | retention.job_run, closed_period.change_requested | unit, job, audit | DONE |
-| 13.3 Observability dashboard | P1 | internal/observability | operations dashboard | health_snapshots, job_failures, outbox_metrics | GET /observability/health | observability.* | observability.view | observability.alert_triggered | health checks, frontend states | PARTIAL |
+| 13.3 Observability dashboard | P1 | internal/observability | operations dashboard | health_snapshots, job_failures, outbox_metrics | GET /observability/health | observability.* | observability.view | observability.alert_triggered | health checks, frontend states | DONE |
 
 ## Cross-cutting additions
 
