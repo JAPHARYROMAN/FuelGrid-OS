@@ -12,6 +12,7 @@ Reconciled label set (authoritative as of 2026-06-03 — aligns with [feature-re
 - `NEEDS QUALITY PASS`: Implemented but requires hardening (tests, edge cases, polish) before acceptance.
 - `DECISION REQUIRED`: Cannot proceed without a product or architecture decision.
 - `VERIFY`: Not yet reconciled against current code; status must be confirmed before work starts.
+- `DEFERRED`: Intentionally not built now — a deliberate future phase with documented rationale.
 
 Legacy labels (retained for historical rows; superseded by the reconciled set above):
 
@@ -29,13 +30,11 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 44 DONE · 16 PARTIAL · 3 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 44 DONE · 16 PARTIAL · 0 MISSING · 3 DEFERRED · 1 VERIFY.
 
-The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
+All originally-MISSING features have been built and merged (sale-void, attachments, profitability + station-comparison reports, data-lifecycle/retention). The remaining 16 PARTIALs are a documented **low-value polish backlog** (test coverage C.2/C.4/C.5, notification preferences 11.1, broader observability endpoints 13.3, and niche sub-features like 1.6/3.4/4.4/8.1/8.3/9.2-edit/10.5/10.7/11.3/13.1). Build order + rationale: [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
-- **12.1 Mobile attendant workflow (MISSING)** — Only `mobile.attendant` permission stub exists; no `apps/mobile`, no `mobile_sessions`/`offline_drafts` tables, no `/mobile/*` routes or SDK methods.
-- **12.2 Offline sync foundation (MISSING)** — Only `mobile.sync` permission stub; no `idempotency_keys`/`sync_batches`/`sync_conflicts` tables, no `/sync/*` routes or SDK methods.
-- **12.3 Hardware integration readiness (MISSING)** — Only `integration.manage` permission stub; `devices` table exists but no device-registry/webhook endpoints or signature verification.
+**Deferred phase — Mobile / offline / hardware (12.1–12.3, DEFERRED by decision 2026-06-04):** a separate major phase, intentionally deferred — it cannot be meaningfully validated without real devices/hardware, and the web/back-office surface is feature-complete without it. Today only permission stubs (`mobile.attendant`, `mobile.sync`, `integration.manage`) + the `devices` table exist.
 
 ## Phase 0 - Planning and control
 
@@ -154,9 +153,9 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 12.1 Mobile attendant workflow | P1 | internal/operations, internal/readings | apps/mobile | mobile_sessions, offline_drafts | mobile API routes for shifts, readings, dips, deliveries | mobile.* | mobile.attendant | mobile.entry_synced | unit, integration, offline | MISSING |
-| 12.2 Offline sync foundation | P0 | internal/integrations, internal/events | apps/mobile | idempotency_keys, sync_batches, sync_conflicts | POST /sync/batches, GET /sync/conflicts | sync.* | mobile.sync | sync.conflict_detected, sync.batch_processed | idempotency, duplicate protection | MISSING |
-| 12.3 Hardware integration readiness | P1 | internal/integrations | /integrations, /devices | devices, integration_events, webhook_events | CRUD /devices, POST /webhooks/hardware | integrations.* | integration.manage | device.registered, integration.signature_rejected | signature, idempotency, retry | MISSING |
+| 12.1 Mobile attendant workflow | P1 | internal/operations, internal/readings | apps/mobile | mobile_sessions, offline_drafts | mobile API routes for shifts, readings, dips, deliveries | mobile.* | mobile.attendant | mobile.entry_synced | unit, integration, offline | DEFERRED |
+| 12.2 Offline sync foundation | P0 | internal/integrations, internal/events | apps/mobile | idempotency_keys, sync_batches, sync_conflicts | POST /sync/batches, GET /sync/conflicts | sync.* | mobile.sync | sync.conflict_detected, sync.batch_processed | idempotency, duplicate protection | DEFERRED |
+| 12.3 Hardware integration readiness | P1 | internal/integrations | /integrations, /devices | devices, integration_events, webhook_events | CRUD /devices, POST /webhooks/hardware | integrations.* | integration.manage | device.registered, integration.signature_rejected | signature, idempotency, retry | DEFERRED |
 
 ## Phase 13 - Enterprise readiness and scaling
 
