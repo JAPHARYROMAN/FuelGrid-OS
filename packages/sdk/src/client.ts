@@ -54,6 +54,10 @@ import type {
   MeterReadingList,
   MyShift,
   Notification,
+  NotificationPreferenceList,
+  UpsertNotificationPreferenceRequest,
+  NotificationPreference,
+  Insight,
   Nozzle,
   NozzleAssignment,
   OperatingDay,
@@ -4128,6 +4132,47 @@ export class Client {
       method: 'POST',
       signal,
     });
+  }
+
+  /**
+   * The caller's own notification delivery preferences plus the valid
+   * category/channel keys (Feature 11.1). Self-service — no permission gate.
+   */
+  listNotificationPreferences(signal?: AbortSignal): Promise<NotificationPreferenceList> {
+    return this.request<NotificationPreferenceList>('/api/v1/notifications/preferences', {
+      signal,
+    });
+  }
+
+  /** Create or update one notification preference toggle for the caller. */
+  upsertNotificationPreference(
+    req: UpsertNotificationPreferenceRequest,
+    signal?: AbortSignal,
+  ): Promise<NotificationPreference> {
+    return this.request<NotificationPreference>('/api/v1/notifications/preferences', {
+      method: 'PUT',
+      body: req,
+      signal,
+    });
+  }
+
+  // ----------- Insights (Feature 11.3) -----------
+
+  /**
+   * Persisted, deterministic insights (projected from risk alerts), each linked
+   * to the source record it was derived from. Read-only; gated by risk.read.
+   */
+  listInsights(
+    opts: { status?: string; type?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<Insight>> {
+    const qs = new URLSearchParams();
+    if (opts.status) qs.set('status', opts.status);
+    if (opts.type) qs.set('type', opts.type);
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    if (opts.offset) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<Insight>>(`/api/v1/insights${q ? `?${q}` : ''}`, { signal });
   }
 
   // ----------- Admin / system -----------

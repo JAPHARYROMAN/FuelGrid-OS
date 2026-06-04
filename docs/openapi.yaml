@@ -507,6 +507,68 @@ paths:
                   marked_read: { type: integer }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/v1/notifications/preferences:
+    get:
+      tags: [Notifications]
+      summary: List the caller's notification delivery preferences (self-service)
+      description: |
+        Returns the caller's own per-category/channel notification preferences
+        plus the valid category and channel keys. Self-service — scoped to the
+        caller's user and tenant, no permission gate beyond a session.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPreferenceList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [Notifications]
+      summary: Create or update one notification preference toggle (self-service)
+      description: |
+        Upserts a single (category, channel) preference for the caller. Audited
+        as notification.preference_changed. Quiet hours, when set, must be a
+        complete HH:MM (24h) pair.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpsertNotificationPreferenceRequest' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/NotificationPreference' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/insights:
+    get:
+      tags: [Risk]
+      summary: List persisted deterministic insights with source-record links
+      description: |
+        Persisted, deterministic insights projected from risk alerts (Feature
+        11.3), each linked to the immutable source record it was derived from
+        (subject_type + subject_id). Read-only; gated by risk.read. Same data
+        yields the same insight — the underlying alerts come from named SQL
+        evaluators over immutable facts.
+      parameters:
+        - in: query
+          name: status
+          required: false
+          schema: { type: string }
+          description: Filter to insights whose alert is in this status.
+        - in: query
+          name: type
+          required: false
+          schema: { type: string }
+          description: Filter to insights of this alert_type.
+        - in: query
+          name: limit
+          required: false
+          schema: { type: integer }
+        - in: query
+          name: offset
+          required: false
+          schema: { type: integer }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/InsightList' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/admin/jobs:
     get:
       tags: [Admin]
@@ -5579,6 +5641,64 @@ components:
       type: object
       properties:
         items:    { type: array, items: { $ref: '#/components/schemas/Notification' } }
+        count:    { type: integer }
+        limit:    { type: integer }
+        offset:   { type: integer }
+        has_more: { type: boolean }
+
+    NotificationPreference:
+      type: object
+      required: [category, channel, enabled, updated_at]
+      properties:
+        category:          { type: string, description: Notification category (revenue, shift, risk, incident, approval). }
+        channel:           { type: string, description: Delivery channel (in_app, email). }
+        enabled:           { type: boolean }
+        quiet_hours_start: { type: string, description: Local quiet-window start, HH:MM 24h. Absent when no quiet hours. }
+        quiet_hours_end:   { type: string, description: Local quiet-window end, HH:MM 24h. Absent when no quiet hours. }
+        updated_at:        { type: string, format: date-time }
+    NotificationPreferenceList:
+      type: object
+      required: [items, categories, channels]
+      properties:
+        items:      { type: array, items: { $ref: '#/components/schemas/NotificationPreference' } }
+        categories: { type: array, items: { type: string }, description: Valid category keys for rendering toggles. }
+        channels:   { type: array, items: { type: string }, description: Valid channel keys for rendering toggles. }
+    UpsertNotificationPreferenceRequest:
+      type: object
+      required: [category, channel, enabled]
+      properties:
+        category:          { type: string }
+        channel:           { type: string }
+        enabled:           { type: boolean }
+        quiet_hours_start: { type: string, nullable: true, description: HH:MM 24h, or null to clear. Must be paired with end. }
+        quiet_hours_end:   { type: string, nullable: true, description: HH:MM 24h, or null to clear. Must be paired with start. }
+
+    InsightSource:
+      type: object
+      required: [kind, id]
+      properties:
+        kind: { type: string, description: Source aggregate kind (tank, tank_reconciliation, attendant, po_line, station). }
+        id:   { type: string }
+        href: { type: string, description: In-app route to the source record, when one exists. }
+    Insight:
+      type: object
+      required: [id, type, severity, status, created_at]
+      properties:
+        id:                 { type: string, format: uuid }
+        rule_code:          { type: string, description: The deterministic evaluator that produced the insight. }
+        type:               { type: string, description: Insight/alert type slug. }
+        severity:           { type: string }
+        status:             { type: string }
+        detail:             { type: string }
+        amount:             { type: string, description: Decimal string (money/litres); never a float. }
+        recommended_action: { type: string }
+        station_id:         { type: string, format: uuid }
+        source:             { $ref: '#/components/schemas/InsightSource' }
+        created_at:         { type: string, format: date-time }
+    InsightList:
+      type: object
+      properties:
+        items:    { type: array, items: { $ref: '#/components/schemas/Insight' } }
         count:    { type: integer }
         limit:    { type: integer }
         offset:   { type: integer }

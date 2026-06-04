@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bell, CheckCheck, ExternalLink } from 'lucide-react';
+import { Bell, CheckCheck, ExternalLink, Settings } from 'lucide-react';
 
 import { SdkError, type Notification, type NotificationSeverity } from '@fuelgrid/sdk';
 import {
@@ -121,16 +121,24 @@ export default function NotificationsPage() {
         title="Notifications"
         description="Your in-app feed of operational events — revenue, shift closes, incidents, risk alerts and approvals. Open the linked record or mark items read."
         actions={
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            disabled={markAllRead.isPending || unreadOnPage === 0}
-            onClick={() => markAllRead.mutate()}
-          >
-            <CheckCheck className="size-4" />
-            {markAllRead.isPending ? 'Marking…' : 'Mark all read'}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="ghost" size="sm">
+              <a href="/notifications/settings">
+                <Settings className="size-4" />
+                Settings
+              </a>
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={markAllRead.isPending || unreadOnPage === 0}
+              onClick={() => markAllRead.mutate()}
+            >
+              <CheckCheck className="size-4" />
+              {markAllRead.isPending ? 'Marking…' : 'Mark all read'}
+            </Button>
+          </div>
         }
       />
 

@@ -671,6 +671,9 @@ func (s *Server) registerRiskRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("risk.read")).Group(func(r chi.Router) {
 		r.Get("/risk/overview", s.handleRiskOverview)
 		r.Get("/risk/scores", s.handleListRiskScores)
+		// Persisted deterministic insights (Feature 11.3): risk alerts projected
+		// as insights, each linked to its source record. Read-only, risk.read.
+		r.Get("/insights", s.handleListInsights)
 	})
 	r.With(s.requirePermission("risk_score.admin", nil)).
 		Post("/risk/scores/recompute", s.handleRecomputeRiskScores)

@@ -561,6 +561,36 @@ export interface UnreadCount {
   unread_count: number;
 }
 
+/**
+ * One per-user notification delivery preference (Feature 11.1): for a
+ * (category, channel) pair, whether delivery is enabled plus an optional local
+ * quiet window (HH:MM 24h). Self-service — a user reads/writes only their own.
+ */
+export interface NotificationPreference {
+  category: string;
+  channel: string;
+  enabled: boolean;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
+  updated_at: string;
+}
+
+/** Preference list plus the valid category/channel keys for rendering toggles. */
+export interface NotificationPreferenceList {
+  items: NotificationPreference[];
+  categories: string[];
+  channels: string[];
+}
+
+/** Upsert payload for a single notification preference toggle. */
+export interface UpsertNotificationPreferenceRequest {
+  category: string;
+  channel: string;
+  enabled: boolean;
+  quiet_hours_start?: string | null;
+  quiet_hours_end?: string | null;
+}
+
 export type JobRunStatus = 'running' | 'success' | 'failure' | 'skipped';
 
 /** One run of a background scheduler job, from the admin job-health endpoint. */
@@ -1342,6 +1372,35 @@ export interface RiskAlert {
   amount?: string;
   recommended_action?: string;
   score: number;
+}
+
+/**
+ * The resolved source-record link for an insight (Feature 11.3): the aggregate
+ * kind + id the insight was derived from, and an in-app route when one exists.
+ */
+export interface InsightSource {
+  kind: string;
+  id: string;
+  href?: string;
+}
+
+/**
+ * One persisted, deterministic insight (Feature 11.3), projected from a risk
+ * alert and linked to the source record it was derived from. Read-only; gated
+ * by risk.read.
+ */
+export interface Insight {
+  id: string;
+  rule_code?: string;
+  type: string;
+  severity: string;
+  status: string;
+  detail?: string;
+  amount?: string;
+  recommended_action?: string;
+  station_id?: string;
+  source?: InsightSource;
+  created_at: string;
 }
 
 // RiskRuleInput is the create/update payload for a rule. All fields besides
