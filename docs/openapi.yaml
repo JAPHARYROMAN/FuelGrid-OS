@@ -26,6 +26,8 @@ tags:
     description: Tenant CRUD over the companies hierarchy
   - name: Branding
     description: Tenant company letterhead / branding (the header on every document PDF)
+  - name: Attachments
+    description: Generic per-entity file attachments (PDF/PNG/JPEG, stored inline)
   - name: Regions
     description: Regions under a company
   - name: Stations
@@ -645,6 +647,85 @@ paths:
       responses:
         '204': { description: Cleared }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/attachments:
+    post:
+      tags: [Attachments]
+      summary: Upload an attachment for an entity
+      description: >-
+        Multipart upload of a PDF, PNG, or JPEG (capped at 5 MiB) attached to a
+        business entity identified by entity_type + entity_id. The bytes are
+        stored inline. Requires the attachment.manage permission. A relabelled
+        non-allowed type is rejected 400; an oversized body is rejected 413; an
+        unknown parent record is 404. Audited as attachment.added.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [entity_type, entity_id, file]
+              properties:
+                entity_type: { type: string, example: expense }
+                entity_id: { type: string, format: uuid }
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Attachment' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { description: File exceeds the 5 MiB size cap }
+
+  /api/v1/entities/{entityType}/{entityID}/attachments:
+    get:
+      tags: [Attachments]
+      summary: List an entity's attachments
+      description: Returns the live (non-deleted) attachments for an entity, newest first. Requires the attachment.read permission.
+      parameters:
+        - { in: path, name: entityType, required: true, schema: { type: string } }
+        - { in: path, name: entityID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Attachment' } }
+                  count: { type: integer }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/attachments/{id}:
+    get:
+      tags: [Attachments]
+      summary: Download an attachment
+      description: Streams the attachment bytes with its stored content type. Requires the attachment.read permission.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/pdf: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Attachments]
+      summary: Remove (soft-delete) an attachment
+      description: >-
+        Soft-deletes the attachment (the bytes are retained for the audit
+        trail). Requires the attachment.manage permission. Refused 409 when the
+        parent record is posted/locked. Audited as attachment.removed.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Removed }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The parent record is posted or locked; its attachments cannot be removed
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
 
   /api/v1/regions:
     get:
@@ -4683,6 +4764,20 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/Company' } }
         count: { type: integer }
 
+    Attachment:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        entity_type:  { type: string }
+        entity_id:    { type: string, format: uuid }
+        station_id:   { type: string, format: uuid, nullable: true }
+        filename:     { type: string }
+        content_type: { type: string, enum: [application/pdf, image/png, image/jpeg] }
+        size_bytes:   { type: integer, format: int64 }
+        checksum:     { type: string, description: hex sha-256 of the bytes }
+        uploaded_by:  { type: string, format: uuid, nullable: true }
+        created_at:   { type: string, format: date-time }
+        download_url: { type: string }
     Branding:
       type: object
       properties:

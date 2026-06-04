@@ -74,6 +74,7 @@ func (s *Server) registerRoutes(r chi.Router) {
 						s.registerAccountingExportRoutes(r)
 						s.registerOperationsRoutes(r)
 						s.registerWorkforceRoutes(r)
+						s.registerAttachmentRoutes(r)
 						s.registerUserAdminRoutes(r)
 						s.registerAdminJobRoutes(r)
 					})
@@ -92,6 +93,23 @@ func (s *Server) registerSetupRoutes(r chi.Router) {
 		Get("/setup/checklist", s.handleGetSetupChecklist)
 	r.With(s.requirePermission("setup.manage", nil)).
 		Patch("/setup/checklist", s.handlePatchSetupChecklist)
+}
+
+// registerAttachmentRoutes mounts the generic per-entity Attachments framework
+// (C.3). Reads (list/stream) require attachment.read; writes (upload/remove)
+// require attachment.manage. Both permissions are tenant-wide.
+func (s *Server) registerAttachmentRoutes(r chi.Router) {
+	if s.attachments == nil {
+		return
+	}
+	r.With(s.requirePermission("attachment.read", nil)).Group(func(r chi.Router) {
+		r.Get("/entities/{entityType}/{entityID}/attachments", s.handleListAttachments)
+		r.Get("/attachments/{id}", s.handleDownloadAttachment)
+	})
+	r.With(s.requirePermission("attachment.manage", nil)).Group(func(r chi.Router) {
+		r.Post("/attachments", s.handleUploadAttachment)
+		r.Delete("/attachments/{id}", s.handleDeleteAttachment)
+	})
 }
 
 // registerPlatformRoutes mounts the static-token platform provisioning route.
