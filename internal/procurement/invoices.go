@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
 type SupplierInvoice struct {
@@ -78,6 +80,15 @@ type SupplierInvoiceLineInput struct {
 	InvoicedLitres float64
 	UnitPrice      string
 	Amount         *string
+}
+
+// SupplierInvoiceFilter narrows a supplier-invoice listing. A nil/empty field
+// is "no filter"; StationIDs is the actor's read scope (nil = tenant-wide).
+type SupplierInvoiceFilter struct {
+	StationIDs      []uuid.UUID
+	SupplierID      *uuid.UUID
+	PurchaseOrderID *uuid.UUID
+	Status          *string
 }
 
 const supplierInvoiceColumns = `
@@ -189,6 +200,54 @@ func (r *Repo) RecordSupplierInvoice(ctx context.Context, tx pgx.Tx, tenantID uu
 		return nil, err
 	}
 	return r.getSupplierInvoice(ctx, tx, tenantID, inv.ID)
+}
+
+// ListSupplierInvoicesPage returns a page of supplier invoices matching the
+// filter, newest received first with id as a deterministic tiebreaker so paging
+// is stable (REL-REPO). Each invoice is hydrated with its lines and
+// discrepancies, mirroring GetSupplierInvoice, so the payables list can show
+// variance without a second round-trip per row.
+func (r *Repo) ListSupplierInvoicesPage(ctx context.Context, tenantID uuid.UUID, f SupplierInvoiceFilter, limit, offset int) ([]SupplierInvoice, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+supplierInvoiceColumns+`
+		FROM supplier_invoices
+		WHERE tenant_id = $1
+		  AND ($2::uuid[] IS NULL OR station_id = ANY($2::uuid[]))
+		  AND ($3::uuid IS NULL OR supplier_id = $3)
+		  AND ($4::uuid IS NULL OR purchase_order_id = $4)
+		  AND ($5::text IS NULL OR status = $5)
+		ORDER BY received_at DESC, id
+		LIMIT $6 OFFSET $7
+	`, tenantID, database.UUIDStrings(f.StationIDs), f.SupplierID, f.PurchaseOrderID, f.Status, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []SupplierInvoice{}
+	for rows.Next() {
+		var inv SupplierInvoice
+		if err := scanSupplierInvoice(rows, &inv); err != nil {
+			return nil, err
+		}
+		out = append(out, inv)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		lines, err := r.listInvoiceLines(ctx, r.pool, tenantID, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		discs, err := r.listInvoiceDiscrepancies(ctx, r.pool, tenantID, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Lines = lines
+		out[i].Discrepancies = discs
+	}
+	return out, nil
 }
 
 func (r *Repo) GetSupplierInvoice(ctx context.Context, tenantID, id uuid.UUID) (*SupplierInvoice, error) {

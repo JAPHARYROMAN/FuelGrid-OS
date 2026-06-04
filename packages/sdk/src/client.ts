@@ -854,6 +854,27 @@ export class Client {
     });
   }
 
+  listSupplierInvoices(
+    opts: {
+      stationID?: string;
+      supplierID?: string;
+      purchaseOrderID?: string;
+      status?: string;
+    } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<SupplierInvoice>> {
+    const qs = new URLSearchParams();
+    if (opts.stationID) qs.set('station_id', opts.stationID);
+    if (opts.supplierID) qs.set('supplier_id', opts.supplierID);
+    if (opts.purchaseOrderID) qs.set('purchase_order_id', opts.purchaseOrderID);
+    if (opts.status) qs.set('status', opts.status);
+    const q = qs.toString();
+    return this.request<Paginated<SupplierInvoice>>(
+      `/api/v1/supplier-invoices${q ? `?${q}` : ''}`,
+      { signal },
+    );
+  }
+
   getSupplierInvoice(id: string, signal?: AbortSignal): Promise<SupplierInvoice> {
     return this.request<SupplierInvoice>(`/api/v1/supplier-invoices/${encodeURIComponent(id)}`, {
       signal,

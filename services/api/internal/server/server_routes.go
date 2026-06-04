@@ -336,6 +336,7 @@ func (s *Server) registerProcurementRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("purchase_order.approve")).Post("/purchase-orders/{id}/status", s.handleTransitionPurchaseOrder)
 	r.With(s.requirePermissionHeld("delivery.receive")).Post("/purchase-orders/{id}/receipts", s.handleReceivePurchaseOrderReceipt)
 	r.With(s.requirePermissionHeld("invoice.manage")).Post("/supplier-invoices", s.handleRecordSupplierInvoice)
+	r.With(s.requirePermissionHeld("invoice.manage")).Get("/supplier-invoices", s.handleListSupplierInvoices)
 	r.Get("/supplier-invoices/{id}", s.handleGetSupplierInvoice)
 	r.With(s.requirePermissionHeld("invoice.approve")).Post("/supplier-invoices/{id}/approve", s.handleApproveSupplierInvoice)
 	r.With(s.requirePermissionHeld("invoice.approve")).Patch("/procurement-discrepancies/{id}/status", s.handleResolveProcurementDiscrepancy)
