@@ -30,9 +30,9 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 44 DONE · 16 PARTIAL · 0 MISSING · 3 DEFERRED · 1 VERIFY.
+**Counts (64 feature rows):** 51 DONE · 9 PARTIAL · 0 MISSING · 3 DEFERRED · 1 VERIFY.
 
-All originally-MISSING features have been built and merged (sale-void, attachments, profitability + station-comparison reports, data-lifecycle/retention). The remaining 16 PARTIALs are a documented **low-value polish backlog** (test coverage C.2/C.4/C.5, notification preferences 11.1, broader observability endpoints 13.3, and niche sub-features like 1.6/3.4/4.4/8.1/8.3/9.2-edit/10.5/10.7/11.3/13.1). Build order + rationale: [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
+All originally-MISSING features have been built and merged (sale-void, attachments, profitability + station-comparison reports, data-lifecycle/retention). The remaining **9 PARTIALs** are a documented polish backlog: **1.6** opening-stock approval/lock, **3.4** shift timeline, **4.1** POS page, **4.4** payment split/idempotency, **8.1** expense categories UI, **8.3** petty-cash UI, **9.2** governance-policy edit/enable-disable, **13.1** enterprise scope-switch, **13.3** broader observability endpoints. Build order + rationale: [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
 **Deferred phase — Mobile / offline / hardware (12.1–12.3, DEFERRED by decision 2026-06-04):** a separate major phase, intentionally deferred — it cannot be meaningfully validated without real devices/hardware, and the web/back-office surface is feature-complete without it. Today only permission stubs (`mobile.attendant`, `mobile.sync`, `integration.manage`) + the `devices` table exist.
 
@@ -137,17 +137,17 @@ All originally-MISSING features have been built and merged (sale-void, attachmen
 | 10.2 Daily operations report | P1 | internal/reports, internal/operations | /reports/daily-operations | report_runs, export_jobs | GET /reports/daily-operations | reports.dailyOperations | reports.view, reports.export | report.exported | report math, export | DONE |
 | 10.3 Stock loss and variance report | P1 | internal/reports, internal/inventory | /reports/stock-loss | report_runs, export_jobs | GET /reports/stock-loss | reports.stockLoss | reports.view, reports.export | report.exported | variance math, export | DONE |
 | 10.4 Profitability report | P1 | internal/reports, internal/accounting | /reports/profitability | report_runs, export_jobs | GET /reports/profitability | reports.profitability | reports.view, reports.export | report.exported | report math, export | DONE |
-| 10.5 Credit and cashflow report | P1 | internal/reports, internal/receivables | /reports/credit-cashflow | report_runs, export_jobs | GET /reports/credit-cashflow | reports.creditCashflow | reports.view, reports.export | report.exported | reconciliation, export | PARTIAL |
+| 10.5 Credit and cashflow report | P1 | internal/reports, internal/receivables | /reports/credit-cashflow | report_runs, export_jobs | GET /reports/credit-cashflow | reports.creditCashflow | reports.view, reports.export | report.exported | reconciliation, export | DONE |
 | 10.6 Station comparison report | P1 | internal/reports, internal/enterprise | /reports/station-comparison | report_runs, export_jobs | GET /reports/station-comparison | reports.stationComparison | reports.view, reports.export | report.exported | scoped access, ranking | DONE |
-| 10.7 Export service | P0 | internal/reports, internal/audit | /reports/exports | export_jobs, export_files | POST /exports, GET /exports/{id} | reports.exports.* | reports.export | report.exported | permission, job, file metadata | PARTIAL |
+| 10.7 Export service | P0 | internal/reports, internal/audit | /reports/exports | export_jobs, export_files | POST /exports, GET /exports/{id} | reports.exports.* | reports.export | report.exported | permission, job, file metadata | DONE |
 
 ## Phase 11 - Notifications, risk, and intelligence
 
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 11.1 Notification center | P1 | internal/notifications | /notifications, /notifications/settings | notifications, notification_preferences | GET /notifications, PATCH /notifications/{id}, CRUD /notification-preferences | notifications.* | notifications.view, notifications.manage | notification.acknowledged, notification.preference_changed | unit, integration, frontend | PARTIAL |
+| 11.1 Notification center | P1 | internal/notifications | /notifications, /notifications/settings | notifications, notification_preferences | GET /notifications, PATCH /notifications/{id}, CRUD /notification-preferences | notifications.* | notifications.view, notifications.manage | notification.acknowledged, notification.preference_changed | unit, integration, frontend | DONE |
 | 11.2 Risk alerts | P1 | internal/risk | /risk | risk_alerts, risk_alert_events | GET /risk-alerts, PATCH /risk-alerts/{id} | risk.alerts.* | risk.view, risk.manage | risk.alert_created, risk.alert_status_changed | unit, lifecycle, frontend | DONE |
-| 11.3 Deterministic insights | P2 | internal/risk, internal/events | /risk | insights, insight_sources | GET /insights | risk.insights | risk.view | insight.generated where persisted | deterministic tests, source trace | PARTIAL |
+| 11.3 Deterministic insights | P2 | internal/risk, internal/events | /risk | insights, insight_sources | GET /insights | risk.insights | risk.view | insight.generated where persisted | deterministic tests, source trace | DONE |
 
 ## Phase 12 - Mobile, offline, and hardware readiness
 
@@ -170,7 +170,7 @@ All originally-MISSING features have been built and merged (sale-void, attachmen
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | C.1 Data-quality warnings | P0 | internal/reports, internal/risk | dashboards and reports | data_quality_warnings | GET /data-quality-warnings | reports.dataQuality | reports.view | n/a | unit, report fixtures, frontend | DONE |
-| C.2 Idempotency | P0 | shared platform | API write endpoints | idempotency_keys | write endpoints accept idempotency key | SDK write options | endpoint-specific | endpoint-specific | duplicate protection tests | PARTIAL |
+| C.2 Idempotency | P0 | shared platform | API write endpoints | idempotency_keys | write endpoints accept idempotency key | SDK write options | endpoint-specific | endpoint-specific | duplicate protection tests | DONE |
 | C.3 Attachments | P1 | shared platform | forms requiring evidence | attachments | CRUD /attachments | attachments.* | endpoint-specific | attachment.added, attachment.removed | upload, permission, virus scan if enabled | DONE |
-| C.4 Shared UI components | P1 | packages/ui | all modules | n/a | n/a | n/a | n/a | n/a | component tests, visual checks | PARTIAL |
-| C.5 SDK modules | P0 | packages/sdk | n/a | n/a | all public APIs | setup, users, roles, shifts, sales, payments, inventory, reports, etc. | n/a | n/a | SDK unit, contract | PARTIAL |
+| C.4 Shared UI components | P1 | packages/ui | all modules | n/a | n/a | n/a | n/a | n/a | component tests, visual checks | DONE |
+| C.5 SDK modules | P0 | packages/sdk | n/a | n/a | all public APIs | setup, users, roles, shifts, sales, payments, inventory, reports, etc. | n/a | n/a | SDK unit, contract | DONE |
