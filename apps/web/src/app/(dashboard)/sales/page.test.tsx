@@ -13,6 +13,10 @@ const listOperatingDays = vi.fn();
 const listShifts = vi.fn();
 const listProducts = vi.fn();
 const listStationSales = vi.fn();
+const getSaleVoid = vi.fn();
+const requestSaleVoid = vi.fn();
+const approveSaleVoid = vi.fn();
+const rejectSaleVoid = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -21,7 +25,15 @@ vi.mock('@/lib/api', () => ({
     listShifts: (...args: unknown[]) => listShifts(...args),
     listProducts: (...args: unknown[]) => listProducts(...args),
     listStationSales: (...args: unknown[]) => listStationSales(...args),
+    getSaleVoid: (...args: unknown[]) => getSaleVoid(...args),
+    requestSaleVoid: (...args: unknown[]) => requestSaleVoid(...args),
+    approveSaleVoid: (...args: unknown[]) => approveSaleVoid(...args),
+    rejectSaleVoid: (...args: unknown[]) => rejectSaleVoid(...args),
   },
+}));
+
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 let permitted: boolean | null = true;
@@ -94,6 +106,11 @@ describe('SalesPage', () => {
       offset: 0,
       has_more: false,
     });
+    // No active void by default — the API 404s.
+    getSaleVoid.mockRejectedValue(new SdkError('not found', 404, { error: 'not found' }));
+    requestSaleVoid.mockResolvedValue({ id: 'void-1', sale_id: 'sale-1', status: 'requested' });
+    approveSaleVoid.mockResolvedValue({ id: 'void-1', sale_id: 'sale-1', status: 'approved' });
+    rejectSaleVoid.mockResolvedValue({ id: 'void-1', sale_id: 'sale-1', status: 'rejected' });
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -180,5 +197,64 @@ describe('SalesPage', () => {
     renderPage();
 
     expect(await screen.findByText("Couldn't load sales")).toBeInTheDocument();
+  });
+
+  it('distinguishes a reversed (approved-void) sale in the list', async () => {
+    listStationSales.mockResolvedValue({
+      items: [sale({ void_status: 'approved' })],
+      count: 1,
+      has_more: false,
+    });
+    renderPage();
+
+    const row = await screen.findByRole('button', { name: /sale sale-1/i });
+    expect(within(row).getByText('Reversed')).toBeInTheDocument();
+  });
+
+  it('requests a void from the sale detail dialog (reason required)', async () => {
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /sale sale-1/i }));
+
+    // The request button is disabled until a reason is entered.
+    const requestBtn = await screen.findByRole('button', { name: /request void/i });
+    expect(requestBtn).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Reason'), {
+      target: { value: 'metering fault' },
+    });
+    expect(requestBtn).toBeEnabled();
+    fireEvent.click(requestBtn);
+
+    await waitFor(() =>
+      expect(requestSaleVoid).toHaveBeenCalledWith('sale-1', { reason: 'metering fault' }),
+    );
+  });
+
+  it('shows approve / reject controls for a sale with a pending void', async () => {
+    listStationSales.mockResolvedValue({
+      items: [sale({ void_status: 'requested' })],
+      count: 1,
+      has_more: false,
+    });
+    getSaleVoid.mockResolvedValue({
+      id: 'void-1',
+      sale_id: 'sale-1',
+      status: 'requested',
+      reason: 'recognized in error',
+    });
+    renderPage();
+
+    fireEvent.click(await screen.findByRole('button', { name: /sale sale-1/i }));
+
+    // Wait for the live void to load (its reason renders) so the approve/reject
+    // buttons are enabled (they gate on the loaded void).
+    await screen.findByText(/recognized in error/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /approve void/i }));
+    await waitFor(() => expect(approveSaleVoid).toHaveBeenCalledWith('void-1'));
+
+    fireEvent.click(screen.getByRole('button', { name: /^reject$/i }));
+    await waitFor(() => expect(rejectSaleVoid).toHaveBeenCalledWith('void-1'));
   });
 });

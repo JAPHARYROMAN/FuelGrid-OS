@@ -904,6 +904,45 @@ export interface Sale {
   cogs_amount?: string;
   margin_amount?: string;
   recorded_at: string;
+  /**
+   * The sale's current (non-rejected) void status (Feature 4.3): 'requested'
+   * while a void awaits approval, 'approved' once the sale is reversed, or
+   * undefined when the sale has no active void. Lets the UI distinguish a
+   * reversed sale.
+   */
+  void_status?: SaleVoidStatus;
+}
+
+/** The lifecycle states of a sale void (Feature 4.3). */
+export type SaleVoidStatus = 'requested' | 'approved' | 'rejected';
+
+/**
+ * A sale-void lifecycle row. On approve it becomes the reversal record: the
+ * reversal_* fields hold the recognized sale's amounts NEGATED (exact decimal
+ * STRINGS), present only in the 'approved' state. The original sale is
+ * append-only and is never mutated.
+ */
+export interface SaleVoid {
+  id: string;
+  sale_id: string;
+  status: SaleVoidStatus;
+  reason: string;
+  reversal_litres?: string;
+  reversal_gross?: string;
+  reversal_tax?: string;
+  reversal_net?: string;
+  reversal_cogs?: string;
+  reversal_margin?: string;
+  requested_by: string;
+  decided_by?: string;
+  decision_note?: string;
+  requested_at: string;
+  decided_at?: string;
+}
+
+export interface RequestSaleVoidRequest {
+  /** Why the sale is being voided (required). */
+  reason: string;
 }
 
 export interface TankValuation {

@@ -70,10 +70,18 @@ func (r *Repo) ComputeDay(ctx context.Context, tx pgx.Tx, tenantID, stationID, d
 		    p.cash, p.momo, p.card, p.credit, p.voucher, p.tender,
 		    p.tender - s.gross, 'draft'
 		FROM operating_days od,
-		    (SELECT COALESCE(SUM(gross_amount), 0) gross, COALESCE(SUM(net_amount), 0) net,
-		            COALESCE(SUM(tax_amount), 0) tax, COALESCE(SUM(cogs_amount), 0) cogs,
-		            COALESCE(SUM(margin_amount), 0) margin
-		     FROM sales WHERE tenant_id = $1 AND station_id = $2 AND operating_day_id = $3) s,
+		    -- Revenue NET of approved sale voids (Feature 4.3): an approved void
+		    -- carries the sale's amounts negated (reversal_*), so adding them
+		    -- reverses the voided sale without mutating the append-only sale row.
+		    (SELECT COALESCE(SUM(sl.gross_amount), 0)  + COALESCE(SUM(v.reversal_gross),  0) gross,
+		            COALESCE(SUM(sl.net_amount), 0)    + COALESCE(SUM(v.reversal_net),    0) net,
+		            COALESCE(SUM(sl.tax_amount), 0)    + COALESCE(SUM(v.reversal_tax),    0) tax,
+		            COALESCE(SUM(sl.cogs_amount), 0)   + COALESCE(SUM(v.reversal_cogs),   0) cogs,
+		            COALESCE(SUM(sl.margin_amount), 0) + COALESCE(SUM(v.reversal_margin), 0) margin
+		     FROM sales sl
+		     LEFT JOIN sale_voids v
+		         ON v.tenant_id = sl.tenant_id AND v.sale_id = sl.id AND v.status = 'approved'
+		     WHERE sl.tenant_id = $1 AND sl.station_id = $2 AND sl.operating_day_id = $3) s,
 		    (SELECT COALESCE(SUM(amount) FILTER (WHERE tender_type = 'cash'), 0) cash,
 		            COALESCE(SUM(amount) FILTER (WHERE tender_type = 'mobile_money'), 0) momo,
 		            COALESCE(SUM(amount) FILTER (WHERE tender_type = 'card'), 0) card,

@@ -406,6 +406,25 @@ func (s *Server) registerRevenueRoutes(r chi.Router) {
 		Get("/stations/{stationID}/sales", s.handleListStationSales)
 	r.With(s.requirePermission("margin.view", stationFromURLParam("stationID"))).
 		Get("/stations/{stationID}/inventory-valuation", s.handleInventoryValuation)
+
+	// Sale void (Feature 4.3): the request -> approve|reject lifecycle for
+	// reversing a recognized sale. The original sale + payment are append-only;
+	// an approved void records the reversal (the sale's amounts negated) so the
+	// revenue rollups net out without mutating the sale. Request + the per-sale
+	// void status read ride the station-scoped sale.void.request; approve/reject
+	// + the queue list ride sale.void.approve — both authorized in-handler
+	// against the sale's station (separation of duties enforced in the repo).
+	// The held-permission gate is a coarse filter; the per-sale station check
+	// happens in the handler.
+	r.With(s.requirePermissionHeld("sale.void.request")).Group(func(r chi.Router) {
+		r.Post("/sales/{saleID}/void-requests", s.handleRequestSaleVoid)
+		r.Get("/sales/{saleID}/void", s.handleGetSaleVoid)
+	})
+	r.With(s.requirePermissionHeld("sale.void.approve")).Group(func(r chi.Router) {
+		r.Get("/sale-voids", s.handleListSaleVoids)
+		r.Post("/sale-voids/{id}/approve", s.handleApproveSaleVoid)
+		r.Post("/sale-voids/{id}/reject", s.handleRejectSaleVoid)
+	})
 }
 
 // registerTenderRoutes (Phase 6, Stage 5): shift payments + reconciliation

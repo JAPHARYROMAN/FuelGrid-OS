@@ -3055,6 +3055,83 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/sales/{saleID}/void-requests:
+    post:
+      tags: [Revenue]
+      summary: Request a recognized sale be voided
+      description: >-
+        Open a void request (requested state) against a recognized sale. The
+        original sale is append-only and is never deleted or mutated; an approved
+        void records a reversal instead. A sale may carry at most one non-rejected
+        void at a time (409 otherwise). Gated by the station-scoped
+        sale.void.request at the sale's station.
+      parameters: [{ in: path, name: saleID, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RequestSaleVoidRequest' } } } }
+      responses:
+        '201': { description: Requested, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoid' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The sale already has an active void }
+  /api/v1/sales/{saleID}/void:
+    get:
+      tags: [Revenue]
+      summary: Get a sale's current void status
+      description: >-
+        Returns the sale's current non-rejected void (requested or approved), or
+        404 when none exists. Gated by sale.void.request at the sale's station.
+      parameters: [{ in: path, name: saleID, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoid' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/sale-voids:
+    get:
+      tags: [Revenue]
+      summary: List sale voids
+      description: >-
+        The void approval queue. Optionally filter by status. Gated by
+        sale.void.approve.
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+        - { in: query, name: status, required: false, schema: { type: string, enum: [requested, approved, rejected] } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoidList' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/sale-voids/{id}/approve:
+    post:
+      tags: [Revenue]
+      summary: Approve a requested sale void
+      description: >-
+        Moves requested -> approved and records the reversal: the sale's
+        recognized amounts negated are snapshotted onto the void row, so revenue
+        rollups net the reversal against the original (preserved) sale.
+        Separation of duties: the requester cannot approve their own void (403).
+        Idempotent — a second approve of an already-approved void is a 409. Gated
+        by the station-scoped sale.void.approve at the sale's station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoidDecision' } } } }
+      responses:
+        '200': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoid' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
+  /api/v1/sale-voids/{id}/reject:
+    post:
+      tags: [Revenue]
+      summary: Reject a requested sale void
+      description: >-
+        Moves requested -> rejected. The requester cannot reject their own void
+        (403). Gated by sale.void.approve at the sale's station.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoidDecision' } } } }
+      responses:
+        '200': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/SaleVoid' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Invalid state transition }
   /api/v1/shifts/{id}/payments:
     get:
       tags: [Revenue]
@@ -5131,6 +5208,44 @@ components:
         reason:         { type: string }
         classification: { type: string, enum: [evaporation, measurement_error, theft, spillage, temperature, data_entry, other] }
     StockAdjustmentDecision:
+      type: object
+      properties:
+        note: { type: string, description: Optional decision note }
+
+    SaleVoid:
+      type: object
+      description: >-
+        A sale-void lifecycle row (Feature 4.3). On approve it becomes the
+        reversal record: the reversal_* fields hold the sale's recognized amounts
+        NEGATED (numeric -> text), present only in the 'approved' state.
+      properties:
+        id:              { type: string, format: uuid }
+        sale_id:         { type: string, format: uuid }
+        status:          { type: string, enum: [requested, approved, rejected] }
+        reason:          { type: string }
+        reversal_litres: { type: string, description: Sale litres negated (set on approve; numeric -> text) }
+        reversal_gross:  { type: string, description: Sale gross negated (set on approve; numeric -> text) }
+        reversal_tax:    { type: string, description: Sale tax negated (set on approve; numeric -> text) }
+        reversal_net:    { type: string, description: Sale net negated (set on approve; numeric -> text) }
+        reversal_cogs:   { type: string, description: Sale COGS negated (set on approve when costed; numeric -> text) }
+        reversal_margin: { type: string, description: Sale margin negated (set on approve when costed; numeric -> text) }
+        requested_by:    { type: string, format: uuid }
+        decided_by:      { type: string, format: uuid }
+        decision_note:   { type: string }
+        requested_at:    { type: string, format: date-time }
+        decided_at:      { type: string, format: date-time }
+    SaleVoidList:
+      allOf:
+        - $ref: '#/components/schemas/Paged'
+        - type: object
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/SaleVoid' } }
+    RequestSaleVoidRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string, description: Why the sale is being voided (required) }
+    SaleVoidDecision:
       type: object
       properties:
         note: { type: string, description: Optional decision note }
