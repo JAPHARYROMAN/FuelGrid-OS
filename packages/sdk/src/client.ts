@@ -3036,6 +3036,41 @@ export class Client {
   }
 
   /**
+   * Fetch the profitability report (revenue, COGS, gross margin, operating
+   * expenses, net operating result, and a per-product breakdown) for a station
+   * over a period as a structured envelope. Station-scoped (gated by
+   * revenue.read); `period` selects the date window.
+   */
+  getProfitabilityReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/profitability${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Fetch the station-comparison report (per-station ranking by revenue, litres,
+   * margin, stock variance, expenses, risk alerts and collections) as a
+   * structured envelope. Gated by revenue.read held anywhere; the rows are
+   * filtered server-side to the caller's accessible stations.
+   */
+  getStationComparisonReport(
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    const qs = new URLSearchParams();
+    if (opts?.period) qs.set('period', opts.period);
+    const q = qs.toString();
+    return this.request<ReportEnvelope>(`/api/v1/reports/station-comparison${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  /**
    * Request a unified report export. The server audits the request and returns
    * the same-origin URL of the existing CSV/PDF/XLSX endpoint to fetch the file
    * from (then use {@link fetchReportBlob} or a direct download). Gated by

@@ -1462,7 +1462,9 @@ export type StructuredReportKey =
   | 'inventory-reconciliation'
   | 'station-close'
   | 'cash-reconciliation'
-  | 'fuel-loss';
+  | 'fuel-loss'
+  | 'profitability'
+  | 'station-comparison';
 
 /** Identifies a structured report instance. */
 export interface ReportEnvelopeMetadata {

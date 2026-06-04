@@ -160,6 +160,19 @@ func (r *Repo) RecentDays(ctx context.Context, tenantID, stationID uuid.UUID, li
 	return out, rows.Err()
 }
 
+// WindowLockState counts a station's revenue days in [from, to] (inclusive
+// business dates) and how many are not yet locked. The Profitability report
+// uses it to flag a provisional (not-fully-locked) window without recomputing
+// any money.
+func (r *Repo) WindowLockState(ctx context.Context, tenantID, stationID uuid.UUID, from, to time.Time) (days, unlocked int, err error) {
+	err = r.pool.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE status <> 'locked')
+		FROM revenue_days
+		WHERE tenant_id = $1 AND station_id = $2 AND business_date BETWEEN $3 AND $4
+	`, tenantID, stationID, from, to).Scan(&days, &unlocked)
+	return days, unlocked, err
+}
+
 // TenderBreakdown is a station-day's recorded tenders by type.
 type TenderBreakdown struct {
 	Cash        string

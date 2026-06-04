@@ -32,6 +32,15 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("reconciliation.read")).
 		Get("/reports/fuel-loss", s.handleFuelLossReport)
 
+	// Profitability P&L (station-scoped via ?station_id; Feature 10.4).
+	r.With(s.requirePermissionHeld("revenue.read")).
+		Get("/reports/profitability", s.handleProfitabilityReport)
+
+	// Station comparison (tenant-wide gate; rows filtered to the actor's
+	// accessible stations in-handler; Feature 10.6).
+	r.With(s.requirePermissionHeld("revenue.read")).
+		Get("/reports/station-comparison", s.handleStationComparisonReport)
+
 	// Unified export entry point — delegates to the existing export endpoints.
 	r.With(s.requirePermissionHeld("finance.read")).
 		Post("/reports/export", s.handleExportReport)

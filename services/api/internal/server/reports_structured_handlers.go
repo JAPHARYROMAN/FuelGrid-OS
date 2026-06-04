@@ -120,6 +120,18 @@ func (s *Server) handleReportsOverview(w http.ResponseWriter, r *http.Request) {
 				Headline:    arTotal, HeadlineUnit: "TZS",
 				AlertCount: 0, Href: "/api/v1/reports/customer-aging/insights",
 			},
+			{
+				Key: "profitability", Title: "Profitability",
+				Description: "Revenue, COGS, gross margin, expenses and net operating result by station and product.",
+				Headline:    "", HeadlineUnit: "",
+				AlertCount: 0, Href: "/api/v1/reports/profitability",
+			},
+			{
+				Key: "station-comparison", Title: "Station Comparison",
+				Description: "Per-station ranking by revenue, litres, margin, stock variance, expenses, risk alerts and collections.",
+				Headline:    "", HeadlineUnit: "",
+				AlertCount: openAlerts, Href: "/api/v1/reports/station-comparison",
+			},
 		},
 	}
 	writeJSON(w, http.StatusOK, out)
