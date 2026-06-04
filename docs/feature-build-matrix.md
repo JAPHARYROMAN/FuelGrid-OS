@@ -29,18 +29,16 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 39 DONE · 16 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 41 DONE · 16 PARTIAL · 6 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
 
 The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
-- **4.3 Sale void workflow (MISSING)** — No `sale_voids`/`sale_reversals` tables, no void-request/approve endpoints, no reversal logic, no `sale.void.*` permissions or audit events. Entire feature absent.
 - **10.4 Profitability report (MISSING)** — No `GET /reports/profitability` route or page; existing `financials.csv/.pdf` is an accounting income statement, not operational profitability (revenue, COGS, gross margin, net operating result, station/product comparison).
 - **10.6 Station comparison report (MISSING)** — No `GET /reports/station-comparison` route, no frontend page, no ranking logic or scoped-access checks.
 - **12.1 Mobile attendant workflow (MISSING)** — Only `mobile.attendant` permission stub exists; no `apps/mobile`, no `mobile_sessions`/`offline_drafts` tables, no `/mobile/*` routes or SDK methods.
 - **12.2 Offline sync foundation (MISSING)** — Only `mobile.sync` permission stub; no `idempotency_keys`/`sync_batches`/`sync_conflicts` tables, no `/sync/*` routes or SDK methods.
 - **12.3 Hardware integration readiness (MISSING)** — Only `integration.manage` permission stub; `devices` table exists but no device-registry/webhook endpoints or signature verification.
 - **13.2 Data lifecycle and retention (MISSING)** — Accounting-period close exists, but no `retention_policies`/`retention_jobs` tables, no closed-period change-request workflow, no `retention.*`/`closed_period.change` endpoints, SDK methods, permissions, or audit events.
-- **C.3 Attachments (MISSING)** — Zero references in handlers, migrations, SDK, or UI; no `attachments` table, endpoints, SDK methods, upload UI, permission gates, or audit events.
 
 ## Phase 0 - Planning and control
 
@@ -87,7 +85,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 |---|---|---|---|---|---|---|---|---|---|---|
 | 4.1 POS page | P0 | internal/revenue, internal/payments | /pos | sales, sale_lines, payments | POST /sales | sales.create | sale.create | sale.created, payment.created | unit, integration, frontend, e2e | PARTIAL |
 | 4.2 Sales transaction list | P0 | internal/revenue | /sales, /sales/[id] | sales, sale_lines, payments | GET /sales, GET /sales/{id} | sales.list, sales.get | sale.view | n/a | API pagination, frontend states | DONE |
-| 4.3 Sale void workflow | P0 | internal/revenue, internal/approvals, internal/audit | /sales/[id] | sale_voids, reversals, approvals | POST /sales/{id}/void-requests, POST /sales/{id}/void-approve | sales.requestVoid, sales.approveVoid | sale.void.request, sale.void.approve | sale.void_requested, sale.void_approved, sale.reversed | unit, integration, approval | MISSING |
+| 4.3 Sale void workflow | P0 | internal/revenue, internal/approvals, internal/audit | /sales/[id] | sale_voids, reversals, approvals | POST /sales/{id}/void-requests, POST /sales/{id}/void-approve | sales.requestVoid, sales.approveVoid | sale.void.request, sale.void.approve | sale.void_requested, sale.void_approved, sale.reversed | unit, integration, approval | DONE |
 | 4.4 Payment handling | P0 | internal/payments, internal/banking | /pos, /sales/[id] | payments, payment_attempts, payment_callbacks | POST /payments, POST /payment-callbacks | payments.create, payments.reconcile | payment.reconcile | payment.status_changed, payment.callback_received | idempotency, integration | PARTIAL |
 
 ## Phase 5 - Inventory, deliveries, transfers, and reconciliation
@@ -177,6 +175,6 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 |---|---|---|---|---|---|---|---|---|---|---|
 | C.1 Data-quality warnings | P0 | internal/reports, internal/risk | dashboards and reports | data_quality_warnings | GET /data-quality-warnings | reports.dataQuality | reports.view | n/a | unit, report fixtures, frontend | DONE |
 | C.2 Idempotency | P0 | shared platform | API write endpoints | idempotency_keys | write endpoints accept idempotency key | SDK write options | endpoint-specific | endpoint-specific | duplicate protection tests | PARTIAL |
-| C.3 Attachments | P1 | shared platform | forms requiring evidence | attachments | CRUD /attachments | attachments.* | endpoint-specific | attachment.added, attachment.removed | upload, permission, virus scan if enabled | MISSING |
+| C.3 Attachments | P1 | shared platform | forms requiring evidence | attachments | CRUD /attachments | attachments.* | endpoint-specific | attachment.added, attachment.removed | upload, permission, virus scan if enabled | DONE |
 | C.4 Shared UI components | P1 | packages/ui | all modules | n/a | n/a | n/a | n/a | n/a | component tests, visual checks | PARTIAL |
 | C.5 SDK modules | P0 | packages/sdk | n/a | n/a | all public APIs | setup, users, roles, shifts, sales, payments, inventory, reports, etc. | n/a | n/a | SDK unit, contract | PARTIAL |
