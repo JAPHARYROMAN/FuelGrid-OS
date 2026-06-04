@@ -29,7 +29,7 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 36 DONE · 19 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 39 DONE · 16 PARTIAL · 8 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
 
 The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
@@ -106,7 +106,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 |---|---|---|---|---|---|---|---|---|---|---|
 | 6.1 Customer management | P0 | internal/receivables | /customers, /customers/[id] | customers, customer_credit_terms | CRUD /customers | customers.* | credit.customer.manage, credit.limit.change | customer.created, customer.updated, customer.credit_limit_changed | unit, integration, permission | DONE |
 | 6.2 Credit sales | P0 | internal/revenue, internal/receivables | /pos | sales, receivable_transactions, credit_overrides | POST /sales with credit tender | sales.createCredit | sale.create, credit.sale.override | credit_sale.created, credit_sale.override_approved | unit, limit policy, integration | DONE |
-| 6.3 Invoices and statements | P1 | internal/receivables, internal/payments | /credit/invoices, /customers/[id]/statement | invoices, invoice_lines, statements, payment_allocations | CRUD /invoices, GET /customers/{id}/statement, POST /payment-allocations | receivables.* | credit.invoice.manage, credit.payment.allocate | invoice.generated, payment.allocated, payment.allocation_reversed | unit, integration, export | PARTIAL |
+| 6.3 Invoices and statements | P1 | internal/receivables, internal/payments | /credit/invoices, /customers/[id]/statement | invoices, invoice_lines, statements, payment_allocations | CRUD /invoices, GET /customers/{id}/statement, POST /payment-allocations | receivables.* | credit.invoice.manage, credit.payment.allocate | invoice.generated, payment.allocated, payment.allocation_reversed | unit, integration, export | DONE |
 | 6.4 Receivables aging | P1 | internal/receivables | /credit/aging | receivable_transactions, aging_snapshots | GET /receivables/aging | receivables.aging | credit.aging.view | report.exported where exported | unit, report, frontend | DONE |
 
 ## Phase 7 - Payables, procurement, and supplier control
@@ -114,8 +114,8 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 7.1 Supplier management | P0 | internal/payables, internal/procurement | /suppliers | suppliers, supplier_products | CRUD /suppliers | suppliers.* | supplier.manage | supplier.created, supplier.updated, supplier.status_changed | unit, integration | DONE |
-| 7.2 Purchase orders | P1 | internal/procurement | /procurement/purchase-orders | purchase_orders, purchase_order_lines, approvals | CRUD /purchase-orders, POST /purchase-orders/{id}/approve | procurement.purchaseOrders.* | procurement.po.manage, procurement.po.approve | purchase_order.created, purchase_order.approved, purchase_order.cancelled | unit, approval, integration | PARTIAL |
-| 7.3 Supplier invoices | P1 | internal/payables | /payables/invoices | supplier_invoices, supplier_invoice_lines, payable_transactions | CRUD /supplier-invoices, POST /supplier-invoices/{id}/approve | payables.invoices.* | payables.invoice.manage, payables.invoice.approve | supplier_invoice.recorded, supplier_invoice.approved | unit, variance, approval | PARTIAL |
+| 7.2 Purchase orders | P1 | internal/procurement | /procurement/purchase-orders | purchase_orders, purchase_order_lines, approvals | CRUD /purchase-orders, POST /purchase-orders/{id}/approve | procurement.purchaseOrders.* | procurement.po.manage, procurement.po.approve | purchase_order.created, purchase_order.approved, purchase_order.cancelled | unit, approval, integration | DONE |
+| 7.3 Supplier invoices | P1 | internal/payables | /payables/invoices | supplier_invoices, supplier_invoice_lines, payable_transactions | CRUD /supplier-invoices, POST /supplier-invoices/{id}/approve | payables.invoices.* | payables.invoice.manage, payables.invoice.approve | supplier_invoice.recorded, supplier_invoice.approved | unit, variance, approval | DONE |
 | 7.4 Payables aging | P1 | internal/payables | /payables/aging | payable_transactions, aging_snapshots | GET /payables/aging | payables.aging | payables.aging.view | report.exported where exported | unit, report, frontend | DONE |
 
 ## Phase 8 - Expenses, petty cash, and cash controls
