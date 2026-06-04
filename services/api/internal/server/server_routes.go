@@ -523,8 +523,10 @@ func (s *Server) registerEnterpriseRoutes(r chi.Router) {
 		Get("/enterprise/users/{id}/effective-stations", s.handleEffectiveStations)
 	r.With(s.requirePermission("enterprise_access.manage", nil)).
 		Post("/enterprise/scope-grants", s.handleGrantScope)
-	r.With(s.requirePermission("approval_policy.manage", nil)).
-		Post("/approval-policies", s.handleCreateApprovalPolicy)
+	r.With(s.requirePermission("approval_policy.manage", nil)).Group(func(r chi.Router) {
+		r.Post("/approval-policies", s.handleCreateApprovalPolicy)
+		r.Post("/approval-policies/simulate", s.handleSimulateApprovalPolicy)
+	})
 	r.With(s.requirePermission("approval_request.decide", nil)).
 		Post("/approval-requests/{id}/decide", s.handleDecideApproval)
 

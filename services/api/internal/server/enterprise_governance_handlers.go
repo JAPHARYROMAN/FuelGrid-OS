@@ -211,6 +211,43 @@ func (s *Server) handleCreateApprovalPolicy(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusCreated, map[string]any{"id": policyID})
 }
 
+// handleSimulateApprovalPolicy answers, without persisting anything, whether a
+// given workflow + amount would require approval under the current active
+// policies and which policy/required role applies. It reuses the approval
+// engine's resolver (enterprise.ResolvePolicy) so the simulation can never
+// diverge from what RaiseRequest would actually do.
+func (s *Server) handleSimulateApprovalPolicy(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var req struct {
+		WorkflowType string `json:"workflow_type"`
+		Amount       string `json:"amount,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.WorkflowType == "" {
+		writeError(w, http.StatusBadRequest, "workflow_type is required")
+		return
+	}
+	res, err := s.enterprise.ResolvePolicy(r.Context(), actor.TenantID, req.WorkflowType, req.Amount)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Approval is required when a policy matched; the engine defaults to a
+	// single approval only as a fallback when nothing matches, which we do not
+	// treat as "an approval is required by policy".
+	writeJSON(w, http.StatusOK, map[string]any{
+		"workflow_type":      req.WorkflowType,
+		"approval_required":  res.Matched,
+		"matched":            res.Matched,
+		"required_approvals": res.RequiredApprovals,
+		"required_role":      res.RequiredRole,
+		"policy_id":          res.PolicyID,
+	})
+}
+
 func (s *Server) handleListApprovalPolicies(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {

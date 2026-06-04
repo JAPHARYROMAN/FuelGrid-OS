@@ -48,11 +48,38 @@ func TestPhase9_Governance(t *testing.T) {
 		t.Fatalf("expected 2 effective stations, got %v", eff["station_ids"])
 	}
 
+	// Simulation before any policy exists: a workflow with no matching policy is
+	// not required to be approved (feature 9.2).
+	if code, sim := h.invPostJSON(t, "/api/v1/approval-policies/simulate", admin, map[string]any{
+		"workflow_type": "central_price", "amount": "100",
+	}); code != http.StatusOK || sim["approval_required"].(bool) || sim["matched"].(bool) {
+		t.Fatalf("simulate (no policy) = %d %v; want not required", code, sim)
+	}
+
 	// Approval engine: a single-approval policy.
 	if code, _ := h.invPostJSON(t, "/api/v1/approval-policies", admin, map[string]any{
 		"workflow_type": "central_price", "min_amount": "0", "required_approvals": 1,
 	}); code != http.StatusCreated {
 		t.Fatalf("create policy: %d", code)
+	}
+
+	// Simulation after the policy exists: now an approval IS required, and the
+	// simulated required-approvals count matches what RaiseRequest will snapshot.
+	if code, sim := h.invPostJSON(t, "/api/v1/approval-policies/simulate", admin, map[string]any{
+		"workflow_type": "central_price", "amount": "100",
+	}); code != http.StatusOK || !sim["approval_required"].(bool) || sim["required_approvals"].(float64) != 1 {
+		t.Fatalf("simulate (with policy) = %d %v; want required, 1 approval", code, sim)
+	}
+	// A workflow with no policy at all stays not-required even when one exists
+	// for a different workflow.
+	if code, sim := h.invPostJSON(t, "/api/v1/approval-policies/simulate", admin, map[string]any{
+		"workflow_type": "unconfigured_workflow", "amount": "5000",
+	}); code != http.StatusOK || sim["approval_required"].(bool) {
+		t.Fatalf("simulate (other workflow) = %d %v; want not required", code, sim)
+	}
+	// workflow_type is mandatory.
+	if code, _ := h.invPostJSON(t, "/api/v1/approval-policies/simulate", admin, map[string]any{"amount": "1"}); code != http.StatusBadRequest {
+		t.Fatalf("simulate without workflow_type should be 400, got %d", code)
 	}
 	code, ar := h.invPostJSON(t, "/api/v1/approval-requests", admin, map[string]any{
 		"workflow_type": "central_price", "amount": "100", "reference_type": "price_rollout",

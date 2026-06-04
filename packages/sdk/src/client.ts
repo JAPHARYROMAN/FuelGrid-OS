@@ -3,7 +3,9 @@ import type {
   AccountingExport,
   AccountingExportResult,
   AccountingPeriod,
+  ApprovalPolicy,
   ApprovalRequest,
+  ApprovalSimulation,
   CentralPriceRollout,
   EnterpriseOverview,
   RiskAlert,
@@ -3334,8 +3336,24 @@ export class Client {
     );
   }
 
-  listApprovalPolicies(signal?: AbortSignal): Promise<{ items: unknown[]; count: number }> {
-    return this.request('/api/v1/approval-policies', { signal });
+  listApprovalPolicies(signal?: AbortSignal): Promise<Paginated<ApprovalPolicy>> {
+    return this.request<Paginated<ApprovalPolicy>>('/api/v1/approval-policies', { signal });
+  }
+
+  /**
+   * Simulate whether a workflow + amount would require approval under the
+   * current active policies, without persisting anything (feature 9.2).
+   * Requires approval_policy.manage.
+   */
+  simulateApprovalPolicy(
+    req: { workflow_type: string; amount?: string },
+    signal?: AbortSignal,
+  ): Promise<ApprovalSimulation> {
+    return this.request<ApprovalSimulation>('/api/v1/approval-policies/simulate', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   createApprovalPolicy(
