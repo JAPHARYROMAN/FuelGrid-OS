@@ -111,9 +111,9 @@ test.describe('reports — profitability & comparison', () => {
 
     await page.goto('/reports/profitability');
     await expect(page.getByRole('heading', { name: 'Profitability', exact: true })).toBeVisible();
-    await expect(page.getByText('Net operating result')).toBeVisible();
-    await expect(page.getByText('Per-product profitability')).toBeVisible();
-    await expect(page.getByText('Premium')).toBeVisible();
+    await expect(page.getByText('Net operating result').first()).toBeVisible();
+    await expect(page.getByText('Per-product profitability').first()).toBeVisible();
+    await expect(page.getByText('Premium').first()).toBeVisible();
   });
 
   test('station comparison view ranks the accessible stations', async ({ page }) => {
