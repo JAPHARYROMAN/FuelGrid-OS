@@ -987,9 +987,19 @@ func normalizeBackupCode(code string) string {
 // principal holding one of these must have MFA enabled (AUTH MFA policy). The
 // privileged tenant roles — full admin and finance — gate the most sensitive
 // surfaces (user management, the ledger, payouts), so a second factor is not
-// optional for them.
+// optional for them. The HTTP requireMFASatisfied middleware enforces this on
+// the admin-console routes (SR-M1).
+//
+// The canonical FuelGrid system role codes are seeded in migration 0004
+// (system_admin, finance_officer, …). The remaining entries are forward-
+// compatible aliases for tenant role taxonomies that map to the same
+// admin/finance privilege tier, so renaming or adding such a role does not
+// silently drop the MFA requirement.
 var rolesRequiringMfa = map[string]bool{
-	"system_admin": true,
+	// Canonical seeded system roles.
+	"system_admin":    true, // full tenant admin
+	"finance_officer": true, // finance: cash reconciliation, invoices, supplier bills
+	// Forward-compatible aliases for the admin/finance privilege tier.
 	"tenant_admin": true,
 	"admin":        true,
 	"finance":      true,
@@ -998,8 +1008,10 @@ var rolesRequiringMfa = map[string]bool{
 }
 
 // RoleRequiresMfa reports whether any of the supplied role codes makes MFA
-// mandatory. The HTTP layer uses this (with the policy service's role lookup)
-// to refuse a privileged session that has not enrolled a second factor.
+// mandatory. The HTTP layer enforces this via the requireMFASatisfied
+// middleware (using MfaState's RequiredByRole, which calls this): a session
+// whose role requires MFA but has MfaSatisfied=false is refused (403
+// mfa_required) on the sensitive admin-console routes (SR-M1).
 func RoleRequiresMfa(roleCodes []string) bool {
 	for _, c := range roleCodes {
 		if rolesRequiringMfa[strings.ToLower(c)] {

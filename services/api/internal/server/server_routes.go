@@ -51,6 +51,14 @@ func (s *Server) registerRoutes(r chi.Router) {
 					r.Group(func(r chi.Router) {
 						r.Use(s.requireAuth)
 						r.Use(s.rateLimitPerTenant)
+						// SR-M1: enforce MFA server-side on the sensitive
+						// admin-console surface. An actor whose role mandates a
+						// second factor (RoleRequiresMfa) is refused with 403
+						// mfa_required unless their session satisfied MFA. The
+						// /auth, /me, and /me/mfa enrollment groups are mounted
+						// OUTSIDE this group, so a privileged-but-unenrolled user
+						// can still log in, read /me, and enroll — no lockout.
+						r.Use(s.requireMFASatisfied)
 
 						s.registerSetupRoutes(r)
 						s.registerCommercialMasterRoutes(r)
@@ -211,12 +219,16 @@ func (s *Server) registerStationReadRoutes(r chi.Router) {
 		r.With(s.requirePermissionHeld("station.read")).
 			Get("/stations/{stationID}/operations-overview", s.handleOperationsOverview)
 
-		r.With(s.requirePermission("audit.read", nil)).
+		// SR-M1: the audit and role-grant routes are sensitive/privileged and
+		// live in this (otherwise read-leaning) group, so gate them on a
+		// satisfied second factor for roles that mandate MFA, matching the
+		// admin-console group. The station reads above stay ungated.
+		r.With(s.requireMFASatisfied, s.requirePermission("audit.read", nil)).
 			Get("/audit-logs", s.handleListAuditLogs)
-		r.With(s.requirePermission("audit.read", nil)).
+		r.With(s.requireMFASatisfied, s.requirePermission("audit.read", nil)).
 			Post("/audit-logs/export", s.handleExportAuditLogs)
 
-		r.With(s.requirePermission("users.assign_roles", nil)).
+		r.With(s.requireMFASatisfied, s.requirePermission("users.assign_roles", nil)).
 			Post("/admin/users/{userID}/roles", s.handleGrantRole)
 	})
 }

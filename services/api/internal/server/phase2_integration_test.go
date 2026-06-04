@@ -70,14 +70,33 @@ type harness struct {
 }
 
 func setupHarness(t *testing.T) (*harness, func()) {
-	return setupHarnessRLS(t, false)
+	return setupHarnessOpts(t, harnessOpts{})
 }
 
 // setupHarnessRLS is setupHarness with an option to connect request-scoped
 // queries as the non-owner fuelgrid_app role, so Postgres RLS is enforced
 // end-to-end through the real HTTP middleware (DATABASE_APP_URL behaviour).
 func setupHarnessRLS(t *testing.T, enableRLS bool) (*harness, func()) {
+	return setupHarnessOpts(t, harnessOpts{enableRLS: enableRLS})
+}
+
+// harnessOpts toggles the optional behaviours of the integration harness.
+type harnessOpts struct {
+	// enableRLS connects request-scoped queries as the non-owner fuelgrid_app
+	// role so Postgres RLS is enforced end-to-end (DATABASE_APP_URL behaviour).
+	enableRLS bool
+	// enforceMFA turns on AUTH_ENFORCE_MFA_FOR_PRIVILEGED_ROLES (SR-M1). Off by
+	// default so the many multi-privileged-user maker-checker tests, which seed
+	// second approvers without MFA, keep working unchanged. The dedicated SR-M1
+	// test opts it on.
+	enforceMFA bool
+}
+
+// setupHarnessOpts is the shared harness builder behind setupHarness /
+// setupHarnessRLS and the SR-M1 MFA-enforcement harness.
+func setupHarnessOpts(t *testing.T, opts harnessOpts) (*harness, func()) {
 	t.Helper()
+	enableRLS := opts.enableRLS
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	redisURL := os.Getenv("TEST_REDIS_URL")
 	if dbURL == "" || redisURL == "" {
@@ -120,6 +139,8 @@ func setupHarnessRLS(t *testing.T, enableRLS bool) (*harness, func()) {
 	cfg := config.Config{
 		Env: "development", Host: "127.0.0.1", Port: port,
 		CORSOrigins: []string{"http://localhost:3000"}, ShutdownTimeout: 5 * time.Second,
+		// SR-M1: off by default (harness), opt-in for the enforcement test.
+		AuthEnforceMfaForPrivilegedRoles: opts.enforceMFA,
 	}
 	var appDB *database.Pool
 	appClose := func() {}
