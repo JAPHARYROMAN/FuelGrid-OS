@@ -65,6 +65,7 @@ const navGroups: NavGroup[] = [
     label: 'Operations',
     items: [
       { label: 'My Shift', href: '/my-shift', icon: Gauge },
+      { label: 'Point of Sale', href: '/pos', icon: Smartphone },
       { label: 'Operations', href: '/operations', icon: ClipboardCheck },
       { label: 'Stations', href: '/stations', icon: Building2 },
       { label: 'Tanks', href: '/tanks', icon: Database },
@@ -92,6 +93,8 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Finance', href: '/finance', icon: DollarSign },
       { label: 'Expenses', href: '/expenses', icon: Wallet },
+      { label: 'Expense Categories', href: '/expenses/categories', icon: Tag },
+      { label: 'Petty Cash', href: '/expenses/petty-cash', icon: Wallet },
       { label: 'Payables Aging', href: '/payables/aging', icon: Receipt },
       { label: 'Credit Invoices', href: '/credit/invoices', icon: Receipt },
       { label: 'Supplier Invoices', href: '/payables/invoices', icon: Receipt },
