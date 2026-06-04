@@ -50,6 +50,7 @@ Sensitive records that affect stock, cash, revenue, receivables, payables, repor
 | opening_stock.recorded | opening_stock | Record opening stock | Yes | No | Yes | High | Financial |
 | opening_stock.corrected | opening_stock | Correct opening stock before approval | Yes | Yes | Yes | High | Financial |
 | opening_stock.approved | opening_stock | Approve and lock opening stock | Yes | Yes | Yes | High | Financial |
+| opening_stock.rejected | opening_stock | Reject a draft opening stock with a reason | Yes | Yes | Yes | High | Financial |
 | user.invited | user | Invite user | No | No | Yes | Medium | Security |
 | user.activated | user | Activate user | Conditional | Yes | Yes | Medium | Security |
 | user.deactivated | user | Deactivate user | Yes | Yes | Yes | High | Security |
