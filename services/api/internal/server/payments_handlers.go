@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,17 +22,18 @@ import (
 )
 
 type paymentDTO struct {
-	ID         uuid.UUID  `json:"id"`
-	StationID  uuid.UUID  `json:"station_id"`
-	ShiftID    *uuid.UUID `json:"shift_id,omitempty"`
-	CustomerID *uuid.UUID `json:"customer_id,omitempty"`
-	TenderType string     `json:"tender_type"`
-	Amount     string     `json:"amount"`
-	Reference  *string    `json:"reference,omitempty"`
-	ReceivedBy uuid.UUID  `json:"received_by"`
-	ReceivedAt string     `json:"received_at"`
-	Status     string     `json:"status"`
-	Notes      *string    `json:"notes,omitempty"`
+	ID             uuid.UUID  `json:"id"`
+	StationID      uuid.UUID  `json:"station_id"`
+	ShiftID        *uuid.UUID `json:"shift_id,omitempty"`
+	CustomerID     *uuid.UUID `json:"customer_id,omitempty"`
+	TenderType     string     `json:"tender_type"`
+	Amount         string     `json:"amount"`
+	Reference      *string    `json:"reference,omitempty"`
+	ReceivedBy     uuid.UUID  `json:"received_by"`
+	ReceivedAt     string     `json:"received_at"`
+	Status         string     `json:"status"`
+	Notes          *string    `json:"notes,omitempty"`
+	IdempotencyKey *string    `json:"idempotency_key,omitempty"`
 }
 
 func toPaymentDTO(p *payments.Payment) paymentDTO {
@@ -39,7 +41,7 @@ func toPaymentDTO(p *payments.Payment) paymentDTO {
 		ID: p.ID, StationID: p.StationID, ShiftID: p.ShiftID, CustomerID: p.CustomerID,
 		TenderType: p.TenderType, Amount: p.Amount, Reference: p.Reference,
 		ReceivedBy: p.ReceivedBy, ReceivedAt: p.ReceivedAt.Format(time.RFC3339),
-		Status: p.Status, Notes: p.Notes,
+		Status: p.Status, Notes: p.Notes, IdempotencyKey: p.IdempotencyKey,
 	}
 }
 
@@ -52,6 +54,29 @@ type recordPaymentRequest struct {
 	CustomerID     *uuid.UUID `json:"customer_id,omitempty"`
 	AllowOverLimit bool       `json:"allow_over_limit"`
 	Notes          *string    `json:"notes,omitempty"`
+	// IdempotencyKey is an optional client-supplied dedup key (SR-M2). The
+	// Idempotency-Key HTTP header takes precedence when both are present.
+	IdempotencyKey *string `json:"idempotency_key,omitempty"`
+}
+
+// resolveIdempotencyKey picks the client-supplied idempotency key (SR-M2),
+// preferring the Idempotency-Key header over the request-body field, and
+// normalises it: a blank/whitespace value is treated as "no key" (nil). The key
+// is bounded to 255 chars to match the DB CHECK; an over-long key is rejected by
+// the caller.
+func resolveIdempotencyKey(r *http.Request, bodyKey *string) (*string, bool) {
+	raw := r.Header.Get("Idempotency-Key")
+	if raw == "" && bodyKey != nil {
+		raw = *bodyKey
+	}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, true
+	}
+	if len(raw) > 255 {
+		return nil, false
+	}
+	return &raw, true
 }
 
 func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {
@@ -82,6 +107,11 @@ func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "credit tender requires a customer_id")
 		return
 	}
+	idempotencyKey, ok := resolveIdempotencyKey(r, req.IdempotencyKey)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "idempotency key must be 1-255 characters")
+		return
+	}
 
 	ctx := r.Context()
 	shift, err := s.operations.GetShift(ctx, actor.TenantID, shiftID)
@@ -104,10 +134,10 @@ func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	p, err := s.payments.Record(ctx, tx, actor.TenantID, payments.RecordInput{
+	res, err := s.payments.Record(ctx, tx, actor.TenantID, payments.RecordInput{
 		StationID: shift.StationID, ShiftID: &shiftID, CustomerID: req.CustomerID,
 		TenderType: req.TenderType, Amount: req.Amount, Reference: req.Reference,
-		ReceivedBy: actor.UserID, Notes: req.Notes,
+		ReceivedBy: actor.UserID, Notes: req.Notes, IdempotencyKey: idempotencyKey,
 	})
 	if isForeignKeyViolation(err) {
 		writeError(w, http.StatusBadRequest, "unknown customer for this tenant")
@@ -116,6 +146,20 @@ func (s *Server) handleRecordPayment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("record payment", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	p := res.Payment
+
+	// SR-M2: a replay matched by idempotency key returns the already-recorded
+	// payment unchanged — no second insert, and (critically) no re-running of the
+	// side effects below (AR charge, GL journal, audit event) that would
+	// double-apply the amount. Respond 200 with the existing record so the client
+	// retry is a safe no-op.
+	if res.Replayed {
+		if err := tx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+			s.logger.Error("record payment: rollback replay", "error", err)
+		}
+		writeJSON(w, http.StatusOK, toPaymentDTO(p))
 		return
 	}
 

@@ -165,7 +165,7 @@ jobs:
       # gate's behaviour is covered authoritatively by the dedicated
       # mfa_enforcement_integration_test.go (TestMfaEnforcement_SRM1). Production
       # defaults this to true (see config.Load).
-      AUTH_ENFORCE_MFA_FOR_PRIVILEGED_ROLES: "false"
+      AUTH_ENFORCE_MFA_FOR_PRIVILEGED_ROLES: 'false'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

@@ -3550,9 +3550,24 @@ paths:
     post:
       tags: [Revenue]
       summary: Record a shift payment
-      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      description: >-
+        Records a tender against the shift. Supply an optional Idempotency-Key
+        header (or `idempotency_key` body field) to make retries safe: a replay
+        carrying the same key for the tenant returns the already-recorded
+        payment with 200 instead of inserting a duplicate (SR-M2).
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - in: header
+          name: Idempotency-Key
+          required: false
+          description: >-
+            Optional client-supplied dedup key (1-255 chars). A repeat request
+            with the same key returns the original payment (200) rather than
+            recording a second one. Tenant-scoped.
+          schema: { type: string, maxLength: 255 }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
       responses:
+        '200': { description: 'Idempotent replay — the already-recorded payment is returned unchanged', content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '201': { description: Recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
