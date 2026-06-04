@@ -29,16 +29,13 @@ Acceptance criteria for each feature are defined in [feature-improvement-and-add
 
 Code-aware reconciliation across all phases. Each feature row's **Status** column reflects verification against the live codebase (handlers, migrations, routes, SDK, permissions, audit events, frontend, tests).
 
-**Counts (64 feature rows):** 41 DONE · 16 PARTIAL · 6 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
+**Counts (64 feature rows):** 44 DONE · 16 PARTIAL · 3 MISSING · 0 NEEDS QUALITY PASS · 0 DECISION REQUIRED · 1 VERIFY.
 
 The 8 genuinely **MISSING** features below are the real build targets. None currently require a product/architecture decision (0 DECISION REQUIRED). Build order is tracked in [feature-reconciliation-and-next-build-plan.md](feature-reconciliation-and-next-build-plan.md).
 
-- **10.4 Profitability report (MISSING)** — No `GET /reports/profitability` route or page; existing `financials.csv/.pdf` is an accounting income statement, not operational profitability (revenue, COGS, gross margin, net operating result, station/product comparison).
-- **10.6 Station comparison report (MISSING)** — No `GET /reports/station-comparison` route, no frontend page, no ranking logic or scoped-access checks.
 - **12.1 Mobile attendant workflow (MISSING)** — Only `mobile.attendant` permission stub exists; no `apps/mobile`, no `mobile_sessions`/`offline_drafts` tables, no `/mobile/*` routes or SDK methods.
 - **12.2 Offline sync foundation (MISSING)** — Only `mobile.sync` permission stub; no `idempotency_keys`/`sync_batches`/`sync_conflicts` tables, no `/sync/*` routes or SDK methods.
 - **12.3 Hardware integration readiness (MISSING)** — Only `integration.manage` permission stub; `devices` table exists but no device-registry/webhook endpoints or signature verification.
-- **13.2 Data lifecycle and retention (MISSING)** — Accounting-period close exists, but no `retention_policies`/`retention_jobs` tables, no closed-period change-request workflow, no `retention.*`/`closed_period.change` endpoints, SDK methods, permissions, or audit events.
 
 ## Phase 0 - Planning and control
 
@@ -140,9 +137,9 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | 10.1 Reports overview | P1 | internal/reports | /reports | report_catalog, report_runs, report_favorites | GET /reports/catalog, GET /reports/recent | reports.catalog, reports.recent | reports.view | n/a | unit, frontend states | DONE |
 | 10.2 Daily operations report | P1 | internal/reports, internal/operations | /reports/daily-operations | report_runs, export_jobs | GET /reports/daily-operations | reports.dailyOperations | reports.view, reports.export | report.exported | report math, export | DONE |
 | 10.3 Stock loss and variance report | P1 | internal/reports, internal/inventory | /reports/stock-loss | report_runs, export_jobs | GET /reports/stock-loss | reports.stockLoss | reports.view, reports.export | report.exported | variance math, export | DONE |
-| 10.4 Profitability report | P1 | internal/reports, internal/accounting | /reports/profitability | report_runs, export_jobs | GET /reports/profitability | reports.profitability | reports.view, reports.export | report.exported | report math, export | MISSING |
+| 10.4 Profitability report | P1 | internal/reports, internal/accounting | /reports/profitability | report_runs, export_jobs | GET /reports/profitability | reports.profitability | reports.view, reports.export | report.exported | report math, export | DONE |
 | 10.5 Credit and cashflow report | P1 | internal/reports, internal/receivables | /reports/credit-cashflow | report_runs, export_jobs | GET /reports/credit-cashflow | reports.creditCashflow | reports.view, reports.export | report.exported | reconciliation, export | PARTIAL |
-| 10.6 Station comparison report | P1 | internal/reports, internal/enterprise | /reports/station-comparison | report_runs, export_jobs | GET /reports/station-comparison | reports.stationComparison | reports.view, reports.export | report.exported | scoped access, ranking | MISSING |
+| 10.6 Station comparison report | P1 | internal/reports, internal/enterprise | /reports/station-comparison | report_runs, export_jobs | GET /reports/station-comparison | reports.stationComparison | reports.view, reports.export | report.exported | scoped access, ranking | DONE |
 | 10.7 Export service | P0 | internal/reports, internal/audit | /reports/exports | export_jobs, export_files | POST /exports, GET /exports/{id} | reports.exports.* | reports.export | report.exported | permission, job, file metadata | PARTIAL |
 
 ## Phase 11 - Notifications, risk, and intelligence
@@ -166,7 +163,7 @@ The 8 genuinely **MISSING** features below are the real build targets. None curr
 | Feature | Priority | Backend domain | Frontend route | Required database tables | Required API endpoints | Required SDK methods | Required permissions | Required audit events | Required tests | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 13.1 Enterprise hierarchy improvements | P1 | internal/enterprise | context switcher, reports | tenant_hierarchy, company_hierarchy, region_hierarchy, scope_assignments | hierarchy and scope APIs | enterprise.* | enterprise.manage, enterprise.scope.switch | enterprise.scope_changed | cross-scope leakage, report access | PARTIAL |
-| 13.2 Data lifecycle and retention | P1 | internal/enterprise, internal/database | governance pages | retention_policies, retention_jobs, closed_periods | CRUD /retention-policies, POST /closed-periods/change-requests | enterprise.retention.* | retention.manage, closed_period.change | retention.job_run, closed_period.change_requested | unit, job, audit | MISSING |
+| 13.2 Data lifecycle and retention | P1 | internal/enterprise, internal/database | governance pages | retention_policies, retention_jobs, closed_periods | CRUD /retention-policies, POST /closed-periods/change-requests | enterprise.retention.* | retention.manage, closed_period.change | retention.job_run, closed_period.change_requested | unit, job, audit | DONE |
 | 13.3 Observability dashboard | P1 | internal/observability | operations dashboard | health_snapshots, job_failures, outbox_metrics | GET /observability/health | observability.* | observability.view | observability.alert_triggered | health checks, frontend states | PARTIAL |
 
 ## Cross-cutting additions

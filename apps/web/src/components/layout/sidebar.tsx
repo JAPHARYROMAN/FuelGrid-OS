@@ -117,6 +117,7 @@ const navGroups: NavGroup[] = [
       { label: 'System', href: '/settings/system', icon: ServerCog },
       { label: 'Automation', href: '/automation', icon: Sparkles },
       { label: 'Governance', href: '/governance/policies', icon: ShieldCheck },
+      { label: 'Retention', href: '/governance/retention', icon: ScrollText },
       { label: 'Design system', href: '/style', icon: Palette },
       { label: 'Settings', href: '/settings', icon: Settings },
     ],
