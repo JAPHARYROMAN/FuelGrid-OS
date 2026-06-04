@@ -85,6 +85,65 @@ jobs:
             VERSION=${{ github.sha }}
             COMMIT=${{ github.sha }}
 
+  build-push-web:
+    name: Build + push Web image to GHCR
+    runs-on: ubuntu-latest
+    environment: production
+    # Independent of the API build (no `needs:`) so both tiers build in
+    # parallel. Like build-push, this runs on every push to main / tag and uses
+    # the automatic GITHUB_TOKEN for GHCR — no extra secret required.
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Web image repo is the lowercased owner/repo with a -web suffix:
+      # ghcr.io/<owner>/<repo>-web. The gated web-rollout step in `deploy`
+      # re-derives this same ref + :sha-<full-sha> tag to roll it out.
+      - name: Compute image reference
+        id: meta
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-web"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Image repository: $image"
+
+      # Same tagging scheme as the API build so the rollout can pin :sha-<sha>:
+      #   - :sha-<full-sha>   immutable handle for every build
+      #   - :latest           moving handle, only on branch pushes (not tags)
+      #   - :<tag>            the git tag name, on tag pushes (e.g. v1.2.3)
+      - name: Docker metadata (tags + labels)
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.meta.outputs.image }}
+          tags: |
+            type=sha,prefix=sha-,format=long
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+
+      # Build context is the repo root (the web image needs the whole pnpm
+      # workspace); the Dockerfile lives at apps/web/Dockerfile. Runtime config
+      # (API_ORIGIN) is supplied by Fly env at deploy time, NOT baked here.
+      - name: Build + push Web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   migrate:
     name: Apply DB migrations (golang-migrate up)
     runs-on: ubuntu-latest
@@ -134,7 +193,11 @@ jobs:
   deploy:
     name: Roll out image to Fly.io (flyctl deploy)
     runs-on: ubuntu-latest
-    needs: migrate
+    # `migrate` gates the API rollout (schema first). `build-push-web` is added
+    # so the web image is published before the gated web-rollout step's
+    # `docker manifest inspect` check runs — otherwise the rollout could race
+    # the build and skip on a missing manifest.
+    needs: [migrate, build-push-web]
     environment: production
     steps:
       - uses: actions/checkout@v4
