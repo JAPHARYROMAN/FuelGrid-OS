@@ -104,6 +104,25 @@ export interface TenantBrandingUpdate {
   footer_note?: string;
 }
 
+/**
+ * Attachment is one file attached to a business entity (an expense receipt, a
+ * delivery photo, …). The bytes are fetched separately via the download_url
+ * (cookie-bearing through the BFF); this carries only metadata.
+ */
+export interface Attachment {
+  id: string;
+  entity_type: string;
+  entity_id: string;
+  station_id?: string | null;
+  filename: string;
+  content_type: 'application/pdf' | 'image/png' | 'image/jpeg';
+  size_bytes: number;
+  checksum: string;
+  uploaded_by?: string | null;
+  created_at: string;
+  download_url: string;
+}
+
 export interface Region {
   id: string;
   tenant_id: string;

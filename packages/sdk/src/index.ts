@@ -25,6 +25,7 @@ export type {
   StationGroup,
   StationRank,
   StockTransfer,
+  Attachment,
   BalanceSheet,
   BankAccount,
   BankDeposit,

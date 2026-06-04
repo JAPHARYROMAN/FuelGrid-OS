@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/japharyroman/fuelgrid-os/internal/accounting"
+	"github.com/japharyroman/fuelgrid-os/internal/attachments"
 	"github.com/japharyroman/fuelgrid-os/internal/banking"
 	"github.com/japharyroman/fuelgrid-os/internal/branding"
 	"github.com/japharyroman/fuelgrid-os/internal/cache"
@@ -101,6 +102,7 @@ type Server struct {
 	healthcheckDone chan struct{}
 
 	accounting     *accounting.Repo
+	attachments    *attachments.Repo
 	banking        *banking.Repo
 	enterprise     *enterprise.Repo
 	expenses       *expenses.Repo
@@ -199,6 +201,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// gate themselves on s.deps.DB == nil checks at registration time.
 	if deps.DB != nil {
 		s.accounting = accounting.New(deps.DB)
+		s.attachments = attachments.New(deps.DB)
 		s.banking = banking.New(deps.DB)
 		s.enterprise = enterprise.New(deps.DB)
 		s.expenses = expenses.New(deps.DB)

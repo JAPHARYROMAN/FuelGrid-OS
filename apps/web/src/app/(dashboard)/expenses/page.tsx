@@ -31,6 +31,7 @@ import {
   TableRow,
 } from '@fuelgrid/ui';
 
+import { AttachmentList } from '@/components/attachments';
 import { DocumentActions } from '@/components/document-actions';
 import { PermissionGate } from '@/components/permission-gate';
 import { usePermission } from '@/hooks/use-permissions';
@@ -57,6 +58,7 @@ export default function ExpensesPage() {
   const qc = useQueryClient();
   const [status, setStatus] = React.useState<string>('');
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [receiptsFor, setReceiptsFor] = React.useState<Expense | null>(null);
 
   const canManage = usePermission('expense.manage');
   const canApprove = usePermission('expense.approve');
@@ -199,6 +201,14 @@ export default function ExpensesPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setReceiptsFor(e)}
+                        >
+                          Receipts
+                        </Button>
                         {e.status === 'draft' ? (
                           <PermissionGate permission="expense.manage">
                             <Button
@@ -249,6 +259,29 @@ export default function ExpensesPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={receiptsFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setReceiptsFor(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Expense receipts</DialogTitle>
+            <DialogDescription>
+              Attach receipts and supporting documents for this expense.
+            </DialogDescription>
+          </DialogHeader>
+          {receiptsFor ? (
+            <AttachmentList
+              entityType="expense"
+              entityId={receiptsFor.id}
+              permission="attachment.manage"
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <CreateExpenseDialog
         open={createOpen}

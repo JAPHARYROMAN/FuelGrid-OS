@@ -14,6 +14,7 @@ import type {
   StationGroup,
   StationRank,
   StockTransfer,
+  Attachment,
   BalanceSheet,
   BankAccount,
   BankDeposit,
@@ -567,6 +568,59 @@ export class Client {
    */
   brandingLogoUrl(): string {
     return `${this.baseURL}/api/v1/branding/logo`;
+  }
+
+  // ----------- Attachments (generic per-entity files) -----------
+
+  /**
+   * Upload a file (PDF/PNG/JPEG, <= 5 MiB) attached to an entity. Permission:
+   * attachment.manage. The server validates the content type + size and 404s
+   * an unknown parent. Returns the stored attachment's metadata.
+   */
+  uploadAttachment(
+    req: { entityType: string; entityID: string; file: File | Blob },
+    signal?: AbortSignal,
+  ): Promise<Attachment> {
+    const form = new FormData();
+    form.set('entity_type', req.entityType);
+    form.set('entity_id', req.entityID);
+    form.set('file', req.file);
+    return this.request<Attachment>('/api/v1/attachments', {
+      method: 'POST',
+      body: form,
+      signal,
+    });
+  }
+
+  /** List the live attachments for an entity (permission: attachment.read). */
+  listAttachments(
+    entityType: string,
+    entityID: string,
+    signal?: AbortSignal,
+  ): Promise<{ items: Attachment[]; count: number }> {
+    return this.request<{ items: Attachment[]; count: number }>(
+      `/api/v1/entities/${encodeURIComponent(entityType)}/${encodeURIComponent(entityID)}/attachments`,
+      { signal },
+    );
+  }
+
+  /**
+   * Same-origin URL that streams an attachment's bytes (cookie-bearing via the
+   * BFF). Use as an <a href> / <img src>.
+   */
+  attachmentUrl(id: string): string {
+    return `${this.baseURL}/api/v1/attachments/${encodeURIComponent(id)}`;
+  }
+
+  /**
+   * Soft-delete an attachment (permission: attachment.manage). Refused 409 when
+   * the parent record is posted/locked.
+   */
+  deleteAttachment(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/attachments/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
   }
 
   // ----------- Regions -----------
