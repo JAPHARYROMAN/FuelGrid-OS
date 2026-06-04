@@ -174,6 +174,34 @@ func (s *Server) handleEffectiveStations(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"user_id": userID, "tenant_wide": tenantWide, "station_ids": stations})
 }
 
+// handleListEnterpriseScopes returns the enterprise scopes the calling user may
+// switch between (Feature 13.1). It is a read-only lens over the user's own
+// grants — picking a scope narrows the chain view to a subset they already have
+// access to and never widens it, since scoped reads still enforce station
+// access server-side. Gated enterprise.scope.switch.
+func (s *Server) handleListEnterpriseScopes(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	opts, tenantWide, err := s.enterprise.UserScopes(r.Context(), actor.TenantID, actor.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	items := make([]map[string]any, 0, len(opts))
+	for i := range opts {
+		items = append(items, map[string]any{
+			"scope_type":    opts[i].ScopeType,
+			"scope_id":      opts[i].ScopeID,
+			"label":         opts[i].Label,
+			"station_count": opts[i].StationCount,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenant_wide": tenantWide, "scopes": items})
+}
+
 // ---- Approval engine (Stage 3) ----
 
 func (s *Server) handleCreateApprovalPolicy(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +274,127 @@ func (s *Server) handleSimulateApprovalPolicy(w http.ResponseWriter, r *http.Req
 		"required_role":      res.RequiredRole,
 		"policy_id":          res.PolicyID,
 	})
+}
+
+// policyMap is the wire shape shared by the edit/status responses.
+func policyMap(p *enterprise.Policy) map[string]any {
+	return map[string]any{
+		"id": p.ID, "workflow_type": p.WorkflowType, "min_amount": p.MinAmount,
+		"required_approvals": p.RequiredApprovals, "required_role": p.RequiredRole, "status": p.Status,
+	}
+}
+
+// handleUpdateApprovalPolicy edits a policy's matching rule (Feature 9.2:
+// edit). It does not touch status — enable/disable is a separate endpoint. The
+// change is audited as approval.policy_changed with the before/after snapshot.
+func (s *Server) handleUpdateApprovalPolicy(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		WorkflowType      string  `json:"workflow_type"`
+		MinAmount         string  `json:"min_amount,omitempty"`
+		RequiredApprovals int     `json:"required_approvals,omitempty"`
+		RequiredRole      *string `json:"required_role,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.WorkflowType == "" {
+		writeError(w, http.StatusBadRequest, "workflow_type is required")
+		return
+	}
+	// Snapshot the prior state for the audit trail (financial-grade change log).
+	before, err := s.enterprise.GetPolicy(r.Context(), actor.TenantID, id)
+	if errors.Is(err, enterprise.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "approval policy not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var updated *enterprise.Policy
+	ok := s.txAudit(w, r, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "approval.policy_changed", EventType: "ApprovalPolicyChanged", EntityType: "approval_policy",
+		EntityID: id.String(), PreviousValue: policyMap(before),
+	}, func(tx pgx.Tx) (string, error) {
+		out, err := s.enterprise.UpdatePolicy(r.Context(), tx, actor.TenantID, id, req.WorkflowType, req.MinAmount, req.RequiredApprovals, req.RequiredRole)
+		if errors.Is(err, enterprise.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "approval policy not found")
+			return "", err
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return "", err
+		}
+		updated = out
+		return id.String(), nil
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, policyMap(updated))
+}
+
+// handleSetApprovalPolicyStatus enables ('active') or disables ('archived') a
+// policy (Feature 9.2: enable/disable). A disabled policy is ignored by the
+// approval engine, so it no longer requires approval. Audited as
+// approval.policy_changed with the before/after snapshot.
+func (s *Server) handleSetApprovalPolicyStatus(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || (req.Status != "active" && req.Status != "archived") {
+		writeError(w, http.StatusBadRequest, "status must be active|archived")
+		return
+	}
+	before, err := s.enterprise.GetPolicy(r.Context(), actor.TenantID, id)
+	if errors.Is(err, enterprise.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "approval policy not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var updated *enterprise.Policy
+	ok := s.txAudit(w, r, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "approval.policy_changed", EventType: "ApprovalPolicyChanged", EntityType: "approval_policy",
+		EntityID: id.String(), PreviousValue: policyMap(before), NewValue: map[string]any{"status": req.Status},
+	}, func(tx pgx.Tx) (string, error) {
+		out, err := s.enterprise.SetPolicyStatus(r.Context(), tx, actor.TenantID, id, req.Status)
+		if errors.Is(err, enterprise.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "approval policy not found")
+			return "", err
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return "", err
+		}
+		updated = out
+		return id.String(), nil
+	})
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, policyMap(updated))
 }
 
 func (s *Server) handleListApprovalPolicies(w http.ResponseWriter, r *http.Request) {

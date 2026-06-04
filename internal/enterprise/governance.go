@@ -170,6 +170,105 @@ func (r *Repo) EffectiveStations(ctx context.Context, tenantID, userID uuid.UUID
 	return stations, false, nil
 }
 
+// ScopeOption is one switchable enterprise scope available to a user — a node
+// of the hierarchy (tenant / company / region / group / station) their grants
+// resolve to, with a human label and the number of stations it covers. It backs
+// the context scope-switcher (Feature 13.1).
+type ScopeOption struct {
+	ScopeType    string
+	ScopeID      *uuid.UUID
+	Label        string
+	StationCount int
+}
+
+// UserScopes enumerates the enterprise scopes a user may switch between, derived
+// from their scope grants. A tenant grant yields a single "All stations" option
+// (tenantWide=true). Otherwise each grant becomes a labelled option with its
+// resolved station count; the labels are looked up from companies / regions /
+// station_groups / stations so the switcher shows names, not raw ids. The set is
+// deduplicated by (scope_type, scope_id).
+//
+// This is a read-only lens over the user's OWN grants: it never widens access,
+// because scoped reads still enforce station access server-side. It exists so
+// the UI can offer the user a way to narrow the chain view to a subset they are
+// already entitled to.
+func (r *Repo) UserScopes(ctx context.Context, tenantID, userID uuid.UUID) (opts []ScopeOption, tenantWide bool, err error) {
+	rows, qerr := r.pool.Query(ctx, `SELECT scope_type, scope_id FROM enterprise_scope_grants WHERE tenant_id = $1 AND user_id = $2`, tenantID, userID)
+	if qerr != nil {
+		return nil, false, qerr
+	}
+	defer rows.Close()
+	type grant struct {
+		t  string
+		id *uuid.UUID
+	}
+	var grants []grant
+	for rows.Next() {
+		var g grant
+		if err := rows.Scan(&g.t, &g.id); err != nil {
+			return nil, false, err
+		}
+		if g.t == "tenant" {
+			return nil, true, nil
+		}
+		grants = append(grants, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	seen := map[string]struct{}{}
+	opts = []ScopeOption{}
+	for _, g := range grants {
+		if g.id == nil {
+			continue
+		}
+		key := g.t + ":" + g.id.String()
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		opt := ScopeOption{ScopeType: g.t, ScopeID: g.id}
+		var labelQ, countQ string
+		switch g.t {
+		case "company":
+			labelQ = `SELECT name FROM companies WHERE tenant_id = $1 AND id = $2`
+			countQ = `SELECT count(*) FROM stations WHERE tenant_id = $1 AND company_id = $2`
+		case "region":
+			labelQ = `SELECT name FROM regions WHERE tenant_id = $1 AND id = $2`
+			countQ = `SELECT count(*) FROM stations WHERE tenant_id = $1 AND region_id = $2`
+		case "group":
+			labelQ = `SELECT name FROM station_groups WHERE tenant_id = $1 AND id = $2`
+			countQ = `SELECT count(*) FROM station_group_memberships WHERE tenant_id = $1 AND station_group_id = $2`
+		case "station":
+			labelQ = `SELECT name FROM stations WHERE tenant_id = $1 AND id = $2`
+			// A station scope always covers exactly itself.
+			countQ = ""
+			opt.StationCount = 1
+		default:
+			continue
+		}
+		var label *string
+		if err := r.pool.QueryRow(ctx, labelQ, tenantID, *g.id).Scan(&label); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				// Grant points at a deleted node; skip it rather than surface a
+				// dangling option.
+				continue
+			}
+			return nil, false, err
+		}
+		if label != nil {
+			opt.Label = *label
+		}
+		if countQ != "" {
+			if err := r.pool.QueryRow(ctx, countQ, tenantID, *g.id).Scan(&opt.StationCount); err != nil {
+				return nil, false, err
+			}
+		}
+		opts = append(opts, opt)
+	}
+	return opts, false, nil
+}
+
 // ---- Approval engine (Stage 3) ----
 
 type ApprovalRequest struct {
@@ -255,6 +354,83 @@ func (r *Repo) ListPoliciesPage(ctx context.Context, tenantID uuid.UUID, limit, 
 		out = append(out, map[string]any{"id": id, "workflow_type": wf, "min_amount": minAmt, "required_approvals": req, "required_role": role, "status": status})
 	}
 	return out, rows.Err()
+}
+
+// Policy is a single approval policy row, shaped for the edit/status endpoints
+// (Feature 9.2). min_amount is the exact decimal string (::text from numeric),
+// never a float.
+type Policy struct {
+	ID                uuid.UUID
+	WorkflowType      string
+	MinAmount         string
+	RequiredApprovals int
+	RequiredRole      *string
+	Status            string
+}
+
+// GetPolicy reads one approval policy by id within the tenant.
+func (r *Repo) GetPolicy(ctx context.Context, tenantID, id uuid.UUID) (*Policy, error) {
+	var p Policy
+	err := r.pool.QueryRow(ctx, `
+		SELECT id, workflow_type, min_amount::text, required_approvals, required_role, status
+		FROM approval_policies WHERE tenant_id = $1 AND id = $2
+	`, tenantID, id).Scan(&p.ID, &p.WorkflowType, &p.MinAmount, &p.RequiredApprovals, &p.RequiredRole, &p.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// UpdatePolicy edits a policy's matching rule (workflow_type, min_amount,
+// required_approvals, required_role) in place. The status is left untouched —
+// enable/disable goes through SetPolicyStatus. required_approvals is clamped to
+// the table's CHECK (>= 1). Returns the updated row, or ErrNotFound when no
+// policy with that id exists in the tenant.
+func (r *Repo) UpdatePolicy(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, workflowType string, minAmount string, requiredApprovals int, requiredRole *string) (*Policy, error) {
+	if requiredApprovals < 1 {
+		requiredApprovals = 1
+	}
+	var p Policy
+	err := tx.QueryRow(ctx, `
+		UPDATE approval_policies
+		SET workflow_type = $3, min_amount = COALESCE($4::numeric, 0),
+		    required_approvals = $5, required_role = $6
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING id, workflow_type, min_amount::text, required_approvals, required_role, status
+	`, tenantID, id, workflowType, nullableMoney(minAmount), requiredApprovals, requiredRole).
+		Scan(&p.ID, &p.WorkflowType, &p.MinAmount, &p.RequiredApprovals, &p.RequiredRole, &p.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// SetPolicyStatus enables ('active') or disables ('archived') a policy. A
+// disabled policy is ignored by resolvePolicy (it filters status = 'active'),
+// so a disabled policy no longer requires approval in simulation or when a
+// request is raised. status must be one of the table's CHECK values; callers
+// validate it. Returns ErrNotFound when no such policy exists in the tenant.
+func (r *Repo) SetPolicyStatus(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, status string) (*Policy, error) {
+	var p Policy
+	err := tx.QueryRow(ctx, `
+		UPDATE approval_policies SET status = $3
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING id, workflow_type, min_amount::text, required_approvals, required_role, status
+	`, tenantID, id, status).
+		Scan(&p.ID, &p.WorkflowType, &p.MinAmount, &p.RequiredApprovals, &p.RequiredRole, &p.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
 }
 
 // PolicyResolution is the outcome of resolving the governance policies for a

@@ -607,7 +607,17 @@ func (s *Server) registerEnterpriseRoutes(r chi.Router) {
 	r.With(s.requirePermission("approval_policy.manage", nil)).Group(func(r chi.Router) {
 		r.Post("/approval-policies", s.handleCreateApprovalPolicy)
 		r.Post("/approval-policies/simulate", s.handleSimulateApprovalPolicy)
+		// Edit + enable/disable (Feature 9.2). PUT and PATCH both edit the
+		// matching rule; the status sub-resource toggles active/archived.
+		r.Put("/approval-policies/{id}", s.handleUpdateApprovalPolicy)
+		r.Patch("/approval-policies/{id}", s.handleUpdateApprovalPolicy)
+		r.Patch("/approval-policies/{id}/status", s.handleSetApprovalPolicyStatus)
 	})
+	// Enterprise context scope-switcher (Feature 13.1): list the scopes the
+	// caller may switch the active chain view between. Read-only lens over the
+	// user's own grants — gated enterprise.scope.switch.
+	r.With(s.requirePermissionHeld("enterprise.scope.switch")).
+		Get("/enterprise/scopes", s.handleListEnterpriseScopes)
 	r.With(s.requirePermission("approval_request.decide", nil)).
 		Post("/approval-requests/{id}/decide", s.handleDecideApproval)
 

@@ -8,11 +8,15 @@ import { SdkError, type ApprovalPolicy, type ApprovalSimulation } from '@fuelgri
 const listApprovalPolicies = vi.fn();
 const simulateApprovalPolicy = vi.fn();
 const createApprovalPolicy = vi.fn();
+const updateApprovalPolicy = vi.fn();
+const setApprovalPolicyStatus = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     listApprovalPolicies: (...args: unknown[]) => listApprovalPolicies(...args),
     simulateApprovalPolicy: (...args: unknown[]) => simulateApprovalPolicy(...args),
     createApprovalPolicy: (...args: unknown[]) => createApprovalPolicy(...args),
+    updateApprovalPolicy: (...args: unknown[]) => updateApprovalPolicy(...args),
+    setApprovalPolicyStatus: (...args: unknown[]) => setApprovalPolicyStatus(...args),
   },
 }));
 
@@ -48,6 +52,8 @@ describe('GovernancePoliciesPage', () => {
     listApprovalPolicies.mockReset();
     simulateApprovalPolicy.mockReset();
     createApprovalPolicy.mockReset();
+    updateApprovalPolicy.mockReset();
+    setApprovalPolicyStatus.mockReset();
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -133,5 +139,52 @@ describe('GovernancePoliciesPage', () => {
     await screen.findByText('central_price');
     // Simulate button is disabled without approval_policy.manage.
     expect(screen.getByRole('button', { name: /^simulate$/i })).toBeDisabled();
+  });
+
+  it('edits a policy through the edit dialog', async () => {
+    listApprovalPolicies.mockResolvedValue({ items: [policy], count: 1, has_more: false });
+    updateApprovalPolicy.mockResolvedValue({ ...policy, required_approvals: 3 });
+    renderPage();
+
+    await screen.findByText('central_price');
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // The dialog is seeded from the policy.
+    const approvals = await screen.findByLabelText('Required approvals');
+    expect((approvals as HTMLInputElement).value).toBe('2');
+    fireEvent.change(approvals, { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() =>
+      expect(updateApprovalPolicy).toHaveBeenCalledWith('pol-1', {
+        workflow_type: 'central_price',
+        min_amount: '1000.00',
+        required_approvals: 3,
+        required_role: 'finance_manager',
+      }),
+    );
+  });
+
+  it('disables an active policy from the list', async () => {
+    listApprovalPolicies.mockResolvedValue({ items: [policy], count: 1, has_more: false });
+    setApprovalPolicyStatus.mockResolvedValue({ ...policy, status: 'archived' });
+    renderPage();
+
+    await screen.findByText('central_price');
+    fireEvent.click(screen.getByRole('button', { name: /^disable$/i }));
+
+    await waitFor(() => expect(setApprovalPolicyStatus).toHaveBeenCalledWith('pol-1', 'archived'));
+  });
+
+  it('enables a disabled policy from the list', async () => {
+    const archived: ApprovalPolicy = { ...policy, status: 'archived' };
+    listApprovalPolicies.mockResolvedValue({ items: [archived], count: 1, has_more: false });
+    setApprovalPolicyStatus.mockResolvedValue({ ...archived, status: 'active' });
+    renderPage();
+
+    await screen.findByText('central_price');
+    fireEvent.click(screen.getByRole('button', { name: /^enable$/i }));
+
+    await waitFor(() => expect(setApprovalPolicyStatus).toHaveBeenCalledWith('pol-1', 'active'));
   });
 });

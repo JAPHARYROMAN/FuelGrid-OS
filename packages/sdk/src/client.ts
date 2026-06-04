@@ -8,6 +8,8 @@ import type {
   ApprovalSimulation,
   CentralPriceRollout,
   EnterpriseOverview,
+  EnterpriseScopes,
+  ObservabilityHealth,
   RiskAlert,
   RiskRule,
   RiskRuleInput,
@@ -3663,6 +3665,15 @@ export class Client {
     );
   }
 
+  /**
+   * List the enterprise scopes the calling user may switch the active chain
+   * view between (feature 13.1). Read-only lens over the user's own grants;
+   * switching never widens access. Requires enterprise.scope.switch.
+   */
+  listEnterpriseScopes(signal?: AbortSignal): Promise<EnterpriseScopes> {
+    return this.request<EnterpriseScopes>('/api/v1/enterprise/scopes', { signal });
+  }
+
   listApprovalPolicies(signal?: AbortSignal): Promise<Paginated<ApprovalPolicy>> {
     return this.request<Paginated<ApprovalPolicy>>('/api/v1/approval-policies', { signal });
   }
@@ -3693,6 +3704,46 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<{ id: string }> {
     return this.request('/api/v1/approval-policies', { method: 'POST', body: req, signal });
+  }
+
+  /**
+   * Edit an approval policy's matching rule (workflow_type, min_amount,
+   * required_approvals, required_role). Does not change its enabled/disabled
+   * status — use {@link setApprovalPolicyStatus}. Requires approval_policy.manage
+   * (feature 9.2).
+   */
+  updateApprovalPolicy(
+    id: string,
+    req: {
+      workflow_type: string;
+      min_amount?: string;
+      required_approvals?: number;
+      required_role?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<ApprovalPolicy> {
+    return this.request<ApprovalPolicy>(`/api/v1/approval-policies/${id}`, {
+      method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  /**
+   * Enable ('active') or disable ('archived') an approval policy. A disabled
+   * policy is ignored by the approval engine. Requires approval_policy.manage
+   * (feature 9.2).
+   */
+  setApprovalPolicyStatus(
+    id: string,
+    status: 'active' | 'archived',
+    signal?: AbortSignal,
+  ): Promise<ApprovalPolicy> {
+    return this.request<ApprovalPolicy>(`/api/v1/approval-policies/${id}/status`, {
+      method: 'PATCH',
+      body: { status },
+      signal,
+    });
   }
 
   listApprovalRequests(
@@ -4316,6 +4367,15 @@ export class Client {
    */
   listJobRuns(signal?: AbortSignal): Promise<JobRunList> {
     return this.request<JobRunList>('/api/v1/admin/jobs', { signal });
+  }
+
+  /**
+   * API-exposed, read-only observability snapshot (feature 13.3): postgres and
+   * redis reachability, the tenant's outbox backlog and dead-letter counts, and
+   * the scheduler's most recent run. Requires the `audit.read` permission.
+   */
+  getObservabilityHealth(signal?: AbortSignal): Promise<ObservabilityHealth> {
+    return this.request<ObservabilityHealth>('/api/v1/observability/health', { signal });
   }
 
   // ----------- Data lifecycle & retention (Feature 13.2) -----------
