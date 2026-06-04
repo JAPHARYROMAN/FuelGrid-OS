@@ -23,7 +23,12 @@ build
 bin
 **/bin
 
-apps
+# The API build (services/api/Dockerfile) does not need apps/, but the web
+# build (apps/web/Dockerfile) does — both use the repo root as context. Ignore
+# everything under apps/ EXCEPT the web app source the web image compiles.
+# (node_modules/.next/coverage are already pruned by the **/ rules above.)
+apps/*
+!apps/web
 docs
 .env
 .env.*

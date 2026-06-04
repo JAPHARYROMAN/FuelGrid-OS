@@ -12,22 +12,20 @@
 # SECRETS ARE NOT STORED HERE (set via `fly secrets set --app fuelgrid-web`).
 # Replace the placeholders: app name, primary_region, and the API origin.
 #
-# BUILD: unlike the API (which deploys a prebuilt GHCR image), the web app has
-# no published image yet, so this config builds from a Dockerfile on Fly's
-# remote builder. The operator adds apps/web/Dockerfile (Next.js standalone
-# multi-stage) before the first `fly deploy` — see the Go-live runbook in
-# docs/deployment.md. Once a web image is published to GHCR, switch to an
-# image-based rollout exactly like the API.
+# Image-based deploy (mirrors services/api/fly.toml): the CD pipeline
+# (.github/workflows/deploy.yml `build-push-web` job) builds apps/web/Dockerfile
+# (Next.js standalone multi-stage) and pushes it to
+# ghcr.io/<owner>/<repo>-web:sha-<sha>, then the gated web-rollout step runs
+# `flyctl deploy --config apps/web/fly.toml --image ...`. There is NO in-Fly
+# build — do NOT add a [build] section; the rollout always pins an immutable
+# GHCR tag, exactly like the API.
 # =============================================================================
 
 app            = "fuelgrid-web"   # PLACEHOLDER — your Fly app name
 primary_region = "jnb"            # PLACEHOLDER — match the API region for low BFF latency
 
-[build]
-  # PLACEHOLDER — operator provides a Next.js standalone Dockerfile here, or
-  # remove [build] and deploy `flyctl deploy --image ghcr.io/<owner>/<repo>-web:<tag>`
-  # once a web image is published.
-  dockerfile = "Dockerfile"
+[deploy]
+  strategy = "rolling"
 
 [env]
   NODE_ENV = "production"
@@ -44,12 +42,17 @@ primary_region = "jnb"            # PLACEHOLDER — match the API region for low
   # NEXT_PUBLIC_SENTRY_DSN (browser Sentry) is non-secret-ish but environment
   # specific; set it here or via `fly secrets` if you prefer it out of config.
 
+[processes]
+  # Single web tier; empty = use the image CMD (node apps/web/server.js).
+  web = ""
+
 [http_service]
   internal_port        = 3000
   force_https          = true
   auto_stop_machines   = "suspend"
   auto_start_machines  = true
   min_machines_running = 1
+  processes            = ["web"]
 
   # Health check: the login page is a stable, unauthenticated route that
   # renders 200 when the Next.js server is up. Adjust to a dedicated health
@@ -62,7 +65,8 @@ primary_region = "jnb"            # PLACEHOLDER — match the API region for low
     grace_period = "20s"
 
 [[vm]]
-  size     = "shared-cpu-1x"
-  memory   = "512mb"
-  cpu_kind = "shared"
-  cpus     = 1
+  size      = "shared-cpu-1x"
+  memory    = "512mb"
+  cpu_kind  = "shared"
+  cpus      = 1
+  processes = ["web"]
