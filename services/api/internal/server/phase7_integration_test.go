@@ -1150,3 +1150,107 @@ func TestAuditExportRecordsEvent(t *testing.T) {
 		t.Fatalf("expected an export.generated audit row, got %d", n)
 	}
 }
+
+// TestPhase7_CustomerPaymentReversal exercises reversing a posted customer
+// payment: the affected invoice balance is restored, the original payment is
+// preserved (status 'voided', not deleted), a balanced reversal journal entry
+// is posted, and a repeat reversal is refused (idempotent-safe).
+func TestPhase7_CustomerPaymentReversal(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/accounts/seed-defaults", admin, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("seed chart: %d", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/accounting-periods", admin,
+		map[string]any{"start_date": "2026-06-01", "end_date": "2026-06-30"}); code != http.StatusCreated {
+		t.Fatalf("create period: %d", code)
+	}
+
+	code, cust := h.invPostJSON(t, "/api/v1/customers", admin,
+		map[string]any{"code": "REV", "name": "Reversal Co", "credit_limit": "0"})
+	if code != http.StatusCreated {
+		t.Fatalf("create customer: %d %v", code, cust)
+	}
+	custID := cust["id"].(string)
+
+	code, inv := h.invPostJSON(t, "/api/v1/customer-invoices", admin, map[string]any{
+		"customer_id": custID, "invoice_number": "INV-R1", "invoice_date": "2026-06-10",
+		"lines": []map[string]any{{"description": "Diesel", "amount": "5000"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create invoice: %d %v", code, inv)
+	}
+	invID := inv["id"].(string)
+	if code, issued := h.do(t, http.MethodPost, "/api/v1/customer-invoices/"+invID+"/issue", admin, nil, ""); code != http.StatusOK {
+		t.Fatalf("issue = %d %s", code, issued)
+	}
+
+	// A 2,000 partial payment.
+	code, pay := h.invPostJSON(t, "/api/v1/customer-payments", admin, map[string]any{
+		"customer_id": custID, "payment_date": "2026-06-15", "method": "bank_transfer", "source_account_key": "bank",
+		"allocations": []map[string]any{{"customer_invoice_id": invID, "amount": "2000"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("post payment: %d %v", code, pay)
+	}
+	payID := pay["payment_id"].(string)
+	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
+		got["status"] != "partially_paid" || got["outstanding_amount"] != "3000.00" {
+		t.Fatalf("invoice after payment = %v", got)
+	}
+
+	// Reverse the payment: invoice balance restored to full, status back to issued.
+	code, rev := h.invPostJSON(t, "/api/v1/customer-payments/"+payID+"/reverse", admin,
+		map[string]any{"reason": "duplicate entry"})
+	if code != http.StatusOK || rev["status"] != "voided" || rev["reversal_entry_id"] == nil {
+		t.Fatalf("reverse = %d %v", code, rev)
+	}
+	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
+		got["status"] != "issued" || got["outstanding_amount"] != "5000.00" {
+		t.Fatalf("invoice after reversal = %v", got)
+	}
+
+	// The original payment row is PRESERVED (append-only), now 'voided'.
+	var status string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT status FROM customer_payments WHERE tenant_id = $1 AND id = $2`,
+		h.ids.tenantID, payID).Scan(&status); err != nil {
+		t.Fatalf("payment row should still exist: %v", err)
+	}
+	if status != "voided" {
+		t.Fatalf("payment status = %q, want voided", status)
+	}
+	// Its allocation rows are preserved too.
+	var allocs int
+	if err := h.pool.QueryRow(ctx,
+		`SELECT count(*) FROM customer_payment_allocations WHERE tenant_id = $1 AND customer_payment_id = $2`,
+		h.ids.tenantID, payID).Scan(&allocs); err != nil || allocs != 1 {
+		t.Fatalf("allocations preserved = %d (err %v)", allocs, err)
+	}
+
+	// Reversing again is refused (idempotent-safe): the balance is not
+	// double-restored and no second reversal entry is posted.
+	if code, _ := h.invPostJSON(t, "/api/v1/customer-payments/"+payID+"/reverse", admin, map[string]any{}); code != http.StatusConflict {
+		t.Fatalf("second reverse = %d, want 409", code)
+	}
+	if code, got := h.getJSON(t, "/api/v1/customer-invoices/"+invID, admin); code != http.StatusOK ||
+		got["outstanding_amount"] != "5000.00" {
+		t.Fatalf("invoice after second reverse = %v", got)
+	}
+
+	// The reversal kept the ledger balanced.
+	if code, tb := h.getJSON(t, "/api/v1/finance/reports/trial-balance?as_of=2026-06-30", admin); code != http.StatusOK || !tb["balanced"].(bool) {
+		t.Fatalf("trial balance not balanced after reversal: %v", tb)
+	}
+
+	// A reversal audit row was written.
+	var n int
+	if err := h.pool.QueryRow(ctx,
+		`SELECT count(*) FROM audit_logs WHERE tenant_id = $1 AND action = 'customer_payment.reversed'`,
+		h.ids.tenantID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("reversal audit rows = %d (err %v)", n, err)
+	}
+}

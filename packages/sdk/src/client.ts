@@ -3158,6 +3158,24 @@ export class Client {
     return this.request('/api/v1/customer-payments', { method: 'POST', body: req, signal });
   }
 
+  /**
+   * Reverse (void) a posted customer payment. Restores the affected invoices'
+   * outstanding balances and posts a balanced reversal of the payment's journal
+   * entry; the original payment is preserved (status becomes `voided`).
+   * Reversing a payment that is not posted is refused (409).
+   */
+  reverseCustomerPayment(
+    id: string,
+    req: { reason?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<{ payment_id: string; status: string; reversal_entry_id?: string }> {
+    return this.request(`/api/v1/customer-payments/${encodeURIComponent(id)}/reverse`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
   // ----------- Expenses & petty cash (Phase 7) -----------
 
   listExpenseCategories(signal?: AbortSignal): Promise<Paginated<ExpenseCategory>> {

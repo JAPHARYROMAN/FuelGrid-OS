@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileText } from 'lucide-react';
 
-import { SdkError, type Customer, type CustomerInvoice } from '@fuelgrid/sdk';
+import { SdkError, type Customer, type CustomerInvoice, type CustomerPayment } from '@fuelgrid/sdk';
 import {
   Badge,
   type BadgeProps,
@@ -64,6 +64,8 @@ export default function CreditInvoicesPage() {
   const [customerID, setCustomerID] = React.useState<string>('');
   const [detailID, setDetailID] = React.useState<string | null>(null);
   const [payOpen, setPayOpen] = React.useState(false);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [reverseTarget, setReverseTarget] = React.useState<CustomerPayment | null>(null);
 
   const customers = useQuery({
     queryKey: ['customers'],
@@ -80,8 +82,14 @@ export default function CreditInvoicesPage() {
   const canIssue = usePermission('customer_invoice.issue');
   const canAllocate = usePermission('customer_payment.manage');
 
+  const payments = useQuery({
+    queryKey: ['customer-payments'],
+    queryFn: ({ signal }) => api.listCustomerPayments(signal),
+  });
+
   function invalidate() {
     void qc.invalidateQueries({ queryKey: ['customer-invoices'] });
+    void qc.invalidateQueries({ queryKey: ['customer-payments'] });
   }
 
   const issue = useMutation({
@@ -116,7 +124,7 @@ export default function CreditInvoicesPage() {
               </Button>
             </PermissionGate>
             <PermissionGate permission="customer_invoice.manage">
-              <Button type="button" size="sm" disabled>
+              <Button type="button" size="sm" onClick={() => setCreateOpen(true)}>
                 New invoice
               </Button>
             </PermissionGate>
@@ -250,6 +258,13 @@ export default function CreditInvoicesPage() {
         </Card>
       )}
 
+      <PaymentsSection
+        query={payments}
+        customerName={customerName}
+        canReverse={canAllocate === true}
+        onReverse={(p) => setReverseTarget(p)}
+      />
+
       {/* Read-only hint: explain why action controls are inert. */}
       {canManage === false && canIssue === false && canAllocate === false ? (
         <p className="text-xs text-muted-foreground">
@@ -274,7 +289,218 @@ export default function CreditInvoicesPage() {
           invalidate();
         }}
       />
+
+      <CreateInvoiceDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        canManage={canManage === true}
+        customers={customerList}
+        onCreated={() => {
+          setCreateOpen(false);
+          invalidate();
+        }}
+      />
+
+      <ReversePaymentDialog
+        payment={reverseTarget}
+        canReverse={canAllocate === true}
+        customerName={customerName}
+        onClose={() => setReverseTarget(null)}
+        onReversed={() => {
+          setReverseTarget(null);
+          invalidate();
+        }}
+      />
     </div>
+  );
+}
+
+/** Map a payment status to a badge tone (posted = info, voided = danger). */
+function paymentTone(status: string): BadgeProps['tone'] {
+  switch (status) {
+    case 'posted':
+      return 'info';
+    case 'voided':
+      return 'danger';
+    default:
+      return 'neutral';
+  }
+}
+
+function PaymentsSection({
+  query,
+  customerName,
+  canReverse,
+  onReverse,
+}: {
+  query: ReturnType<typeof useQuery<{ items: CustomerPayment[] }>>;
+  customerName: (id: string) => string;
+  canReverse: boolean;
+  onReverse: (payment: CustomerPayment) => void;
+}) {
+  const items = query.data?.items ?? [];
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-sm font-semibold">Customer payments</h2>
+        <p className="text-xs text-muted-foreground">
+          Posted payments and their allocations. Reversing a payment restores the affected
+          invoices&apos; balances and posts a balanced ledger reversal — the original payment is
+          kept (voided), never deleted.
+        </p>
+      </div>
+      {query.isPending ? (
+        <Skeleton className="h-24 rounded-lg" />
+      ) : query.isError ? (
+        (() => {
+          const forbidden = query.error instanceof SdkError && query.error.status === 403;
+          return (
+            <ErrorState
+              title={forbidden ? 'No access' : "Couldn't load payments"}
+              description={
+                forbidden
+                  ? "You don't have permission to view customer payments (finance.read)."
+                  : String((query.error as Error).message)
+              }
+              onRetry={forbidden ? undefined : () => query.refetch()}
+            />
+          );
+        })()
+      ) : items.length === 0 ? (
+        <EmptyState
+          title="No payments"
+          description="Customer payments will appear here once allocated."
+          icon={<FileText />}
+        />
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead>Reference</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((pmt) => (
+                  <TableRow key={pmt.id}>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">
+                      {pmt.payment_date}
+                    </TableCell>
+                    <TableCell>{customerName(pmt.customer_id)}</TableCell>
+                    <TableCell>{pmt.method}</TableCell>
+                    <TableCell className="font-mono text-xs">{pmt.reference ?? '—'}</TableCell>
+                    <TableCell className="text-right font-mono font-medium tabular-nums">
+                      {formatMoney(pmt.amount)}
+                    </TableCell>
+                    <TableCell>
+                      <Badge tone={paymentTone(pmt.status)}>{pmt.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {pmt.status === 'posted' ? (
+                        <PermissionGate permission="customer_payment.manage">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            disabled={!canReverse}
+                            onClick={() => onReverse(pmt)}
+                          >
+                            Reverse
+                          </Button>
+                        </PermissionGate>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+function ReversePaymentDialog({
+  payment,
+  canReverse,
+  customerName,
+  onClose,
+  onReversed,
+}: {
+  payment: CustomerPayment | null;
+  canReverse: boolean;
+  customerName: (id: string) => string;
+  onClose: () => void;
+  onReversed: () => void;
+}) {
+  const [reason, setReason] = React.useState('');
+
+  React.useEffect(() => {
+    if (!payment) setReason('');
+  }, [payment]);
+
+  const reverse = useMutation({
+    mutationFn: () =>
+      api.reverseCustomerPayment(payment!.id, { reason: reason.trim() || undefined }),
+    onSuccess: () => {
+      toast.success('Payment reversed', "The invoices' balances were restored.");
+      onReversed();
+    },
+    onError: (err) =>
+      toast.error('Could not reverse payment', err instanceof SdkError ? err.message : undefined),
+  });
+
+  return (
+    <Dialog open={payment !== null} onOpenChange={(o) => (o ? undefined : onClose())}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reverse customer payment</DialogTitle>
+          <DialogDescription>
+            This voids the payment and restores the outstanding balance of every invoice it was
+            applied to, posting a balanced reversal to the ledger. The original payment record is
+            preserved. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        {payment ? (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+            <Field label="Customer" value={customerName(payment.customer_id)} />
+            <Field label="Date" value={payment.payment_date} mono />
+            <Field label="Method" value={payment.method} />
+            <Field label="Amount" value={formatMoney(payment.amount)} mono />
+          </dl>
+        ) : null}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="reverse-reason">Reason (optional)</Label>
+          <Input
+            id="reverse-reason"
+            placeholder="e.g. duplicate entry, wrong customer"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="danger"
+            disabled={!canReverse || reverse.isPending}
+            onClick={() => reverse.mutate()}
+          >
+            {reverse.isPending ? 'Reversing…' : 'Reverse payment'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -545,6 +771,210 @@ function AllocatePaymentDialog({
             </Button>
             <Button type="submit" disabled={!canSubmit || post.isPending}>
               {post.isPending ? 'Allocating…' : 'Allocate payment'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface DraftLine {
+  description: string;
+  amount: string;
+}
+
+function CreateInvoiceDialog({
+  open,
+  onOpenChange,
+  canManage,
+  customers,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  canManage: boolean;
+  customers: Customer[];
+  onCreated: () => void;
+}) {
+  const [customerID, setCustomerID] = React.useState('');
+  const [invoiceNumber, setInvoiceNumber] = React.useState('');
+  const [invoiceDate, setInvoiceDate] = React.useState(todayISO);
+  const [dueDate, setDueDate] = React.useState('');
+  const [lines, setLines] = React.useState<DraftLine[]>([{ description: '', amount: '' }]);
+
+  // Reset the form whenever the dialog closes so a reopen starts fresh.
+  React.useEffect(() => {
+    if (!open) {
+      setCustomerID('');
+      setInvoiceNumber('');
+      setInvoiceDate(todayISO());
+      setDueDate('');
+      setLines([{ description: '', amount: '' }]);
+    }
+  }, [open]);
+
+  function updateLine(index: number, patch: Partial<DraftLine>) {
+    setLines((prev) => prev.map((ln, i) => (i === index ? { ...ln, ...patch } : ln)));
+  }
+  function addLine() {
+    setLines((prev) => [...prev, { description: '', amount: '' }]);
+  }
+  function removeLine(index: number) {
+    setLines((prev) => (prev.length === 1 ? prev : prev.filter((_, i) => i !== index)));
+  }
+
+  const validLines = lines.filter((ln) => ln.amount.trim() !== '' && Number(ln.amount) > 0);
+  const total = validLines.reduce((sum, ln) => sum + Number(ln.amount), 0);
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createCustomerInvoice({
+        customer_id: customerID,
+        invoice_number: invoiceNumber.trim() || undefined,
+        invoice_date: invoiceDate || undefined,
+        due_date: dueDate || undefined,
+        lines: validLines.map((ln) => ({
+          description: ln.description.trim() || undefined,
+          amount: ln.amount.trim(),
+        })),
+      }),
+    onSuccess: () => {
+      toast.success(
+        'Invoice created',
+        'The draft invoice was created. Issue it to post to the ledger.',
+      );
+      onCreated();
+    },
+    onError: (err) =>
+      toast.error('Could not create invoice', err instanceof SdkError ? err.message : undefined),
+  });
+
+  const canSubmit = canManage && customerID !== '' && validLines.length > 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New customer invoice</DialogTitle>
+          <DialogDescription>
+            Create a draft invoice with one or more billed lines. The invoice is created as a draft;
+            issue it afterwards to post it to the ledger.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            create.mutate();
+          }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="create-customer">Customer</Label>
+            <select
+              id="create-customer"
+              className="h-9 rounded-md border border-border bg-background px-3 text-sm"
+              value={customerID}
+              onChange={(e) => setCustomerID(e.target.value)}
+            >
+              <option value="">Select a customer…</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="create-number">Number</Label>
+              <Input
+                id="create-number"
+                placeholder="Optional"
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="create-date">Invoice date</Label>
+              <Input
+                id="create-date"
+                type="date"
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="create-due">Due date</Label>
+              <Input
+                id="create-due"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Lines</span>
+              <Button type="button" variant="secondary" size="sm" onClick={addLine}>
+                Add line
+              </Button>
+            </div>
+            {lines.map((ln, i) => (
+              <div key={i} className="flex items-end gap-2">
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <Label htmlFor={`line-desc-${i}`} className="sr-only">
+                    Line {i + 1} description
+                  </Label>
+                  <Input
+                    id={`line-desc-${i}`}
+                    placeholder="Description (optional)"
+                    value={ln.description}
+                    onChange={(e) => updateLine(i, { description: e.target.value })}
+                  />
+                </div>
+                <div className="flex w-32 flex-col gap-1.5">
+                  <Label htmlFor={`line-amt-${i}`} className="sr-only">
+                    Line {i + 1} amount
+                  </Label>
+                  <Input
+                    id={`line-amt-${i}`}
+                    aria-label={`Line ${i + 1} amount`}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={ln.amount}
+                    onChange={(e) => updateLine(i, { amount: e.target.value })}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={lines.length === 1}
+                  onClick={() => removeLine(i)}
+                  aria-label={`Remove line ${i + 1}`}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+            <div className="flex justify-end text-sm">
+              <span className="text-muted-foreground">Total&nbsp;</span>
+              <span className="font-mono font-medium tabular-nums">
+                {formatMoney(total.toFixed(2))}
+              </span>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSubmit || create.isPending}>
+              {create.isPending ? 'Creating…' : 'Create invoice'}
             </Button>
           </DialogFooter>
         </form>

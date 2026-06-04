@@ -388,6 +388,89 @@ func (s *Server) handlePostCustomerPayment(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusCreated, map[string]any{"payment_id": pmt.ID, "journal_entry_id": entry.ID})
 }
 
+// handleReverseCustomerPayment voids a posted customer payment: it restores the
+// affected invoices' outstanding balances, posts a balanced reversal of the
+// payment's journal entry (append-only — the original entry and payment row are
+// preserved), and marks the payment 'voided'. Reversing a payment that is not
+// posted (already voided) is refused with 409 so the operation is
+// idempotent-safe.
+func (s *Server) handleReverseCustomerPayment(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var body struct {
+		Reason *string `json:"reason,omitempty"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	ctx := r.Context()
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	pmt, allocs, err := s.receivables.ReverseCustomerPayment(ctx, tx, actor.TenantID, id)
+	if errors.Is(err, receivables.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "customer payment not found")
+		return
+	}
+	if errors.Is(err, receivables.ErrPaymentNotReversible) {
+		writeError(w, http.StatusConflict, "only a posted payment can be reversed")
+		return
+	}
+	if err != nil {
+		s.logger.Error("reverse customer payment", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Reverse the payment's journal entry (debit AR / credit bank swapped back).
+	var reversalEntryID *uuid.UUID
+	if pmt.JournalEntryID != nil {
+		rev, rerr := s.accounting.ReverseEntry(ctx, tx, actor.TenantID, *pmt.JournalEntryID, actor.UserID, body.Reason)
+		if errors.Is(rerr, accounting.ErrAlreadyReversed) {
+			writeError(w, http.StatusConflict, "the payment's journal entry is already reversed")
+			return
+		}
+		if code, msg := journalErrorResponse(rerr); code != 0 {
+			writeError(w, code, msg)
+			return
+		}
+		reversalEntryID = &rev.ID
+	}
+
+	allocated := make([]map[string]any, 0, len(allocs))
+	for _, a := range allocs {
+		allocated = append(allocated, map[string]any{"customer_invoice_id": a.CustomerInvoiceID, "amount": a.Amount})
+	}
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "customer_payment.reversed", EventType: "CustomerPaymentReversed", EntityType: "customer_payment",
+		EntityID: pmt.ID.String(),
+		NewValue: map[string]any{"id": pmt.ID, "reversal_entry_id": reversalEntryID, "restored": allocated, "reason": body.Reason},
+		IP:       clientIP(r), UserAgent: r.UserAgent(), RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"payment_id": pmt.ID, "status": pmt.Status, "reversal_entry_id": reversalEntryID,
+	})
+}
+
 func (s *Server) handleListCustomerPayments(w http.ResponseWriter, r *http.Request) {
 	actor, err := identity.Require(r.Context())
 	if err != nil {
