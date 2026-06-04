@@ -2105,6 +2105,19 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/credit-cashflow:
+    get:
+      tags: [Reports]
+      summary: Structured credit & cashflow report (sales by tender, collections, receivables, supplier payments, cash variance, projected cash position) as a drillable envelope
+      description: Station-scoped via station_id. Gated by revenue.read; an out-of-scope station 403s, a cross-tenant one 404s. Supplier payments are a tenant-wide figure (payables carry no station). period selects the date window (this-month default).
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/reports/station-comparison:
     get:
       tags: [Reports]
@@ -2134,6 +2147,44 @@ paths:
         '200': { description: Delegated export URL, content: { application/json: { schema: { $ref: '#/components/schemas/ReportExportResult' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/exports:
+    get:
+      tags: [Reports]
+      summary: List the tenant's report export-job history (newest first)
+      description: A durable receipt + history of report exports (Feature 10.7). Gated by reports.export.
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Reports]
+      summary: Record a report export job
+      description: >-
+        Records a durable receipt of an export request (report_key, format,
+        filters) and maps it onto the existing synchronous export file URL, then
+        audits the request as a 'report.exported' event carrying the job id.
+        Gated by reports.export.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Object' }
+      responses:
+        '201': { description: Export job recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/exports/{id}:
+    get:
+      tags: [Reports]
+      summary: Fetch one report export job by id
+      description: Tenant-scoped. Gated by reports.export.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Export job, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/audit-logs/export:
     post:

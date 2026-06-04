@@ -82,6 +82,8 @@ import type {
   ReportsOverview,
   ReportExportRequest,
   ReportExportResult,
+  ExportJobRequest,
+  ExportJob,
   Role,
   Sale,
   SaleVoid,
@@ -3059,6 +3061,23 @@ export class Client {
   }
 
   /**
+   * Fetch the credit & cashflow report for a station as a structured
+   * {@link ReportEnvelope}: sales by tender, collections, outstanding + overdue
+   * receivables, supplier payments, cash variance and the projected cash
+   * position. Station-scoped (gated by revenue.read); `period` is optional.
+   */
+  getCreditCashflowReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/credit-cashflow${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
    * Fetch the station-comparison report (per-station ranking by revenue, litres,
    * margin, stock variance, expenses, risk alerts and collections) as a
    * structured envelope. Gated by revenue.read held anywhere; the rows are
@@ -3088,6 +3107,36 @@ export class Client {
       body: req,
       signal,
     });
+  }
+
+  /**
+   * Record a report export job (Feature 10.7): persists a durable receipt of the
+   * {report_key, format, filters} requested and the resulting file's same-origin
+   * URL, then audits 'report.exported'. Gated by reports.export.
+   */
+  createExportJob(req: ExportJobRequest, signal?: AbortSignal): Promise<ExportJob> {
+    return this.request<ExportJob>('/api/v1/exports', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** List the tenant's export-job history, newest first. Gated by reports.export. */
+  listExportJobs(
+    opts?: { limit?: number; offset?: number },
+    signal?: AbortSignal,
+  ): Promise<Paginated<ExportJob>> {
+    const qs = new URLSearchParams();
+    if (opts?.limit != null) qs.set('limit', String(opts.limit));
+    if (opts?.offset != null) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<ExportJob>>(`/api/v1/exports${q ? `?${q}` : ''}`, { signal });
+  }
+
+  /** Fetch one export job by id. Gated by reports.export. */
+  getExportJob(id: string, signal?: AbortSignal): Promise<ExportJob> {
+    return this.request<ExportJob>(`/api/v1/exports/${encodeURIComponent(id)}`, { signal });
   }
 
   /** Build the `?station_id=…&period=…` query for a station-scoped report. */

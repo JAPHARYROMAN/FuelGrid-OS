@@ -147,6 +147,8 @@ export type {
   ReportsOverview,
   ReportExportRequest,
   ReportExportResult,
+  ExportJobRequest,
+  ExportJob,
   RevenueDay,
   RevenueOverview,
   RevenueSummary,
