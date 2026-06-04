@@ -257,16 +257,78 @@ func (r *Repo) ListPoliciesPage(ctx context.Context, tenantID uuid.UUID, limit, 
 	return out, rows.Err()
 }
 
+// PolicyResolution is the outcome of resolving the governance policies for a
+// (workflow_type, amount) pair. It is the single source of truth shared by the
+// approval engine (RaiseRequest) and the simulation endpoint.
+type PolicyResolution struct {
+	// Matched is true when at least one active policy applies to the input.
+	Matched bool
+	// RequiredApprovals is the strictest matching policy's required-approvals
+	// count, or 1 (the engine's default) when nothing matched.
+	RequiredApprovals int
+	// RequiredRole is the role required by the strictest matching policy, if any.
+	// It is nil when no policy matched or the matching policy sets no role.
+	RequiredRole *string
+	// PolicyID is the id of the strictest matching policy, when one matched.
+	PolicyID *uuid.UUID
+}
+
+// rowQuerier is the read surface shared by *database.Pool and pgx.Tx, letting
+// ResolvePolicy run either read-only (simulation) or inside the request's
+// transaction (RaiseRequest) without duplicating the resolution rule.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// resolvePolicy resolves the governance policies for a (workflow_type, amount)
+// pair using the SAME selection rule the approval engine applies when raising a
+// request: among active policies for the workflow whose min_amount is at or
+// below the amount, the one demanding the most approvals wins (ties broken by
+// the highest min_amount, then id). RaiseRequest and the simulation endpoint
+// both call it so the live engine and the simulator never diverge.
+func resolvePolicy(ctx context.Context, q rowQuerier, tenantID uuid.UUID, workflowType string, amount string) (PolicyResolution, error) {
+	var (
+		res  PolicyResolution
+		id   uuid.UUID
+		req  int
+		role *string
+	)
+	err := q.QueryRow(ctx, `
+		SELECT id, required_approvals, required_role FROM approval_policies
+		WHERE tenant_id = $1 AND status = 'active' AND workflow_type = $2
+		  AND min_amount <= COALESCE($3::numeric, 0)
+		ORDER BY required_approvals DESC, min_amount DESC, id
+		LIMIT 1
+	`, tenantID, workflowType, nullableMoney(amount)).Scan(&id, &req, &role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No policy applies — the engine defaults to a single approval.
+		return PolicyResolution{Matched: false, RequiredApprovals: 1}, nil
+	}
+	if err != nil {
+		return PolicyResolution{}, err
+	}
+	res.Matched = true
+	res.RequiredApprovals = req
+	res.RequiredRole = role
+	res.PolicyID = &id
+	return res, nil
+}
+
+// ResolvePolicy resolves the governance policies for a (workflow_type, amount)
+// pair read-only against the pool. It backs the simulation endpoint.
+func (r *Repo) ResolvePolicy(ctx context.Context, tenantID uuid.UUID, workflowType string, amount string) (PolicyResolution, error) {
+	return resolvePolicy(ctx, r.pool, tenantID, workflowType, amount)
+}
+
 // RaiseRequest creates an approval request, snapshotting the required-approvals
 // count from the strictest matching active policy (default 1 when none).
 func (r *Repo) RaiseRequest(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, workflowType string, refType *string, refID *uuid.UUID, amount string, stationID *uuid.UUID, requestedBy uuid.UUID) (*ApprovalRequest, error) {
-	var required int
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(MAX(required_approvals), 1) FROM approval_policies
-		WHERE tenant_id = $1 AND status = 'active' AND workflow_type = $2 AND min_amount <= COALESCE($3::numeric, 0)
-	`, tenantID, workflowType, nullableMoney(amount)).Scan(&required); err != nil {
+	// Resolve within the request's transaction so it observes the same snapshot.
+	resolved, err := resolvePolicy(ctx, tx, tenantID, workflowType, amount)
+	if err != nil {
 		return nil, err
 	}
+	required := resolved.RequiredApprovals
 	var a ApprovalRequest
 	if err := scanApprovalReq(tx.QueryRow(ctx, `
 		INSERT INTO approval_requests (tenant_id, workflow_type, reference_type, reference_id, amount, required_approvals, station_id, requested_by)

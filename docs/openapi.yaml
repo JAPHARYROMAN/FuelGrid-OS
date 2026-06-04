@@ -3992,6 +3992,22 @@ paths:
         '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/approval-policies/simulate:
+    post:
+      tags: [Approvals]
+      summary: Simulate whether a workflow + amount would require approval
+      description: >-
+        Resolves the active approval policies for a workflow_type and optional
+        amount using the same rule the approval engine applies when raising a
+        request, without persisting anything. Returns whether an approval would
+        be required, the strictest matching policy id, the required-approvals
+        count, and the required approver role (if any). Requires
+        approval_policy.manage.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/approval-requests:
     get:
       tags: [Approvals]

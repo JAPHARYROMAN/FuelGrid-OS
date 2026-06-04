@@ -1138,6 +1138,35 @@ export interface ApprovalRequest {
   requested_by: string;
 }
 
+export interface ApprovalPolicy {
+  id: string;
+  workflow_type: string;
+  /** Decimal string; the minimum amount at or above which the policy applies. */
+  min_amount: string;
+  required_approvals: number;
+  required_role?: string | null;
+  status: string;
+}
+
+/**
+ * Outcome of POST /api/v1/approval-policies/simulate — whether a workflow +
+ * amount would require approval under the current active policies, resolved by
+ * the same engine that raises real requests (feature 9.2).
+ */
+export interface ApprovalSimulation {
+  workflow_type: string;
+  /** True when an active policy applies and an approval would be required. */
+  approval_required: boolean;
+  /** Alias of approval_required: whether any active policy matched. */
+  matched: boolean;
+  /** Strictest matching policy's required-approvals count (1 when none matched). */
+  required_approvals: number;
+  /** Required approver role from the matching policy, if any. */
+  required_role?: string | null;
+  /** Id of the matching policy, when one matched. */
+  policy_id?: string | null;
+}
+
 export interface EnterpriseOverview {
   from: string;
   to: string;
