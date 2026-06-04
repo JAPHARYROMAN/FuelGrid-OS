@@ -35,6 +35,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
+import { ScopeSwitcher } from '@/components/enterprise/scope-switcher';
 import { api } from '@/lib/api';
 
 export default function EnterprisePage() {
@@ -62,15 +63,18 @@ export default function EnterprisePage() {
         title="Enterprise"
         description="Network revenue, margin, exposure, and station ranking."
         actions={
-          <PermissionGate permission="enterprise_projection.admin">
-            <Button
-              variant="secondary"
-              disabled={rebuild.isPending}
-              onClick={() => rebuild.mutate()}
-            >
-              {rebuild.isPending ? 'Rebuilding…' : 'Rebuild projections'}
-            </Button>
-          </PermissionGate>
+          <div className="flex items-center gap-2">
+            <ScopeSwitcher />
+            <PermissionGate permission="enterprise_projection.admin">
+              <Button
+                variant="secondary"
+                disabled={rebuild.isPending}
+                onClick={() => rebuild.mutate()}
+              >
+                {rebuild.isPending ? 'Rebuilding…' : 'Rebuild projections'}
+              </Button>
+            </PermissionGate>
+          </div>
         }
       />
 

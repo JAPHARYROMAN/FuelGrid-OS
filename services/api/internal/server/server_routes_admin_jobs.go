@@ -20,6 +20,13 @@ import (
 func (s *Server) registerAdminJobRoutes(r chi.Router) {
 	r.With(s.requirePermission("audit.read", nil)).
 		Get("/admin/jobs", s.handleListJobRuns)
+	// API-exposed, BFF-reachable observability snapshot (Feature 13.3). The kube
+	// probes /readyz + /metrics live outside /api/v1 and so are unreachable from
+	// the SDK; this re-surfaces the same signals (postgres/redis health, outbox
+	// backlog + dead-letter, scheduler last run) under /api/v1. Same audit.read
+	// gate as /admin/jobs — read-only operational telemetry.
+	r.With(s.requirePermission("audit.read", nil)).
+		Get("/observability/health", s.handleObservabilityHealth)
 }
 
 // jobRunDTO is the wire shape for one scheduler job run. duration_ms is the

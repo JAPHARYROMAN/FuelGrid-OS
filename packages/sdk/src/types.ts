@@ -610,6 +610,31 @@ export interface JobRunList {
   count: number;
 }
 
+/**
+ * API-exposed observability snapshot (feature 13.3) — the BFF-reachable
+ * equivalent of /readyz + /metrics, surfaced under /api/v1/observability/health.
+ */
+export interface ObservabilityHealth {
+  /** True when postgres is reachable, redis is reachable-or-unconfigured, and there are no dead-lettered events. */
+  healthy: boolean;
+  /** Per-dependency status, e.g. { postgres: 'ok', redis: 'ok' }. */
+  checks: Record<string, string>;
+  outbox: {
+    /** Unpublished, not-yet-dead-lettered events awaiting dispatch. */
+    backlog: number;
+    /** Events that exhausted the retry budget and are parked. */
+    dead_letter: number;
+  };
+  /** The newest scheduler run across all jobs, or null when none recorded. */
+  scheduler_last_run?: {
+    job_name: string;
+    status: JobRunStatus;
+    started_at: string;
+    finished_at?: string;
+    duration_ms?: number;
+  } | null;
+}
+
 // --------------------------------------------------------------------------
 // Data lifecycle & retention (Feature 13.2)
 // --------------------------------------------------------------------------
@@ -1316,6 +1341,23 @@ export interface ApprovalSimulation {
   required_role?: string | null;
   /** Id of the matching policy, when one matched. */
   policy_id?: string | null;
+}
+
+/** One switchable enterprise scope from GET /api/v1/enterprise/scopes (feature 13.1). */
+export interface EnterpriseScope {
+  scope_type: 'company' | 'region' | 'group' | 'station';
+  scope_id: string | null;
+  /** Human label resolved from the company / region / group / station name. */
+  label: string;
+  /** Number of stations the scope covers. */
+  station_count: number;
+}
+
+/** The enterprise scopes a user may switch the active chain view between. */
+export interface EnterpriseScopes {
+  /** True when the user holds a tenant-level grant (all stations). */
+  tenant_wide: boolean;
+  scopes: EnterpriseScope[];
 }
 
 export interface EnterpriseOverview {

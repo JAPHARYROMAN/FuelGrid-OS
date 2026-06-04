@@ -596,6 +596,41 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/observability/health:
+    get:
+      tags: [Admin]
+      summary: API-exposed read-only observability snapshot (admin)
+      description: |
+        BFF-reachable health snapshot the SDK can read (the kube probes
+        `/readyz` and `/metrics` live outside `/api/v1`). Reports postgres and
+        redis reachability, the tenant's outbox backlog and dead-letter counts,
+        and the scheduler's most recent run. Read-only and gated on `audit.read`,
+        the same permission as `/admin/jobs`.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [healthy, checks, outbox]
+                properties:
+                  healthy: { type: boolean }
+                  checks:
+                    type: object
+                    additionalProperties: { type: string }
+                  outbox:
+                    type: object
+                    required: [backlog, dead_letter]
+                    properties:
+                      backlog: { type: integer }
+                      dead_letter: { type: integer }
+                  scheduler_last_run:
+                    type: object
+                    nullable: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/setup/checklist:
     get:
       tags: [Setup]
@@ -4479,6 +4514,49 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/approval-policies/{id}:
+    put:
+      tags: [Approvals]
+      summary: Edit an approval policy's matching rule
+      description: >-
+        Updates workflow_type, min_amount, required_approvals, and required_role
+        of an existing policy. Does not change its enabled/disabled status (use
+        the status sub-resource). Requires approval_policy.manage. Audited as
+        approval.policy_changed.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Approvals]
+      summary: Edit an approval policy's matching rule
+      description: Identical to PUT — edits the policy's matching rule. Requires approval_policy.manage.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/approval-policies/{id}/status:
+    patch:
+      tags: [Approvals]
+      summary: Enable or disable an approval policy
+      description: >-
+        Sets the policy status to active (enabled) or archived (disabled). A
+        disabled policy is ignored by the approval engine — it no longer
+        requires approval in simulation or when a request is raised. Requires
+        approval_policy.manage. Audited as approval.policy_changed.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/approval-requests:
     get:
       tags: [Approvals]
@@ -4565,6 +4643,21 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/enterprise/scopes:
+    get:
+      tags: [Enterprise]
+      summary: List the caller's switchable enterprise scopes
+      description: >-
+        Returns the enterprise scopes (company / region / group / station) the
+        calling user may switch the active chain view between, derived from their
+        scope grants, each with a label and station count. tenant_wide is true
+        when the user holds a tenant-level grant (all stations). A read-only lens
+        over the user's own grants — switching never widens access, since scoped
+        reads still enforce station access server-side. Requires
+        enterprise.scope.switch.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/enterprise/station-groups:
     get:
       tags: [Enterprise]
