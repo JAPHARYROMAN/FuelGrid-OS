@@ -33,7 +33,7 @@ export const ME_BODY = {
 const LOGIN = {
   tenant: 'demo',
   email: 'demo@fuelgrid.local',
-  password: 'fuelgrid-demo-password-1234',
+  password: 'e2e-only-password',
 };
 
 /** Reusable station the journeys operate on. */

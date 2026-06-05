@@ -49,7 +49,7 @@ export function LoginForm() {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { tenant_slug: 'demo' },
+    defaultValues: { tenant_slug: '' },
   });
 
   async function onSubmit(values: FormValues) {

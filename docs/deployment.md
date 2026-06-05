@@ -357,8 +357,9 @@ the PITR caveat: [deploy/backup/RESTORE.md](../deploy/backup/RESTORE.md).
 
 ### (j) Seeding note
 
-Seeding is **prod-guarded** — `services/api/cmd/seed` refuses to run unless
-`NODE_ENV=development` *or* `ALLOW_SEED=true`. Do **not** seed demo data into a
+Seeding is **prod-guarded** — `services/api/cmd/seed` refuses to run when
+`NODE_ENV=production`. Non-development, non-production environments require
+`ALLOW_SEED=true` and explicit seed passwords. Do **not** seed demo data into a
 real production tenant. Provision real tenants via
 `POST /api/v1/platform/tenants` (authenticated with `PLATFORM_ADMIN_TOKEN`).
 

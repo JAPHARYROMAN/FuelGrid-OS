@@ -98,7 +98,7 @@ The following controls were verified directly and are sound. They are the backbo
 
 **Secrets / config / deploy**
 - `config.Secret` type redacts secrets across all fmt/slog paths (tested); env-gated integrations (Sentry/SMTP/M-Pesa/OTLP) are safe no-ops when unconfigured; HTTP timeouts + 4 MiB body cap; error responses are generic.
-- **Container/CI** — distroless `nonroot` API image and slim non-root web image; no secrets in layers; `.dockerignore` excludes `.git`/`.env`; seed/migrate guarded by `ALLOW_SEED`/`NODE_ENV`/`MIGRATE_CONFIRM`; immutable `:sha-<full-sha>` image pinning; weekly + per-PR Trivy with fixable CRITICAL/HIGH gating + CycloneDX SBOM; least-privilege CI permissions.
+- **Container/CI** — distroless `nonroot` API image and slim non-root web image; no secrets in layers; `.dockerignore` excludes `.git`/`.env`; seed refuses `NODE_ENV=production` and requires explicit seed passwords, migrations are CD-owned; immutable `:sha-<full-sha>` image pinning; weekly + per-PR Trivy with fixable CRITICAL/HIGH gating + CycloneDX SBOM; least-privilege CI permissions.
 
 ---
 
@@ -116,7 +116,7 @@ These are the must-do items before public production exposure. Deploy-blocking s
 - [ ] Confirm `DATABASE_APP_URL` is set and distinct from `DATABASE_URL` in production (RLS-enforcing non-owner role) — the API will refuse to boot otherwise (`config.go:269-296`). See deployment.md "Required secrets / configuration."
 - [ ] Confirm `API_CORS_ALLOWED_ORIGINS` lists only explicit `https://` origins (no `*`, no `http://`).
 - [ ] Confirm all secrets are injected via `fly secrets` (never committed): `AUTH_PASSWORD_PEPPER`, `DATABASE_URL`, `MPESA_*`, `FLY_API_TOKEN`. Treat `AUTH_PASSWORD_PEPPER` as permanent (SR-I1) — rotation forces a password-reset wave and MFA re-enrollment; see deployment.md secrets/rotation section.
-- [ ] Confirm seed data is disabled in production (`ALLOW_SEED` unset, `NODE_ENV` != development) and migrations run only via the CD `migrate` job (`MIGRATE_CONFIRM` discipline).
+- [ ] Confirm seed data is disabled in production (`NODE_ENV=production`; no `DEMO_*` seed passwords in the production `.env`) and migrations run only via the CD `migrate` job.
 - [ ] Confirm the `/readyz` smoke gate is wired (`DEPLOY_HEALTH_URL`) so a rollout fails unless Postgres + Redis health pass.
 - [ ] Confirm Trivy scans pass with no fixable CRITICAL/HIGH at the deployed image SHA.
 

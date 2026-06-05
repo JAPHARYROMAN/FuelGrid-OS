@@ -21,8 +21,8 @@ redacted on any stringification or structured-log attribute.
 | `SMTP_PASSWORD` | Outbound mail (resets, invites) | Mail-relay credential | managed at the SMTP layer; not yet in `config.Config` |
 | `SENTRY_DSN` | Error reporting | Write key for the Sentry project | low-sensitivity; not redacted today |
 
-`DEMO_USER_PASSWORD` is a local-seed convenience only and must never be set in
-production.
+`DEMO_USER_PASSWORD` and `DEMO_ADMIN_PASSWORD` are local-seed conveniences only.
+They must never be set in production.
 
 ## Redaction: the `config.Secret` type
 

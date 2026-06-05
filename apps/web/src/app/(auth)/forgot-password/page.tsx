@@ -19,7 +19,7 @@ import {
 import { api } from '@/lib/api';
 
 export default function ForgotPasswordPage() {
-  const [form, setForm] = useState({ tenant_slug: 'demo', email: '' });
+  const [form, setForm] = useState({ tenant_slug: '', email: '' });
   const [submitting, setSubmitting] = useState(false);
   // The backend always returns 202 regardless of whether the email
   // matched — the UI shows the same confirmation either way. Deliberate:
@@ -57,15 +57,14 @@ export default function ForgotPasswordPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            In local development, the reset token is logged by the API rather than emailed — copy it
-            into the{' '}
+            Return to the{' '}
             <Link
-              href="/reset-password"
+              href="/login"
               className="font-medium text-accent underline-offset-2 hover:underline"
             >
-              reset form
+              sign-in page
             </Link>
-            .
+            once your password has been reset.
           </p>
         </CardContent>
         <CardFooter>

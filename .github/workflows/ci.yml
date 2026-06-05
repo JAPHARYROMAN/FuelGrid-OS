@@ -187,6 +187,11 @@ jobs:
       - name: Re-apply migrations
         run: go run ./services/api/cmd/migrate up
 
+      - name: Generate temporary seed credentials
+        run: |
+          echo "DEMO_USER_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+          echo "DEMO_ADMIN_PASSWORD=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+
       - name: Seed demo data
         env:
           AUTH_PASSWORD_PEPPER: ci-test-pepper
@@ -247,7 +252,7 @@ jobs:
 
           login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"tenant_slug":"demo","email":"demo@fuelgrid.local","password":"fuelgrid-demo-password-1234"}')
+            -d "{\"tenant_slug\":\"demo\",\"email\":\"demo@fuelgrid.local\",\"password\":\"${DEMO_USER_PASSWORD}\"}")
           echo "login: $login"
 
           token=$(echo "$login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
@@ -324,7 +329,7 @@ jobs:
           # Fresh login for the logout assertion below.
           token=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"tenant_slug":"demo","email":"demo@fuelgrid.local","password":"fuelgrid-demo-password-1234"}' \
+            -d "{\"tenant_slug\":\"demo\",\"email\":\"demo@fuelgrid.local\",\"password\":\"${DEMO_USER_PASSWORD}\"}" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 
           # Logout returns 204
@@ -418,7 +423,7 @@ jobs:
           # cause this to look like a missing row -> 404.
           login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"tenant_slug":"demo","email":"demo@fuelgrid.local","password":"fuelgrid-demo-password-1234"}')
+            -d "{\"tenant_slug\":\"demo\",\"email\":\"demo@fuelgrid.local\",\"password\":\"${DEMO_USER_PASSWORD}\"}")
           token=$(echo "$login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
 
           status=$(curl -sS -o /tmp/other.json -w '%{http_code}' \
@@ -501,7 +506,7 @@ jobs:
           # Login as the seeded admin user (system_admin role).
           admin_login=$(curl -sS -X POST http://127.0.0.1:8080/api/v1/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"tenant_slug":"demo","email":"admin@fuelgrid.local","password":"fuelgrid-admin-password-1234"}')
+            -d "{\"tenant_slug\":\"demo\",\"email\":\"admin@fuelgrid.local\",\"password\":\"${DEMO_ADMIN_PASSWORD}\"}")
           admin_token=$(echo "$admin_login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
           if [ -z "$admin_token" ]; then
             echo "admin login failed: $admin_login"; exit 1

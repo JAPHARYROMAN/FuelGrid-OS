@@ -69,6 +69,15 @@ jobs:
       - name: Apply migrations
         run: go run ./services/api/cmd/migrate up
 
+      - name: Generate temporary seed credentials
+        run: |
+          user_password="$(openssl rand -hex 24)"
+          admin_password="$(openssl rand -hex 24)"
+          echo "DEMO_USER_PASSWORD=${user_password}" >> "$GITHUB_ENV"
+          echo "DEMO_ADMIN_PASSWORD=${admin_password}" >> "$GITHUB_ENV"
+          echo "USER_PASSWORD=${user_password}" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=${admin_password}" >> "$GITHUB_ENV"
+
       - name: Seed demo data
         run: go run ./services/api/cmd/seed
 

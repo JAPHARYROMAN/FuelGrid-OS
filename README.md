@@ -175,6 +175,8 @@ export NODE_ENV=development
 export DATABASE_URL="postgres://fuelgrid:fuelgrid@localhost:5432/fuelgrid?sslmode=disable"
 export REDIS_URL="redis://localhost:6379/0"
 export AUTH_PASSWORD_PEPPER="dev-pepper"
+export DEMO_USER_PASSWORD="$(openssl rand -hex 24)"
+export DEMO_ADMIN_PASSWORD="$(openssl rand -hex 24)"
 ```
 
 Apply migrations and seed the development tenant:
@@ -204,12 +206,13 @@ Open:
 
 ### Demo Login
 
-The development seed creates a demo tenant and two users:
+The development seed creates a demo tenant and two users using the throwaway
+passwords you exported before running `cmd/seed`:
 
-| Role            | Tenant | Email                  | Password                       |
-| --------------- | ------ | ---------------------- | ------------------------------ |
-| System admin    | `demo` | `admin@fuelgrid.local` | `fuelgrid-admin-password-1234` |
-| Station manager | `demo` | `demo@fuelgrid.local`  | `fuelgrid-demo-password-1234`  |
+| Role            | Tenant | Email                  | Password env var      |
+| --------------- | ------ | ---------------------- | --------------------- |
+| System admin    | `demo` | `admin@fuelgrid.local` | `DEMO_ADMIN_PASSWORD` |
+| Station manager | `demo` | `demo@fuelgrid.local`  | `DEMO_USER_PASSWORD`  |
 
 Use the same `AUTH_PASSWORD_PEPPER` when seeding and when running the API. If
 you change the pepper after seeding, the existing seeded passwords will not

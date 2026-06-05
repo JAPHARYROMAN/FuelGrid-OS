@@ -380,14 +380,10 @@ interface (L32) cleanly lets repos run either auto-committed or inside a tx — 
 - **Idempotency is shallow.** The only guard is "does a tenant with this slug exist?" (L99–106);
   if it does, the whole seed is skipped. If a prior run committed *partially* (it shouldn't — it's
   one tx, L92/L392 — so this is mostly safe) the slug check is adequate. The single-tx wrap is good. ✔
-- **Hard-coded default passwords** for demo + admin users (`defaultUserPassword`,
-  `defaultAdminPassword`, L41/L46) and a default `fuelgrid_app` role password in
-  `0005_rls.up.sql:29`. The seed creates a **`system_admin`** account (`admin@fuelgrid.local`,
-  L276–288) with a known password. If `seed` is ever run against a shared/staging/prod database
-  (it only requires `DATABASE_URL`, with no env guard refusing non-development), it provisions a
-  **full-admin backdoor with publicly-known credentials**. The `//nolint:gosec` comments
-  acknowledge the smell but nothing *prevents* prod execution. Gate the seed on
-  `NODE_ENV=development` or a `SEED_ALLOW_NONDEV` flag (**INFRA-22**, High).
+- **Resolved:** demo + admin seed passwords are no longer hard-coded; `cmd/seed` requires
+  `DEMO_USER_PASSWORD` and `DEMO_ADMIN_PASSWORD`, refuses `NODE_ENV=production`, and requires
+  `ALLOW_SEED=true` for any other non-development environment. Historical note: this audit
+  originally flagged known seed credentials and missing non-dev guard as **INFRA-22**.
 - The "this should 403" second station (no `user_station_access`) is a clean CI probe — good.
 
 ---

@@ -40,18 +40,24 @@ docker compose up -d
 
 # 2. Apply migrations + seed the demo tenant/users/stations.
 go run ./services/api/cmd/migrate up
-AUTH_PASSWORD_PEPPER=dev-pepper go run ./services/api/cmd/seed
+export DEMO_USER_PASSWORD="$(openssl rand -hex 24)"
+export DEMO_ADMIN_PASSWORD="$(openssl rand -hex 24)"
+AUTH_PASSWORD_PEPPER=dev-pepper \
+  DEMO_USER_PASSWORD="$DEMO_USER_PASSWORD" \
+  DEMO_ADMIN_PASSWORD="$DEMO_ADMIN_PASSWORD" \
+  go run ./services/api/cmd/seed
 
 # 3. Run the API.
 AUTH_PASSWORD_PEPPER=dev-pepper go run ./services/api/cmd/api
 ```
 
-The seed creates tenant `demo` with two users:
+The seed creates tenant `demo` with two users using the throwaway passwords
+exported above:
 
-| Role            | Email                  | Password                       |
-| --------------- | ---------------------- | ------------------------------ |
-| station_manager | `demo@fuelgrid.local`  | `fuelgrid-demo-password-1234`  |
-| system_admin    | `admin@fuelgrid.local` | `fuelgrid-admin-password-1234` |
+| Role            | Email                  | Password env var      |
+| --------------- | ---------------------- | --------------------- |
+| station_manager | `demo@fuelgrid.local`  | `DEMO_USER_PASSWORD`  |
+| system_admin    | `admin@fuelgrid.local` | `DEMO_ADMIN_PASSWORD` |
 
 ## Running locally
 
@@ -78,14 +84,14 @@ k6 run \
   loadtest/k6/read_heavy.js
 ```
 
-| Env var          | Default                        | Used by    |
-| ---------------- | ------------------------------ | ---------- |
-| `BASE_URL`       | `http://localhost:8080`        | both       |
-| `TENANT_SLUG`    | `demo`                         | both       |
-| `USER_EMAIL`     | `demo@fuelgrid.local`          | smoke      |
-| `USER_PASSWORD`  | `fuelgrid-demo-password-1234`  | smoke      |
-| `ADMIN_EMAIL`    | `admin@fuelgrid.local`         | read_heavy |
-| `ADMIN_PASSWORD` | `fuelgrid-admin-password-1234` | read_heavy |
+| Env var          | Default                 | Used by    |
+| ---------------- | ----------------------- | ---------- |
+| `BASE_URL`       | `http://localhost:8080` | both       |
+| `TENANT_SLUG`    | `demo`                  | both       |
+| `USER_EMAIL`     | `demo@fuelgrid.local`   | smoke      |
+| `USER_PASSWORD`  | required                | smoke      |
+| `ADMIN_EMAIL`    | `admin@fuelgrid.local`  | read_heavy |
+| `ADMIN_PASSWORD` | required                | read_heavy |
 
 > Never commit real credentials. For non-dev targets, pass secrets via the
 > environment (`-e ADMIN_PASSWORD="$LOADTEST_ADMIN_PASSWORD"`), not on the

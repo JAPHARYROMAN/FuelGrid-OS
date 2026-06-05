@@ -27,7 +27,7 @@ import { test, expect, type Page } from '@playwright/test';
 const LOGIN = {
   tenant: 'demo',
   email: 'demo@fuelgrid.local',
-  password: 'fuelgrid-demo-password-1234',
+  password: 'e2e-only-password',
 };
 
 const SESSION = 'e2e-mock-session-token';

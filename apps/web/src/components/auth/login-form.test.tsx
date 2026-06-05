@@ -22,7 +22,7 @@ vi.mock('@/lib/api', () => ({
 import { LoginForm } from './login-form';
 
 async function fillCredentials(user: ReturnType<typeof userEvent.setup>) {
-  // tenant_slug defaults to "demo"; only email + password are required.
+  await user.type(screen.getByLabelText('Tenant'), 'demo');
   await user.type(screen.getByLabelText('Email'), 'ops@demo.test');
   await user.type(screen.getByLabelText('Password'), 'sup3rsecret');
 }

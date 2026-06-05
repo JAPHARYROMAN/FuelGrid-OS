@@ -11,15 +11,18 @@
 //
 //	DATABASE_URL=postgres://... go run ./services/api/cmd/seed
 //
-// Safety: this command REFUSES to run unless NODE_ENV=development (the default)
-// or ALLOW_SEED=true is set explicitly. The demo dataset must never pollute a
-// production database.
+// Safety: this command REFUSES to run when NODE_ENV=production. Other
+// non-development environments require ALLOW_SEED=true. Passwords must always
+// be supplied explicitly so the source tree never carries known seeded
+// credentials.
 //
 // Environment overrides (all optional):
 //
 //	DEMO_TENANT_SLUG    default "demo"
 //	DEMO_USER_EMAIL     default "demo@fuelgrid.local"
-//	DEMO_USER_PASSWORD  default "fuelgrid-demo-password-1234"
+//	DEMO_USER_PASSWORD  required
+//	DEMO_ADMIN_EMAIL    default "admin@fuelgrid.local"
+//	DEMO_ADMIN_PASSWORD required
 //	DEMO_ROLE_CODE      default "station_manager"
 //	AUTH_PASSWORD_PEPPER must match the API to allow logins
 package main
@@ -42,14 +45,8 @@ import (
 const (
 	defaultTenantSlug = "demo"
 	defaultUserEmail  = "demo@fuelgrid.local"
-	// defaultUserPassword is a dev-only convenience for `make seed`. Override
-	// in any non-development environment via DEMO_USER_PASSWORD.
-	defaultUserPassword = "fuelgrid-demo-password-1234" //nolint:gosec // G101: development-only default, override in prod
-	defaultRoleCode     = "station_manager"
-
+	defaultRoleCode   = "station_manager"
 	defaultAdminEmail = "admin@fuelgrid.local"
-	// Same dev-only convenience for the admin seed.
-	defaultAdminPassword = "fuelgrid-admin-password-1234" //nolint:gosec // G101: development-only default, override in prod
 )
 
 func main() {
@@ -68,41 +65,35 @@ func run() error {
 		return errors.New("DATABASE_URL is required")
 	}
 
-	// Environment guard: the demo seed must NEVER run against a real
-	// (production) tenant database. Seeding is only allowed when we're plainly
-	// in a development environment, OR when an operator has explicitly opted in
-	// with ALLOW_SEED=true. This is a hard refusal — it runs before we even
-	// connect to the database — so a misconfigured prod deploy can't be polluted
-	// by the demo dataset.
+	// Environment guard: the demo seed must NEVER run against a production
+	// tenant database. This is a hard refusal before any database connection, so
+	// a misconfigured prod deploy cannot be polluted by the demo dataset.
 	nodeEnv := envOr("NODE_ENV", "development")
 	allowSeed := strings.EqualFold(strings.TrimSpace(os.Getenv("ALLOW_SEED")), "true")
+	if nodeEnv == "production" {
+		return errors.New("refusing to seed demo data: NODE_ENV=production")
+	}
 	if nodeEnv != "development" && !allowSeed {
 		return fmt.Errorf(
 			"refusing to seed demo data: NODE_ENV is %q (not \"development\") and ALLOW_SEED is not \"true\". "+
-				"The demo seed is for development only and must never touch a production database. "+
-				"If you genuinely need to seed this environment, set ALLOW_SEED=true explicitly",
+				"The demo seed is for local or explicitly approved non-production databases only",
 			nodeEnv,
 		)
 	}
 
 	tenantSlug := envOr("DEMO_TENANT_SLUG", defaultTenantSlug)
 	userEmail := envOr("DEMO_USER_EMAIL", defaultUserEmail)
-	userPassword := envOr("DEMO_USER_PASSWORD", defaultUserPassword)
 	roleCode := envOr("DEMO_ROLE_CODE", defaultRoleCode)
 	adminEmail := envOr("DEMO_ADMIN_EMAIL", defaultAdminEmail)
-	adminPassword := envOr("DEMO_ADMIN_PASSWORD", defaultAdminPassword)
-	pepper := os.Getenv("AUTH_PASSWORD_PEPPER")
-
-	// Backdoor guard (defence in depth): even when seeding is explicitly allowed
-	// via ALLOW_SEED outside development, refuse to provision accounts with the
-	// well-known default passwords. Supply explicit secrets via
-	// DEMO_USER_PASSWORD and DEMO_ADMIN_PASSWORD so no known-password account is
-	// ever created.
-	if nodeEnv != "development" {
-		if userPassword == defaultUserPassword || adminPassword == defaultAdminPassword {
-			return errors.New("refusing to seed default demo passwords outside development: set DEMO_USER_PASSWORD and DEMO_ADMIN_PASSWORD to non-default values (and prefer not seeding demo data in production at all)")
-		}
+	userPassword, err := requiredEnv("DEMO_USER_PASSWORD")
+	if err != nil {
+		return err
 	}
+	adminPassword, err := requiredEnv("DEMO_ADMIN_PASSWORD")
+	if err != nil {
+		return err
+	}
+	pepper := os.Getenv("AUTH_PASSWORD_PEPPER")
 
 	hasher := password.New(password.DefaultParams, pepper)
 	passwordHash, err := hasher.Hash(userPassword)
@@ -589,4 +580,12 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func requiredEnv(key string) (string, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return "", fmt.Errorf("%s is required for demo seeding", key)
+	}
+	return v, nil
 }
