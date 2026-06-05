@@ -75,6 +75,7 @@ function maybeWithSentry(config: NextConfig): NextConfig {
 // redundant re-check inside the image keeps the build hermetic and avoids a
 // container-only type-resolution false positive on transpilePackages source.
 const containerBuild = process.env.CONTAINER_BUILD === '1';
+const standaloneOutput = process.env.NEXT_STANDALONE_OUTPUT !== '0';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -88,7 +89,7 @@ const nextConfig: NextConfig = {
    * nests under apps/web/server.js (see apps/web/Dockerfile). Build-only change;
    * it does not alter runtime behaviour (middleware/CSP nonce still run).
    */
-  output: 'standalone',
+  output: standaloneOutput ? 'standalone' : undefined,
   /**
    * apps/web imports source from sibling workspace packages
    * (@fuelgrid/ui, @fuelgrid/sdk). transpilePackages tells Next.js to

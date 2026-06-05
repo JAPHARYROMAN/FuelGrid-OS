@@ -204,6 +204,7 @@ export type {
   Delivery,
   Employee,
   EmployeeRole,
+  EmployeeRoleOption,
   ShiftTeam,
   RotationAnchor,
   ScheduledTeam,

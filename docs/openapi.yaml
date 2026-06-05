@@ -4832,6 +4832,31 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
 
   # ===== Phase 11: Workforce — employees, shift teams, rotation =====
+  /api/v1/employee-roles:
+    get:
+      tags: [Workforce]
+      summary: List tenant employee roles (station.read)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Workforce]
+      summary: Add an employee role to the tenant catalogue (station.manage)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                code: { type: string, description: Optional URL-safe role code; generated from name when omitted. }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Employee role already exists }
   /api/v1/stations/{stationID}/employees:
     parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
     get:
@@ -4853,7 +4878,7 @@ paths:
               required: [full_name]
               properties:
                 full_name:     { type: string }
-                role:          { type: string, enum: [pump_attendant, cashier, supervisor, manager, other] }
+                role:          { type: string, description: Employee role code from /api/v1/employee-roles }
                 user_id:       { type: string, format: uuid }
                 employee_code: { type: string }
                 phone:         { type: string }
@@ -4877,7 +4902,7 @@ paths:
               type: object
               properties:
                 full_name:     { type: string }
-                role:          { type: string, enum: [pump_attendant, cashier, supervisor, manager, other] }
+                role:          { type: string, description: Employee role code from /api/v1/employee-roles }
                 status:        { type: string, enum: [active, inactive] }
                 user_id:       { type: string, format: uuid }
                 employee_code: { type: string }

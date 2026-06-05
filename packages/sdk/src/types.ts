@@ -2145,7 +2145,19 @@ export interface Paginated<T> {
 
 // ----------- Workforce (Phase 11) -----------
 
-export type EmployeeRole = 'pump_attendant' | 'cashier' | 'supervisor' | 'manager' | 'other';
+export type EmployeeRole = string;
+
+export interface EmployeeRoleOption {
+  id: string;
+  tenant_id: string;
+  code: EmployeeRole;
+  name: string;
+  is_default: boolean;
+  status: 'active' | 'inactive';
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Employee {
   id: string;

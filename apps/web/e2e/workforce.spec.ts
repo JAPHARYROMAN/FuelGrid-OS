@@ -23,6 +23,21 @@ function employee(extra: Record<string, unknown> = {}) {
   };
 }
 
+function employeeRole(code: string, name: string, extra: Record<string, unknown> = {}) {
+  return {
+    id: `role-${code}`,
+    tenant_id: STATION.tenant_id,
+    code,
+    name,
+    is_default: true,
+    status: 'active',
+    sort_order: 10,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    ...extra,
+  };
+}
+
 function team(order: number) {
   return {
     id: `team-${order}`,
@@ -35,16 +50,38 @@ function team(order: number) {
 }
 
 const TEAMS = [team(0), team(1), team(2)];
+const EMPLOYEE_ROLES = [
+  employeeRole('pump_attendant', 'Pump attendant'),
+  employeeRole('cashier', 'Cashier', { sort_order: 20 }),
+  employeeRole('supervisor', 'Supervisor', { sort_order: 30 }),
+  employeeRole('manager', 'Manager', { sort_order: 40 }),
+  employeeRole('security', 'Security', { sort_order: 50 }),
+  employeeRole('other', 'Other', { sort_order: 60 }),
+];
 
 test.describe('workforce', () => {
   test('create an employee on the Employees page', async ({ page }) => {
     await authedSession(page);
 
     let employees: ReturnType<typeof employee>[] = [];
+    let roles = [...EMPLOYEE_ROLES];
+    await page.route('**/api/bff/api/v1/employee-roles', async (route) => {
+      if (route.request().method() === 'POST') {
+        const body = route.request().postDataJSON();
+        const role = employeeRole('security_guard', body.name, {
+          is_default: false,
+          sort_order: 1000,
+        });
+        roles = [...roles, role];
+        return json(route, role, 201);
+      }
+      return json(route, { items: roles, count: roles.length });
+    });
     await page.route('**/api/bff/api/v1/stations/*/employees**', async (route) => {
       if (route.request().method() === 'POST') {
-        employees = [employee()];
-        return json(route, employee());
+        const body = route.request().postDataJSON();
+        employees = [employee({ role: body.role })];
+        return json(route, employee({ role: body.role }));
       }
       return json(route, paginated(employees));
     });
@@ -54,15 +91,22 @@ test.describe('workforce', () => {
     // Empty state first.
     await expect(page.getByText('No employees yet')).toBeVisible();
 
+    await page.getByRole('button', { name: 'New role' }).click();
+    await page.getByLabel('Role name').fill('Security guard');
+    await page.getByRole('button', { name: 'Save role' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
     // Open the create dialog, fill the name, save.
     await page.getByRole('button', { name: 'New employee' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.getByLabel('Full name').fill('Ada Attendant');
+    await page.getByLabel('Role').selectOption('security_guard');
     await page.getByRole('button', { name: 'Save' }).click();
 
     // Dialog closes and the new employee row appears in the table.
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('cell', { name: 'Ada Attendant' })).toBeVisible();
+    await expect(page.getByRole('cell', { name: 'Security guard' })).toBeVisible();
   });
 
   test('assign to team, set rotation anchor, see roster', async ({ page }) => {

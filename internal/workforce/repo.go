@@ -35,6 +35,20 @@ type Employee struct {
 	UpdatedAt    time.Time
 }
 
+// EmployeeRole is a tenant's catalogue entry for employee job roles. This is
+// separate from authorization roles; it is a workforce classification.
+type EmployeeRole struct {
+	ID        uuid.UUID
+	TenantID  uuid.UUID
+	Code      string
+	Name      string
+	IsDefault bool
+	Status    string
+	SortOrder int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Team is one of a station's three rotation teams.
 type Team struct {
 	ID            uuid.UUID
@@ -66,6 +80,72 @@ type Repo struct{ pool *database.Pool }
 
 // New constructs the workforce repository.
 func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
+
+// ---- Employee roles -------------------------------------------------------
+
+func scanEmployeeRole(row pgx.Row) (EmployeeRole, error) {
+	var r EmployeeRole
+	err := row.Scan(&r.ID, &r.TenantID, &r.Code, &r.Name, &r.IsDefault, &r.Status, &r.SortOrder, &r.CreatedAt, &r.UpdatedAt)
+	return r, err
+}
+
+// ListEmployeeRoles returns the active employee role catalogue for a tenant.
+func (r *Repo) ListEmployeeRoles(ctx context.Context, tenantID uuid.UUID) ([]EmployeeRole, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, tenant_id, code, name, is_default, status, sort_order, created_at, updated_at
+		FROM employee_roles
+		WHERE tenant_id = $1 AND status = 'active'
+		ORDER BY sort_order ASC, name ASC, code ASC`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []EmployeeRole
+	for rows.Next() {
+		role, err := scanEmployeeRole(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, role)
+	}
+	return out, rows.Err()
+}
+
+// CreateEmployeeRole adds a custom active role to the tenant catalogue.
+func (r *Repo) CreateEmployeeRole(ctx context.Context, tenantID uuid.UUID, code, name string) (EmployeeRole, error) {
+	var id uuid.UUID
+	if err := r.pool.QueryRow(ctx, `
+		INSERT INTO employee_roles (tenant_id, code, name)
+		VALUES ($1, $2, $3)
+		RETURNING id`, tenantID, code, name).Scan(&id); err != nil {
+		return EmployeeRole{}, err
+	}
+	return r.GetEmployeeRole(ctx, tenantID, code)
+}
+
+// GetEmployeeRole loads one active role by code.
+func (r *Repo) GetEmployeeRole(ctx context.Context, tenantID uuid.UUID, code string) (EmployeeRole, error) {
+	role, err := scanEmployeeRole(r.pool.QueryRow(ctx, `
+		SELECT id, tenant_id, code, name, is_default, status, sort_order, created_at, updated_at
+		FROM employee_roles
+		WHERE tenant_id = $1 AND code = $2 AND status = 'active'`, tenantID, code))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return EmployeeRole{}, ErrNotFound
+	}
+	return role, err
+}
+
+// EmployeeRoleExists reports whether code is an active employee role.
+func (r *Repo) EmployeeRoleExists(ctx context.Context, tenantID uuid.UUID, code string) (bool, error) {
+	var exists bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM employee_roles
+			WHERE tenant_id = $1 AND code = $2 AND status = 'active'
+		)`, tenantID, code).Scan(&exists)
+	return exists, err
+}
 
 // ---- Employees ------------------------------------------------------------
 

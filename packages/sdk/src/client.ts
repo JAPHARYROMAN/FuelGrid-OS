@@ -145,6 +145,7 @@ import type {
   Delivery,
   Employee,
   EmployeeRole,
+  EmployeeRoleOption,
   ShiftTeam,
   RotationAnchor,
   ScheduledTeam,
@@ -1523,6 +1524,23 @@ export class Client {
   }
 
   // ----------- Workforce (Phase 11) -----------
+
+  /** Tenant employee role catalogue (station.read). */
+  listEmployeeRoles(signal?: AbortSignal): Promise<WorkforceList<EmployeeRoleOption>> {
+    return this.request<WorkforceList<EmployeeRoleOption>>('/api/v1/employee-roles', { signal });
+  }
+
+  /** Add an employee role to the tenant catalogue (station.manage). */
+  createEmployeeRole(
+    req: { name: string; code?: string },
+    signal?: AbortSignal,
+  ): Promise<EmployeeRoleOption> {
+    return this.request<EmployeeRoleOption>('/api/v1/employee-roles', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
 
   /** A station's employees (station.read). */
   listEmployees(

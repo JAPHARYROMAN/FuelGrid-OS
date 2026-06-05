@@ -10,6 +10,13 @@ import "github.com/go-chi/chi/v5"
 // the rotation anchor) reuse station.manage — the same tenant-wide management
 // permission station CRUD uses — consistent with the org-management surface.
 func (s *Server) registerWorkforceRoutes(r chi.Router) {
+	// Employee role catalogue — tenant-level workforce labels, distinct from
+	// authorization roles.
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/employee-roles", s.handleListEmployeeRoles)
+	r.With(s.requirePermission("station.manage", nil)).
+		Post("/employee-roles", s.handleCreateEmployeeRole)
+
 	// Employees — per-station list/create + id-based patch.
 	r.With(s.requirePermissionHeld("station.read")).
 		Get("/stations/{stationID}/employees", s.handleListEmployees)

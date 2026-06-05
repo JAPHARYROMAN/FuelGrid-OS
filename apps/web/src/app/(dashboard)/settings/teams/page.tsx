@@ -38,6 +38,7 @@ export default function TeamsPage() {
   const [stationID, setStationID] = useState('');
   const [anchorDraft, setAnchorDraft] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -84,6 +85,7 @@ export default function TeamsPage() {
     mutationFn: () => api.ensureTeams(stationID, {}),
     onSuccess: () => {
       setActionError(null);
+      setActionSuccess(null);
       qc.invalidateQueries({ queryKey: teamsKey });
       qc.invalidateQueries({ queryKey: rosterKey });
     },
@@ -95,6 +97,7 @@ export default function TeamsPage() {
       api.setTeamMembers(teamID, employeeIDs),
     onSuccess: () => {
       setActionError(null);
+      setActionSuccess(null);
       qc.invalidateQueries({ queryKey: teamsKey });
       qc.invalidateQueries({ queryKey: ['employees', stationID] });
       qc.invalidateQueries({ queryKey: rosterKey });
@@ -103,9 +106,16 @@ export default function TeamsPage() {
   });
 
   const saveAnchor = useMutation({
-    mutationFn: () => api.setRotationAnchor(stationID, anchorDraft || null),
-    onSuccess: () => {
+    mutationFn: (nextAnchor: string | null) => api.setRotationAnchor(stationID, nextAnchor),
+    onSuccess: (saved) => {
       setActionError(null);
+      setAnchorDraft(saved.rotation_anchor_date ?? '');
+      setActionSuccess(
+        saved.rotation_anchor_date
+          ? `Rotation anchor saved for ${saved.rotation_anchor_date}`
+          : 'Rotation anchor cleared',
+      );
+      qc.setQueryData(anchorKey, saved);
       qc.invalidateQueries({ queryKey: anchorKey });
       qc.invalidateQueries({ queryKey: rosterKey });
     },
@@ -162,6 +172,11 @@ export default function TeamsPage() {
           {actionError}
         </p>
       ) : null}
+      {actionSuccess ? (
+        <p className="rounded-md bg-success/10 px-3 py-2 text-sm text-success" role="status">
+          {actionSuccess}
+        </p>
+      ) : null}
 
       {!stationID ? (
         <EmptyState
@@ -192,14 +207,17 @@ export default function TeamsPage() {
                   type="date"
                   className="h-9 w-44"
                   value={anchorDraft}
-                  onChange={(e) => setAnchorDraft(e.target.value)}
+                  onChange={(e) => {
+                    setAnchorDraft(e.target.value);
+                    setActionSuccess(null);
+                  }}
                 />
               </div>
               <PermissionGate permission="station.manage">
                 <div className="flex items-end gap-2">
                   <Button
                     size="sm"
-                    onClick={() => saveAnchor.mutate()}
+                    onClick={() => saveAnchor.mutate(anchorDraft || null)}
                     disabled={saveAnchor.isPending}
                   >
                     {saveAnchor.isPending ? 'Saving…' : 'Save anchor'}
@@ -208,7 +226,7 @@ export default function TeamsPage() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => setAnchorDraft('')}
+                      onClick={() => saveAnchor.mutate(null)}
                       disabled={saveAnchor.isPending}
                     >
                       Clear

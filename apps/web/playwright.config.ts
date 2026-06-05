@@ -48,6 +48,7 @@ export default defineConfig({
     reuseExistingServer: !isCI,
     env: {
       NEXT_PUBLIC_API_URL: baseURL,
+      NEXT_STANDALONE_OUTPUT: process.platform === 'win32' ? '0' : '1',
     },
   },
 });

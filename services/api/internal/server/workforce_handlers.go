@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,6 +36,27 @@ type employeeDTO struct {
 	TeamID       *uuid.UUID `json:"team_id,omitempty"`
 	CreatedAt    string     `json:"created_at"`
 	UpdatedAt    string     `json:"updated_at"`
+}
+
+type employeeRoleDTO struct {
+	ID        uuid.UUID `json:"id"`
+	TenantID  uuid.UUID `json:"tenant_id"`
+	Code      string    `json:"code"`
+	Name      string    `json:"name"`
+	IsDefault bool      `json:"is_default"`
+	Status    string    `json:"status"`
+	SortOrder int       `json:"sort_order"`
+	CreatedAt string    `json:"created_at"`
+	UpdatedAt string    `json:"updated_at"`
+}
+
+func toEmployeeRoleDTO(r *workforce.EmployeeRole) employeeRoleDTO {
+	return employeeRoleDTO{
+		ID: r.ID, TenantID: r.TenantID, Code: r.Code, Name: r.Name,
+		IsDefault: r.IsDefault, Status: r.Status, SortOrder: r.SortOrder,
+		CreatedAt: r.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: r.UpdatedAt.Format(time.RFC3339),
+	}
 }
 
 func toEmployeeDTO(e *workforce.Employee) employeeDTO {
@@ -84,10 +107,97 @@ func toTeamDTOPtr(t *workforce.Team) *teamDTO {
 	return &d
 }
 
-// workforceRoles is the closed set of employee roles (mirrors the DB CHECK).
-var workforceRoles = map[string]bool{
-	"pump_attendant": true, "cashier": true, "supervisor": true,
-	"manager": true, "other": true,
+var (
+	employeeRoleCodePattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9_]{0,63}$`)
+	employeeRoleCodeSeparators = regexp.MustCompile(`[^a-z0-9]+`)
+)
+
+func normalizeEmployeeRoleName(name string) string {
+	return strings.Join(strings.Fields(name), " ")
+}
+
+func normalizeEmployeeRoleCode(code string) string {
+	code = strings.ToLower(strings.TrimSpace(code))
+	code = employeeRoleCodeSeparators.ReplaceAllString(code, "_")
+	code = strings.Trim(code, "_")
+	if len(code) > 64 {
+		code = strings.TrimRight(code[:64], "_")
+	}
+	return code
+}
+
+// ---- Employee roles --------------------------------------------------------
+
+func (s *Server) handleListEmployeeRoles(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	roles, err := s.workforce.ListEmployeeRoles(r.Context(), actor.TenantID)
+	if err != nil {
+		s.logger.Error("list employee roles", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]employeeRoleDTO, 0, len(roles))
+	for i := range roles {
+		out = append(out, toEmployeeRoleDTO(&roles[i]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "count": len(out)})
+}
+
+type createEmployeeRoleRequest struct {
+	Name string `json:"name"`
+	Code string `json:"code,omitempty"`
+}
+
+func (s *Server) handleCreateEmployeeRole(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var req createEmployeeRoleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	name := normalizeEmployeeRoleName(req.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	codeSource := req.Code
+	if codeSource == "" {
+		codeSource = name
+	}
+	code := normalizeEmployeeRoleCode(codeSource)
+	if !employeeRoleCodePattern.MatchString(code) {
+		writeError(w, http.StatusBadRequest, "role code must start with a letter or number")
+		return
+	}
+
+	role, err := s.workforce.CreateEmployeeRole(r.Context(), actor.TenantID, code, name)
+	if isUniqueViolation(err) {
+		writeError(w, http.StatusConflict, "employee role already exists")
+		return
+	}
+	if err != nil {
+		s.logger.Error("create employee role", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	dto := toEmployeeRoleDTO(&role)
+	s.auditWorkforce(r.Context(), audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "employee_role.created", EventType: "EmployeeRoleCreated",
+		EntityType: "employee_role", EntityID: role.ID.String(),
+		NewValue: dto,
+		IP:       clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(r.Context()),
+	})
+	writeJSON(w, http.StatusCreated, dto)
 }
 
 // ---- Employees -------------------------------------------------------------
@@ -156,12 +266,23 @@ func (s *Server) handleCreateEmployee(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "full_name is required")
 		return
 	}
-	if req.Role != "" && !workforceRoles[req.Role] {
-		writeError(w, http.StatusBadRequest, "invalid role")
+
+	ctx := r.Context()
+	role := req.Role
+	if role == "" {
+		role = "pump_attendant"
+	}
+	ok, err := s.workforce.EmployeeRoleExists(ctx, actor.TenantID, role)
+	if err != nil {
+		s.logger.Error("validate employee role", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusBadRequest, "employee role does not exist")
 		return
 	}
 
-	ctx := r.Context()
 	// The route gates station.manage tenant-wide; confirm the station exists in
 	// the tenant for a clean 404.
 	if _, err := s.stations.Get(ctx, actor.TenantID, stationID); err != nil {
@@ -174,7 +295,7 @@ func (s *Server) handleCreateEmployee(w http.ResponseWriter, r *http.Request) {
 	}
 
 	emp, err := s.workforce.CreateEmployee(ctx, actor.TenantID, workforce.CreateEmployeeInput{
-		StationID: stationID, UserID: req.UserID, FullName: req.FullName, Role: req.Role,
+		StationID: stationID, UserID: req.UserID, FullName: req.FullName, Role: role,
 		EmployeeCode: req.EmployeeCode, Phone: req.Phone, Email: req.Email,
 	})
 	if isUniqueViolation(err) {
@@ -228,16 +349,24 @@ func (s *Server) handleUpdateEmployee(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.Role != nil && !workforceRoles[*req.Role] {
-		writeError(w, http.StatusBadRequest, "invalid role")
-		return
-	}
 	if req.Status != nil && *req.Status != "active" && *req.Status != "inactive" {
 		writeError(w, http.StatusBadRequest, "status must be active or inactive")
 		return
 	}
 
 	ctx := r.Context()
+	if req.Role != nil {
+		ok, err := s.workforce.EmployeeRoleExists(ctx, actor.TenantID, *req.Role)
+		if err != nil {
+			s.logger.Error("validate employee role", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusBadRequest, "employee role does not exist")
+			return
+		}
+	}
 	before, err := s.workforce.GetEmployee(ctx, actor.TenantID, id)
 	if errors.Is(err, workforce.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "employee not found")

@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 
-import { SdkError, type Employee, type EmployeeRole } from '@fuelgrid/sdk';
+import { SdkError, type Employee, type EmployeeRole, type EmployeeRoleOption } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -33,7 +33,24 @@ import {
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
-const ROLES: EmployeeRole[] = ['pump_attendant', 'cashier', 'supervisor', 'manager', 'other'];
+type RoleChoice = Pick<EmployeeRoleOption, 'code' | 'name'>;
+
+const DEFAULT_ROLES: RoleChoice[] = [
+  { code: 'pump_attendant', name: 'Pump attendant' },
+  { code: 'cashier', name: 'Cashier' },
+  { code: 'supervisor', name: 'Supervisor' },
+  { code: 'manager', name: 'Manager' },
+  { code: 'security', name: 'Security' },
+  { code: 'other', name: 'Other' },
+];
+
+function humanizeRole(role: string): string {
+  return role
+    .split('_')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 interface FormState {
   full_name: string;
@@ -60,6 +77,9 @@ export default function EmployeesPage() {
   const [editing, setEditing] = useState<Employee | null>(null);
   const [form, setForm] = useState<FormState>(blankForm);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [roleOpen, setRoleOpen] = useState(false);
+  const [roleName, setRoleName] = useState('');
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -72,6 +92,11 @@ export default function EmployeesPage() {
   }, [stationID, stations.data]);
 
   const employeesKey = ['employees', stationID];
+  const rolesKey = ['employee-roles'];
+  const roleOptions = useQuery({
+    queryKey: rolesKey,
+    queryFn: ({ signal }) => api.listEmployeeRoles(signal),
+  });
   const list = useQuery({
     queryKey: employeesKey,
     // TODO(pagination): the API now returns a paged envelope. We request the
@@ -80,6 +105,25 @@ export default function EmployeesPage() {
     queryFn: ({ signal }) => api.listEmployees(stationID, { limit: 200 }, signal),
     enabled: !!stationID,
   });
+
+  const roleChoices = useMemo<RoleChoice[]>(() => {
+    const items = roleOptions.data?.items ?? [];
+    return items.length > 0 ? items : DEFAULT_ROLES;
+  }, [roleOptions.data]);
+
+  const roleChoicesForForm = useMemo<RoleChoice[]>(() => {
+    if (!form.role || roleChoices.some((role) => role.code === form.role)) return roleChoices;
+    return [...roleChoices, { code: form.role, name: humanizeRole(form.role) }];
+  }, [form.role, roleChoices]);
+
+  const roleLabels = useMemo(
+    () => new Map(roleChoices.map((role) => [role.code, role.name])),
+    [roleChoices],
+  );
+
+  function roleLabel(role: string): string {
+    return roleLabels.get(role) ?? humanizeRole(role);
+  }
 
   const create = useMutation({
     mutationFn: (input: FormState) =>
@@ -96,6 +140,19 @@ export default function EmployeesPage() {
       setForm(blankForm);
     },
     onError: (err) => setSubmitError(err instanceof SdkError ? err.message : 'Could not save'),
+  });
+
+  const createRole = useMutation({
+    mutationFn: () => api.createEmployeeRole({ name: roleName.trim() }),
+    onSuccess: (role) => {
+      qc.invalidateQueries({ queryKey: rolesKey });
+      setForm((prev) => ({ ...prev, role: role.code }));
+      setRoleOpen(false);
+      setRoleName('');
+      setRoleError(null);
+    },
+    onError: (err) =>
+      setRoleError(err instanceof SdkError ? err.message : 'Could not create employee role'),
   });
 
   const update = useMutation({
@@ -146,6 +203,20 @@ export default function EmployeesPage() {
     else create.mutate(form);
   }
 
+  function openCreateRole() {
+    setRoleName('');
+    setRoleError(null);
+    setRoleOpen(true);
+  }
+
+  function submitRole() {
+    if (!roleName.trim()) {
+      setRoleError('Role name is required');
+      return;
+    }
+    createRole.mutate();
+  }
+
   const stationSelect =
     (stations.data?.items?.length ?? 0) > 0 ? (
       <label className="flex items-center gap-2 text-sm">
@@ -174,10 +245,16 @@ export default function EmployeesPage() {
           <div className="flex items-center gap-3">
             {stationSelect}
             <PermissionGate permission="station.manage">
-              <Button onClick={openCreate} disabled={!stationID}>
-                <Plus className="size-4" />
-                New employee
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" onClick={openCreateRole}>
+                  <Plus className="size-4" />
+                  New role
+                </Button>
+                <Button onClick={openCreate} disabled={!stationID}>
+                  <Plus className="size-4" />
+                  New employee
+                </Button>
+              </div>
             </PermissionGate>
           </div>
         }
@@ -234,7 +311,7 @@ export default function EmployeesPage() {
                     <TableCell className="font-mono text-xs tabular-nums">
                       {e.employee_code ?? '—'}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{e.role}</TableCell>
+                    <TableCell className="text-muted-foreground">{roleLabel(e.role)}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {[e.phone, e.email].filter(Boolean).join(' · ') || '—'}
                     </TableCell>
@@ -297,9 +374,9 @@ export default function EmployeesPage() {
                   value={form.role}
                   onChange={(e) => setForm({ ...form, role: e.target.value as EmployeeRole })}
                 >
-                  {ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
+                  {roleChoicesForForm.map((r) => (
+                    <option key={r.code} value={r.code}>
+                      {r.name}
                     </option>
                   ))}
                 </select>
@@ -362,6 +439,51 @@ export default function EmployeesPage() {
               </Button>
               <Button type="submit" disabled={create.isPending || update.isPending}>
                 {create.isPending || update.isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={roleOpen} onOpenChange={setRoleOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New employee role</DialogTitle>
+            <DialogDescription>
+              Add a workforce role that can be assigned to employees.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitRole();
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="employee_role_name">Role name</Label>
+              <Input
+                id="employee_role_name"
+                value={roleName}
+                onChange={(e) => setRoleName(e.target.value)}
+                placeholder="Security"
+                required
+              />
+            </div>
+
+            {roleError ? (
+              <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+                {roleError}
+              </p>
+            ) : null}
+
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => setRoleOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createRole.isPending}>
+                {createRole.isPending ? 'Saving…' : 'Save role'}
               </Button>
             </DialogFooter>
           </form>
