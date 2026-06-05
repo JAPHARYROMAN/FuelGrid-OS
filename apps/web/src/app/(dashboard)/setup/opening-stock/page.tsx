@@ -148,9 +148,13 @@ export default function OpeningStockPage() {
   const noStations = (stations.data?.items.length ?? 0) === 0;
 
   const reviewOpeningStock = useMutation({
-    mutationFn: () => api.updateSetupStep({ step_code: 'opening_stock', status: 'completed' }),
+    mutationFn: () =>
+      api.updateSetupStep(
+        { step_code: 'opening_stock', status: 'completed' },
+        { stationID: effectiveStation },
+      ),
     onSuccess: (checklist) => {
-      qc.setQueryData(['setup-checklist'], checklist);
+      qc.setQueryData(['setup-checklist', effectiveStation], checklist);
     },
   });
 

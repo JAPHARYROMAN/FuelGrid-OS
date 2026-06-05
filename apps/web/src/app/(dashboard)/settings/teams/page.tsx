@@ -112,8 +112,9 @@ export default function TeamsPage() {
     enabled: !!stationID,
   });
   const setupChecklist = useQuery({
-    queryKey: ['setup-checklist'],
-    queryFn: ({ signal }) => api.getSetupChecklist(signal),
+    queryKey: ['setup-checklist', stationID],
+    queryFn: ({ signal }) => api.getSetupChecklist({ stationID }, signal),
+    enabled: !!stationID,
   });
 
   useEffect(() => {
@@ -121,14 +122,17 @@ export default function TeamsPage() {
   }, [anchor.data]);
 
   async function syncSetupSteps(stepCodes: string[]) {
-    let checklist = await api.getSetupChecklist();
-    qc.setQueryData(['setup-checklist'], checklist);
+    let checklist = await api.getSetupChecklist({ stationID });
+    qc.setQueryData(['setup-checklist', stationID], checklist);
 
     for (const code of stepCodes) {
       const step = findSetupStep(checklist, code);
       if (step?.ready && step.status !== 'completed') {
-        checklist = await api.updateSetupStep({ step_code: code, status: 'completed' });
-        qc.setQueryData(['setup-checklist'], checklist);
+        checklist = await api.updateSetupStep(
+          { step_code: code, status: 'completed' },
+          { stationID },
+        );
+        qc.setQueryData(['setup-checklist', stationID], checklist);
       }
     }
 

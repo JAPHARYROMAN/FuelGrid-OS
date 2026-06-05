@@ -20,8 +20,9 @@ const (
 )
 
 var (
-	ErrInvalidStep   = errors.New("setup: invalid step")
-	ErrInvalidStatus = errors.New("setup: invalid status")
+	ErrInvalidStep     = errors.New("setup: invalid step")
+	ErrInvalidStatus   = errors.New("setup: invalid status")
+	ErrStationRequired = errors.New("setup: station id is required for this step")
 )
 
 type Repo struct{ pool *database.Pool }
@@ -39,6 +40,7 @@ type StepDefinition struct {
 
 type StepState struct {
 	Code        string
+	StationID   *uuid.UUID
 	Status      string
 	CompletedAt *time.Time
 	CompletedBy *uuid.UUID
@@ -48,6 +50,7 @@ type StepState struct {
 
 type Step struct {
 	StepDefinition
+	StationID     *uuid.UUID
 	Status        string
 	Ready         bool
 	Blocked       bool
@@ -210,6 +213,20 @@ func ValidStep(code string) bool {
 	return false
 }
 
+var stationScopedSteps = map[string]bool{
+	"tanks":           true,
+	"pumps":           true,
+	"nozzles":         true,
+	"opening_stock":   true,
+	"employees":       true,
+	"teams":           true,
+	"rotation_anchor": true,
+}
+
+func IsStationScopedStep(code string) bool {
+	return stationScopedSteps[code]
+}
+
 func validStatus(status string) bool {
 	switch status {
 	case StatusPending, StatusCompleted, StatusSkipped:
@@ -220,11 +237,12 @@ func validStatus(status string) bool {
 }
 
 func (r *Repo) Checklist(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID) (Checklist, error) {
+	stationID := singleStationID(stationIDs)
 	counts, err := r.Counts(ctx, tenantID, stationIDs)
 	if err != nil {
 		return Checklist{}, err
 	}
-	states, err := r.stepStates(ctx, tenantID)
+	states, err := r.stepStates(ctx, tenantID, stationID)
 	if err != nil {
 		return Checklist{}, err
 	}
@@ -240,6 +258,7 @@ func buildChecklist(counts Counts, states map[string]StepState) Checklist {
 		}
 		step.Ready, step.Blocked, step.BlockedReason, step.Count, step.RequiredCount = readinessFor(def.Code, counts)
 		if st, ok := states[def.Code]; ok {
+			step.StationID = st.StationID
 			step.Status = st.Status
 			step.CompletedAt = st.CompletedAt
 			step.CompletedBy = st.CompletedBy
@@ -257,7 +276,7 @@ func buildChecklist(counts Counts, states map[string]StepState) Checklist {
 				}
 				out.Blocked = append(out.Blocked, Blocker{Code: def.Code, Message: msg})
 			}
-			if step.Status == StatusCompleted {
+			if step.Ready && step.Status == StatusCompleted {
 				out.RequiredCompleted++
 			}
 		}
@@ -265,6 +284,14 @@ func buildChecklist(counts Counts, states map[string]StepState) Checklist {
 	}
 	out.OperationallyReady = out.RequiredReady == out.RequiredTotal
 	return out
+}
+
+func singleStationID(stationIDs []uuid.UUID) *uuid.UUID {
+	if len(stationIDs) != 1 {
+		return nil
+	}
+	id := stationIDs[0]
+	return &id
 }
 
 func readinessFor(code string, c Counts) (ready, blocked bool, reason *string, count, requiredCount int) {
@@ -382,12 +409,23 @@ func (r *Repo) Counts(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid
 	return c, nil
 }
 
-func (r *Repo) stepStates(ctx context.Context, tenantID uuid.UUID) (map[string]StepState, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT code, status, completed_at, completed_by, updated_at, notes
-		FROM setup_steps
-		WHERE tenant_id = $1
-	`, tenantID)
+func (r *Repo) stepStates(ctx context.Context, tenantID uuid.UUID, stationID *uuid.UUID) (map[string]StepState, error) {
+	var rows pgx.Rows
+	var err error
+	if stationID == nil {
+		rows, err = r.pool.Query(ctx, `
+			SELECT code, station_id, status, completed_at, completed_by, updated_at, notes
+			FROM setup_steps
+			WHERE tenant_id = $1 AND station_id IS NULL
+		`, tenantID)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT code, station_id, status, completed_at, completed_by, updated_at, notes
+			FROM setup_steps
+			WHERE tenant_id = $1
+			  AND (station_id IS NULL OR station_id = $2)
+		`, tenantID, *stationID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -396,31 +434,48 @@ func (r *Repo) stepStates(ctx context.Context, tenantID uuid.UUID) (map[string]S
 	out := map[string]StepState{}
 	for rows.Next() {
 		var st StepState
-		if err := rows.Scan(&st.Code, &st.Status, &st.CompletedAt, &st.CompletedBy, &st.UpdatedAt, &st.Notes); err != nil {
+		if err := rows.Scan(&st.Code, &st.StationID, &st.Status, &st.CompletedAt, &st.CompletedBy, &st.UpdatedAt, &st.Notes); err != nil {
 			return nil, err
+		}
+		if IsStationScopedStep(st.Code) {
+			if stationID == nil || st.StationID == nil || *st.StationID != *stationID {
+				continue
+			}
+		} else if st.StationID != nil {
+			continue
 		}
 		out[st.Code] = st
 	}
 	return out, rows.Err()
 }
 
-func (r *Repo) UpsertStep(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID, code, status string, notes *string) (StepState, error) {
+func (r *Repo) UpsertStep(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID, stationID *uuid.UUID, code, status string, notes *string) (StepState, error) {
 	if !ValidStep(code) {
 		return StepState{}, ErrInvalidStep
 	}
 	if !validStatus(status) {
 		return StepState{}, ErrInvalidStatus
 	}
+	if IsStationScopedStep(code) {
+		if stationID == nil {
+			return StepState{}, ErrStationRequired
+		}
+		return r.upsertStationStep(ctx, tx, tenantID, actorID, *stationID, code, status, notes)
+	}
+	return r.upsertGlobalStep(ctx, tx, tenantID, actorID, code, status, notes)
+}
+
+func (r *Repo) upsertGlobalStep(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid.UUID, code, status string, notes *string) (StepState, error) {
 	var st StepState
 	err := tx.QueryRow(ctx, `
-		INSERT INTO setup_steps (tenant_id, code, status, completed_by, completed_at, updated_by, notes)
+		INSERT INTO setup_steps (tenant_id, station_id, code, status, completed_by, completed_at, updated_by, notes)
 		VALUES (
-			$1, $2, $3::text,
+			$1, NULL, $2, $3::text,
 			CASE WHEN $3::text = 'completed' THEN $4::uuid ELSE NULL::uuid END,
 			CASE WHEN $3::text = 'completed' THEN now() ELSE NULL END,
 			$4::uuid, $5
 		)
-		ON CONFLICT (tenant_id, code) DO UPDATE SET
+		ON CONFLICT (tenant_id, code) WHERE station_id IS NULL DO UPDATE SET
 			status = EXCLUDED.status,
 			completed_by = CASE WHEN EXCLUDED.status = 'completed' THEN EXCLUDED.updated_by ELSE NULL::uuid END,
 			completed_at = CASE
@@ -429,9 +484,35 @@ func (r *Repo) UpsertStep(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid
 			END,
 			updated_by = EXCLUDED.updated_by,
 			notes = EXCLUDED.notes
-		RETURNING code, status, completed_at, completed_by, updated_at, notes
+		RETURNING code, station_id, status, completed_at, completed_by, updated_at, notes
 	`, tenantID, code, status, actorID, notes).Scan(
-		&st.Code, &st.Status, &st.CompletedAt, &st.CompletedBy, &st.UpdatedAt, &st.Notes,
+		&st.Code, &st.StationID, &st.Status, &st.CompletedAt, &st.CompletedBy, &st.UpdatedAt, &st.Notes,
+	)
+	return st, err
+}
+
+func (r *Repo) upsertStationStep(ctx context.Context, tx pgx.Tx, tenantID, actorID, stationID uuid.UUID, code, status string, notes *string) (StepState, error) {
+	var st StepState
+	err := tx.QueryRow(ctx, `
+		INSERT INTO setup_steps (tenant_id, station_id, code, status, completed_by, completed_at, updated_by, notes)
+		VALUES (
+			$1, $2, $3, $4::text,
+			CASE WHEN $4::text = 'completed' THEN $5::uuid ELSE NULL::uuid END,
+			CASE WHEN $4::text = 'completed' THEN now() ELSE NULL END,
+			$5::uuid, $6
+		)
+		ON CONFLICT (tenant_id, station_id, code) WHERE station_id IS NOT NULL DO UPDATE SET
+			status = EXCLUDED.status,
+			completed_by = CASE WHEN EXCLUDED.status = 'completed' THEN EXCLUDED.updated_by ELSE NULL::uuid END,
+			completed_at = CASE
+				WHEN EXCLUDED.status = 'completed' THEN COALESCE(setup_steps.completed_at, now())
+				ELSE NULL
+			END,
+			updated_by = EXCLUDED.updated_by,
+			notes = EXCLUDED.notes
+		RETURNING code, station_id, status, completed_at, completed_by, updated_at, notes
+	`, tenantID, stationID, code, status, actorID, notes).Scan(
+		&st.Code, &st.StationID, &st.Status, &st.CompletedAt, &st.CompletedBy, &st.UpdatedAt, &st.Notes,
 	)
 	return st, err
 }

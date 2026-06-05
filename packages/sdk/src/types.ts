@@ -465,6 +465,7 @@ export interface SetupBlocker {
 
 export interface SetupChecklistStep {
   code: string;
+  station_id?: string;
   title: string;
   description: string;
   href: string;

@@ -227,9 +227,15 @@ describe('Client setup and tank inventory methods', () => {
     await expect(client.getSetupChecklist()).resolves.toEqual(checklist);
     expect(callArgs(f).url).toBe('http://api.test/api/v1/setup/checklist');
 
-    await client.updateSetupStep({ step_code: 'opening_stock', status: 'completed' });
-    const second = callArgs(f, 1);
-    expect(second.url).toBe('http://api.test/api/v1/setup/checklist');
+    await expect(client.getSetupChecklist({ stationID: 'station-1' })).resolves.toEqual(checklist);
+    expect(callArgs(f, 1).url).toBe('http://api.test/api/v1/setup/checklist?station_id=station-1');
+
+    await client.updateSetupStep(
+      { step_code: 'opening_stock', status: 'completed' },
+      { stationID: 'station-1' },
+    );
+    const second = callArgs(f, 2);
+    expect(second.url).toBe('http://api.test/api/v1/setup/checklist?station_id=station-1');
     expect(second.init.method).toBe('PATCH');
     expect(second.init.body).toBe(
       JSON.stringify({ step_code: 'opening_stock', status: 'completed' }),

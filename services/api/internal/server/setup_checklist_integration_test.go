@@ -12,7 +12,7 @@ func TestSetupChecklist_UpdateStepCompleted(t *testing.T) {
 	ctx := context.Background()
 	_, _, admin := h.adminContext(t, ctx)
 
-	code, body := h.patchJSON(t, "/api/v1/setup/checklist", admin, `{
+	code, body := h.patchJSON(t, "/api/v1/setup/checklist?station_id="+h.ids.station1.String(), admin, `{
 		"step_code": "opening_stock",
 		"status": "completed"
 	}`)
@@ -34,4 +34,50 @@ func TestSetupChecklist_UpdateStepCompleted(t *testing.T) {
 		}
 	}
 	t.Fatal("opening_stock step not found")
+}
+
+func TestSetupChecklist_StationStepRequiresStation(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	code, body := h.patchJSON(t, "/api/v1/setup/checklist", admin, `{
+		"step_code": "opening_stock",
+		"status": "completed"
+	}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("review station setup step without station: status %d: %v", code, body)
+	}
+}
+
+func TestSetupChecklist_StationStepStateDoesNotBleedAcrossStations(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, _, admin := h.adminContext(t, ctx)
+
+	code, body := h.patchJSON(t, "/api/v1/setup/checklist?station_id="+h.ids.station1.String(), admin, `{
+		"step_code": "teams",
+		"status": "completed"
+	}`)
+	if code != http.StatusOK {
+		t.Fatalf("review station1 teams: status %d: %v", code, body)
+	}
+
+	code, body = h.getJSON(t, "/api/v1/setup/checklist?station_id="+h.ids.station2.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("station2 setup checklist: status %d: %v", code, body)
+	}
+	steps, _ := body["steps"].([]any)
+	for _, raw := range steps {
+		step, _ := raw.(map[string]any)
+		if step["code"] == "teams" {
+			if step["status"] != "pending" {
+				t.Fatalf("station2 teams status = %v, want pending", step["status"])
+			}
+			return
+		}
+	}
+	t.Fatal("teams step not found")
 }

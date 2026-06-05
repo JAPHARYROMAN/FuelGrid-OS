@@ -979,15 +979,21 @@ export class Client {
 
   // ----------- Setup checklist -----------
 
-  getSetupChecklist(signal?: AbortSignal): Promise<SetupChecklist> {
-    return this.request<SetupChecklist>('/api/v1/setup/checklist', { signal });
+  getSetupChecklist(
+    opts: { stationID?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<SetupChecklist> {
+    const qs = opts.stationID ? `?station_id=${encodeURIComponent(opts.stationID)}` : '';
+    return this.request<SetupChecklist>(`/api/v1/setup/checklist${qs}`, { signal });
   }
 
   updateSetupStep(
     req: { step_code: string; status: 'pending' | 'completed' | 'skipped'; notes?: string },
+    opts: { stationID?: string } = {},
     signal?: AbortSignal,
   ): Promise<SetupChecklist> {
-    return this.request<SetupChecklist>('/api/v1/setup/checklist', {
+    const qs = opts.stationID ? `?station_id=${encodeURIComponent(opts.stationID)}` : '';
+    return this.request<SetupChecklist>(`/api/v1/setup/checklist${qs}`, {
       method: 'PATCH',
       body: req,
       signal,

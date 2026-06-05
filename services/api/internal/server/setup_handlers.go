@@ -16,6 +16,7 @@ import (
 
 type setupStepDTO struct {
 	Code          string     `json:"code"`
+	StationID     *uuid.UUID `json:"station_id,omitempty"`
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
 	Href          string     `json:"href"`
@@ -45,7 +46,8 @@ type setupChecklistDTO struct {
 func toSetupStepDTO(s setupdomain.Step) setupStepDTO {
 	return setupStepDTO{
 		Code: s.Code, Title: s.Title, Description: s.Description, Href: s.Href, CTA: s.CTA,
-		Required: s.Required, Status: s.Status, Ready: s.Ready, Blocked: s.Blocked,
+		StationID: s.StationID,
+		Required:  s.Required, Status: s.Status, Ready: s.Ready, Blocked: s.Blocked,
 		BlockedReason: s.BlockedReason, Count: s.Count, RequiredCount: s.RequiredCount,
 		CompletedAt: s.CompletedAt, CompletedBy: s.CompletedBy, UpdatedAt: s.UpdatedAt, Notes: s.Notes,
 	}
@@ -106,6 +108,15 @@ func (s *Server) handlePatchSetupChecklist(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "step_code and status are required")
 		return
 	}
+	filter, ok := s.stationReadFilter(w, r, actor)
+	if !ok {
+		return
+	}
+	stationID := setupStationID(filter)
+	if setupdomain.IsStationScopedStep(req.StepCode) && stationID == nil {
+		writeError(w, http.StatusBadRequest, "station_id is required for this setup step")
+		return
+	}
 
 	ctx := r.Context()
 	tx, err := s.deps.DB.Begin(ctx)
@@ -115,13 +126,17 @@ func (s *Server) handlePatchSetupChecklist(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	state, err := s.setup.UpsertStep(ctx, tx, actor.TenantID, actor.UserID, req.StepCode, req.Status, req.Notes)
+	state, err := s.setup.UpsertStep(ctx, tx, actor.TenantID, actor.UserID, stationID, req.StepCode, req.Status, req.Notes)
 	if errors.Is(err, setupdomain.ErrInvalidStep) {
 		writeError(w, http.StatusBadRequest, "invalid setup step")
 		return
 	}
 	if errors.Is(err, setupdomain.ErrInvalidStatus) {
 		writeError(w, http.StatusBadRequest, "status must be pending, completed, or skipped")
+		return
+	}
+	if errors.Is(err, setupdomain.ErrStationRequired) {
+		writeError(w, http.StatusBadRequest, "station_id is required for this setup step")
 		return
 	}
 	if err != nil {
@@ -147,10 +162,6 @@ func (s *Server) handlePatchSetupChecklist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	filter, ok := s.stationReadFilter(w, r, actor)
-	if !ok {
-		return
-	}
 	checklist, err := s.setup.Checklist(ctx, actor.TenantID, filter)
 	if err != nil {
 		s.logger.Error("setup checklist reload", "error", err)
@@ -158,4 +169,12 @@ func (s *Server) handlePatchSetupChecklist(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, toSetupChecklistDTO(checklist))
+}
+
+func setupStationID(filter []uuid.UUID) *uuid.UUID {
+	if len(filter) != 1 {
+		return nil
+	}
+	id := filter[0]
+	return &id
 }
