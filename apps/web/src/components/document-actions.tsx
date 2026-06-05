@@ -6,7 +6,7 @@ import { Download, Eye } from 'lucide-react';
 import { SdkError } from '@fuelgrid/sdk';
 import { Button } from '@fuelgrid/ui';
 
-import { usePermission } from '@/hooks/use-permissions';
+import { type PermissionCheckMode, usePermission } from '@/hooks/use-permissions';
 import { toast } from '@/lib/toast';
 
 /**
@@ -49,6 +49,8 @@ export interface DocumentActionsProps {
   filename: string;
   /** Backend permission the document requires (e.g. "customer.read"). */
   permission: string;
+  /** Whether the permission check targets a resource or only requires a held permission. */
+  permissionMode?: PermissionCheckMode;
   /** Supply when the permission is station-scoped so the check is meaningful. */
   stationId?: string | null;
   /** Optional override for the View button label (default "View"). */
@@ -80,12 +82,13 @@ export function DocumentActions({
   onFetch,
   filename,
   permission,
+  permissionMode = 'target',
   stationId,
   viewLabel = 'View',
   downloadLabel = 'Download',
   size = 'sm',
 }: DocumentActionsProps) {
-  const allowed = usePermission(permission, { stationID: stationId });
+  const allowed = usePermission(permission, { stationID: stationId, mode: permissionMode });
   const [busy, setBusy] = React.useState<'view' | 'download' | null>(null);
 
   const denied = allowed === false;

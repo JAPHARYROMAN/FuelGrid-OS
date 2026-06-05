@@ -178,6 +178,7 @@ export default function ProductsPage() {
               onFetch={() => api.productsPdf()}
               filename="products.pdf"
               permission="station.read"
+              permissionMode="held"
             />
             <PermissionGate permission="products.manage">
               <Button onClick={openCreate}>

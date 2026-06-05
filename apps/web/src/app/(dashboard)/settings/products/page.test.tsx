@@ -19,8 +19,9 @@ vi.mock('@/lib/api', () => ({
 }));
 
 let permitted = true;
+const usePermission = vi.fn((_code: string, _opts?: unknown) => permitted);
 vi.mock('@/hooks/use-permissions', () => ({
-  usePermission: () => permitted,
+  usePermission: (code: string, opts?: unknown) => usePermission(code, opts),
 }));
 
 import ProductsPage from './page';
@@ -52,6 +53,7 @@ describe('ProductsPage', () => {
   beforeEach(() => {
     permitted = true;
     listProducts.mockReset();
+    usePermission.mockClear();
   });
 
   afterEach(() => {
@@ -94,5 +96,20 @@ describe('ProductsPage', () => {
 
     await screen.findByText('Premium Motor Spirit');
     expect(screen.getByRole('button', { name: /new product/i })).toBeEnabled();
+  });
+
+  it('checks the products PDF controls with held station.read permission', async () => {
+    permitted = true;
+    listProducts.mockResolvedValue({ items: [sampleProduct], count: 1 });
+    renderPage();
+
+    await screen.findByText('Premium Motor Spirit');
+
+    expect(screen.getByRole('button', { name: /^view$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^download$/i })).toBeEnabled();
+    expect(usePermission).toHaveBeenCalledWith(
+      'station.read',
+      expect.objectContaining({ mode: 'held' }),
+    );
   });
 });

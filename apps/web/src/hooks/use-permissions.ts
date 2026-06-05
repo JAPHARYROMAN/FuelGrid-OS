@@ -22,13 +22,43 @@ export function usePermissions() {
   });
 }
 
-interface UsePermissionOptions {
+export type PermissionCheckMode = 'target' | 'held';
+
+export interface UsePermissionOptions {
   /**
    * When the permission is station_scoped, supply the station the
-   * action targets. Without it, station-scoped permissions return
-   * false unless the actor has tenant-wide reach.
+   * action targets. In "target" mode, missing station-scoped resources
+   * return false, matching policy.Can.
    */
   stationID?: string | null;
+  /**
+   * "target" mirrors policy.Can for an action against a specific resource.
+   * "held" mirrors requirePermissionHeld for tenant-scoped list/document
+   * endpoints that only need the actor to hold the permission somewhere.
+   */
+  mode?: PermissionCheckMode;
+}
+
+export function canUsePermission(
+  data: MePermissions,
+  code: string,
+  opts: UsePermissionOptions = {},
+): boolean {
+  const perm = data.permissions.find((p) => p.code === code);
+  if (!perm) return false;
+
+  if (!perm.station_scoped) return true;
+
+  if (opts.mode === 'held') return true;
+
+  // Station-scoped permission — caller MUST supply a station id for a
+  // meaningful answer. Treat missing station as "no" the same way the
+  // backend's policy.Can does.
+  if (!opts.stationID) return false;
+
+  if (data.tenant_wide) return true;
+
+  return Boolean(data.station_ids?.includes(opts.stationID));
 }
 
 /**
@@ -45,17 +75,5 @@ export function usePermission(code: string, opts: UsePermissionOptions = {}): bo
 
   if (isLoading || !data) return null;
 
-  const perm = data.permissions.find((p) => p.code === code);
-  if (!perm) return false;
-
-  if (!perm.station_scoped) return true;
-
-  // Station-scoped permission — caller MUST supply a station id for a
-  // meaningful answer. Treat missing station as "no" the same way the
-  // backend does.
-  if (!opts.stationID) return false;
-
-  if (data.tenant_wide) return true;
-
-  return Boolean(data.station_ids?.includes(opts.stationID));
+  return canUsePermission(data, code, opts);
 }
