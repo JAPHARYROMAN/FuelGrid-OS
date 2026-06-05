@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
@@ -31,15 +32,39 @@ func (l *DBLoader) Load(ctx context.Context, actor identity.Actor) (PermissionSe
 		StationScoped: map[string]bool{},
 	}
 
-	// Permissions granted by the actor's roles. station_scoped is fetched
-	// alongside the code so the evaluator can route the scope check.
-	rows, err := l.pool.Query(ctx, `
+	if err := l.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM user_roles ur
+			JOIN roles r ON r.id = ur.role_id
+			WHERE ur.user_id = $1
+			  AND ur.tenant_id = $2
+			  AND r.is_system
+			  AND r.code = 'system_admin'
+		)
+	`, actor.UserID, actor.TenantID).Scan(&ps.IsSystemAdmin); err != nil {
+		return PermissionSet{}, err
+	}
+
+	// Permissions granted by the actor's roles. system_admin is a superuser
+	// role: it receives every permission from the catalog dynamically, so new
+	// permissions do not depend on seed-time role_permissions fan-out.
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	permissionSQL := `
 		SELECT DISTINCT p.code, p.station_scoped
 		FROM user_roles ur
 		JOIN role_permissions rp ON rp.role_id = ur.role_id
 		JOIN permissions p       ON p.id      = rp.permission_id
-		WHERE ur.user_id = $1
-	`, actor.UserID)
+		WHERE ur.user_id = $1 AND ur.tenant_id = $2
+	`
+	if ps.IsSystemAdmin {
+		rows, err = l.pool.Query(ctx, `SELECT p.code, p.station_scoped FROM permissions p`)
+	} else {
+		rows, err = l.pool.Query(ctx, permissionSQL, actor.UserID, actor.TenantID)
+	}
 	if err != nil {
 		return PermissionSet{}, err
 	}
@@ -61,8 +86,8 @@ func (l *DBLoader) Load(ctx context.Context, actor identity.Actor) (PermissionSe
 	// only stations they may touch for station_scoped permissions; an actor
 	// with no rows and no tenant-wide role has no station-scoped access.
 	srows, err := l.pool.Query(ctx, `
-		SELECT station_id FROM user_station_access WHERE user_id = $1
-	`, actor.UserID)
+		SELECT station_id FROM user_station_access WHERE user_id = $1 AND tenant_id = $2
+	`, actor.UserID, actor.TenantID)
 	if err != nil {
 		return PermissionSet{}, err
 	}
@@ -86,10 +111,13 @@ func (l *DBLoader) Load(ctx context.Context, actor identity.Actor) (PermissionSe
 			SELECT 1
 			FROM user_roles ur
 			JOIN roles r ON r.id = ur.role_id
-			WHERE ur.user_id = $1 AND r.tenant_wide
+			WHERE ur.user_id = $1 AND ur.tenant_id = $2 AND r.tenant_wide
 		)
-	`, actor.UserID).Scan(&ps.TenantWide); err != nil {
+	`, actor.UserID, actor.TenantID).Scan(&ps.TenantWide); err != nil {
 		return PermissionSet{}, err
+	}
+	if ps.IsSystemAdmin {
+		ps.TenantWide = true
 	}
 
 	return ps, nil

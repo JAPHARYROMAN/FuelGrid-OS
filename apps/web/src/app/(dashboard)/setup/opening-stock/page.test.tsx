@@ -32,8 +32,10 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 let permitted: boolean | null = true;
+let isSystemAdmin = false;
 vi.mock('@/hooks/use-permissions', () => ({
   usePermission: () => permitted,
+  usePermissions: () => ({ data: { is_system_admin: isSystemAdmin } }),
 }));
 
 import OpeningStockPage from './page';
@@ -90,6 +92,7 @@ function seedStationAndProducts() {
 describe('OpeningStockPage', () => {
   beforeEach(() => {
     permitted = true;
+    isSystemAdmin = false;
     listStations.mockReset();
     listProducts.mockReset();
     listTanks.mockReset();
@@ -179,5 +182,27 @@ describe('OpeningStockPage', () => {
     expect(screen.getByText('Submitted by you; another user must approve.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^reject$/i })).toBeDisabled();
+  });
+
+  it('allows system admin override when the current user submitted the draft', async () => {
+    isSystemAdmin = true;
+    seedStationAndProducts();
+    me.mockResolvedValue({
+      user_id: 'u-1',
+      tenant_id: 't',
+      session_id: 's',
+      mfa_satisfied: true,
+    });
+    listOpeningStockRequests.mockResolvedValue({
+      items: [draftRequest],
+      count: 1,
+      has_more: false,
+    });
+    renderPage();
+
+    await screen.findByText('Tank A');
+    expect(screen.getByText('Submitted by you; admin override available.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^approve$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^reject$/i })).toBeEnabled();
   });
 });

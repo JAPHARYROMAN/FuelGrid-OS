@@ -35,4 +35,13 @@ describe('canUsePermission', () => {
   it('denies missing permissions even in held mode', () => {
     expect(canUsePermission(basePermissions, 'reports.export', { mode: 'held' })).toBe(false);
   });
+
+  it('allows system admin regardless of explicit permission or station scope', () => {
+    expect(
+      canUsePermission(
+        { ...basePermissions, permissions: [], station_ids: [], is_system_admin: true },
+        'stock.approve_adjustment',
+      ),
+    ).toBe(true);
+  });
 });

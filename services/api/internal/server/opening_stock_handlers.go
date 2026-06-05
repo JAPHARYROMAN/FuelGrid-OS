@@ -260,9 +260,15 @@ func (s *Server) handleApproveOpeningStock(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if _, ok := s.openingRequestStation(w, r, actor, id, "stock.approve_adjustment"); !ok {
+	reqBefore, ok := s.openingRequestStation(w, r, actor, id, "stock.approve_adjustment")
+	if !ok {
 		return
 	}
+	isSystemAdmin, ok := s.actorIsSystemAdmin(w, r, actor)
+	if !ok {
+		return
+	}
+	adminOverride := isSystemAdmin && reqBefore.RequestedBy == actor.UserID
 	var body struct {
 		Note *string `json:"note,omitempty"`
 	}
@@ -276,7 +282,7 @@ func (s *Server) handleApproveOpeningStock(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	or, m, err := s.inventory.ApproveOpeningStock(ctx, tx, actor.TenantID, id, actor.UserID, body.Note)
+	or, m, err := s.inventory.ApproveOpeningStock(ctx, tx, actor.TenantID, id, actor.UserID, body.Note, adminOverride)
 	if !s.openingRequestLifecycleError(w, err) {
 		return
 	}
@@ -287,6 +293,7 @@ func (s *Server) handleApproveOpeningStock(w http.ResponseWriter, r *http.Reques
 		EntityType: "opening_stock_request", EntityID: id.String(),
 		NewValue: map[string]any{
 			"movement_id": m.ID, "litres": or.Litres, "balance_after": or.BalanceAfter,
+			"admin_override": adminOverride,
 		},
 		IP: clientIP(r), UserAgent: r.UserAgent(), RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {
@@ -314,21 +321,28 @@ func (s *Server) handleRejectOpeningStock(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if _, ok := s.openingRequestStation(w, r, actor, id, "stock.approve_adjustment"); !ok {
+	reqBefore, ok := s.openingRequestStation(w, r, actor, id, "stock.approve_adjustment")
+	if !ok {
 		return
 	}
+	isSystemAdmin, ok := s.actorIsSystemAdmin(w, r, actor)
+	if !ok {
+		return
+	}
+	adminOverride := isSystemAdmin && reqBefore.RequestedBy == actor.UserID
 	var body struct {
 		Note *string `json:"note,omitempty"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	var or *inventory.OpeningRequest
-	ok := s.txAudit(w, r, audit.TxRecord{
+	ok = s.txAudit(w, r, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "opening_stock.rejected", EventType: "OpeningStockRejected",
 		EntityType: "opening_stock_request", EntityID: id.String(),
+		NewValue: map[string]any{"id": id.String(), "admin_override": adminOverride},
 	}, func(tx pgx.Tx) (string, error) {
-		out, rerr := s.inventory.RejectOpeningStock(r.Context(), tx, actor.TenantID, id, actor.UserID, body.Note)
+		out, rerr := s.inventory.RejectOpeningStock(r.Context(), tx, actor.TenantID, id, actor.UserID, body.Note, adminOverride)
 		if rerr != nil {
 			s.openingRequestLifecycleError(w, rerr)
 			return "", rerr

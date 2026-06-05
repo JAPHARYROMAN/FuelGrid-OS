@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // TestOpeningStock_Lifecycle drives the draft -> approve(lock) lifecycle and
@@ -121,9 +123,9 @@ func TestOpeningStock_RejectThenReenter(t *testing.T) {
 	}
 }
 
-// TestOpeningStock_NoSelfApprove proves separation of duties: the requester
-// cannot approve or reject their own opening-stock draft.
-func TestOpeningStock_NoSelfApprove(t *testing.T) {
+// TestOpeningStock_SystemAdminSelfApprove proves system_admin can override the
+// normal separation-of-duties guard during tenant setup.
+func TestOpeningStock_SystemAdminSelfApprove(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
 	ctx := context.Background()
@@ -137,12 +139,56 @@ func TestOpeningStock_NoSelfApprove(t *testing.T) {
 	}
 	reqID := body["id"].(string)
 
-	if code, _ := h.invPostJSON(t, "/api/v1/opening-stock-requests/"+reqID+"/approve", admin, map[string]any{}); code != http.StatusForbidden {
-		t.Fatalf("self-approve: status %d, want 403", code)
+	code, body = h.invPostJSON(t, "/api/v1/opening-stock-requests/"+reqID+"/approve", admin, map[string]any{})
+	if code != http.StatusOK || body["status"] != "approved" {
+		t.Fatalf("system_admin self-approve: status %d: %v", code, body)
 	}
-	if code, _ := h.invPostJSON(t, "/api/v1/opening-stock-requests/"+reqID+"/reject", admin, map[string]any{}); code != http.StatusForbidden {
-		t.Fatalf("self-reject: status %d, want 403", code)
+}
+
+// TestOpeningStock_NonAdminNoSelfApprove proves separation of duties still
+// applies to regular operational roles.
+func TestOpeningStock_NonAdminNoSelfApprove(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	_, slug, _ := h.adminContext(t, ctx)
+	manager := h.stationManager(t, ctx, slug, "osr-manager@fuelgrid.local")
+
+	code, body := h.invPostJSON(t, "/api/v1/opening-stock-requests", manager, map[string]any{
+		"tank_id": h.ids.tankAGO.String(), "litres": "8000",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("draft: %d: %v", code, body)
 	}
+	reqID := body["id"].(string)
+
+	if code, _ := h.invPostJSON(t, "/api/v1/opening-stock-requests/"+reqID+"/approve", manager, map[string]any{}); code != http.StatusForbidden {
+		t.Fatalf("manager self-approve: status %d, want 403", code)
+	}
+	if code, _ := h.invPostJSON(t, "/api/v1/opening-stock-requests/"+reqID+"/reject", manager, map[string]any{}); code != http.StatusForbidden {
+		t.Fatalf("manager self-reject: status %d, want 403", code)
+	}
+}
+
+func (h *harness) stationManager(t *testing.T, ctx context.Context, slug, email string) string {
+	t.Helper()
+	var id uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		SELECT tenant_id, $2, 'Station Manager', 'active', password_hash, now()
+		FROM users WHERE tenant_id = $1 AND email = $3
+		RETURNING id
+	`, h.ids.tenantID, email, h.ids.adminEmail).Scan(&id); err != nil {
+		t.Fatalf("create station manager: %v", err)
+	}
+	grantRole(t, ctx, h.pool, h.ids.tenantID, id, "station_manager")
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO user_station_access (user_id, station_id, tenant_id)
+		VALUES ($1, $2, $3)
+	`, id, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("grant station manager station access: %v", err)
+	}
+	return h.login(t, slug, email)
 }
 
 // TestOpeningStock_Validation rejects a negative/absent litres value and an

@@ -33,7 +33,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { PermissionGate } from '@/components/permission-gate';
-import { usePermission } from '@/hooks/use-permissions';
+import { usePermission, usePermissions } from '@/hooks/use-permissions';
 import { api } from '@/lib/api';
 import { formatLitres } from '@/lib/money';
 import { toast } from '@/lib/toast';
@@ -98,6 +98,8 @@ export default function OpeningStockPage() {
   const canApprove = usePermission('stock.approve_adjustment', {
     stationID: effectiveStation || undefined,
   });
+  const permissions = usePermissions();
+  const canAdminOverride = permissions.data?.is_system_admin === true;
   const me = useQuery({
     queryKey: ['me'],
     queryFn: ({ signal }) => api.me(signal),
@@ -264,6 +266,7 @@ export default function OpeningStockPage() {
                   const requestedByMe =
                     row.request?.requested_by != null &&
                     row.request.requested_by === me.data?.user_id;
+                  const selfApprovalBlocked = requestedByMe && !canAdminOverride;
                   return (
                     <TableRow key={row.tank.id}>
                       <TableCell>
@@ -291,11 +294,13 @@ export default function OpeningStockPage() {
                         <Badge tone={badge.tone}>{badge.label}</Badge>
                       </TableCell>
                       <TableCell className="min-w-52 text-sm text-muted-foreground">
-                        {row.state === 'draft' && requestedByMe
+                        {row.state === 'draft' && selfApprovalBlocked
                           ? 'Submitted by you; another user must approve.'
-                          : row.state === 'rejected' && row.request?.decision_note
-                            ? `Rejected: ${row.request.decision_note}`
-                            : (row.request?.notes ?? row.opening?.notes ?? '—')}
+                          : row.state === 'draft' && requestedByMe
+                            ? 'Submitted by you; admin override available.'
+                            : row.state === 'rejected' && row.request?.decision_note
+                              ? `Rejected: ${row.request.decision_note}`
+                              : (row.request?.notes ?? row.opening?.notes ?? '—')}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -308,9 +313,9 @@ export default function OpeningStockPage() {
                                 <Button
                                   size="sm"
                                   variant="secondary"
-                                  disabled={requestedByMe}
+                                  disabled={selfApprovalBlocked}
                                   title={
-                                    requestedByMe
+                                    selfApprovalBlocked
                                       ? 'Another user must approve a request you submitted'
                                       : undefined
                                   }
@@ -328,9 +333,9 @@ export default function OpeningStockPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
-                                  disabled={requestedByMe}
+                                  disabled={selfApprovalBlocked}
                                   title={
-                                    requestedByMe
+                                    selfApprovalBlocked
                                       ? 'Another user must reject a request you submitted'
                                       : undefined
                                   }
@@ -394,6 +399,7 @@ export default function OpeningStockPage() {
           if (!open) setDecideFor(null);
         }}
         canApprove={canApprove === true}
+        canAdminOverride={canAdminOverride}
         currentUserID={me.data?.user_id}
         onSaved={() => {
           setDecideFor(null);
@@ -513,12 +519,14 @@ function DecideDialog({
   decision,
   onOpenChange,
   canApprove,
+  canAdminOverride,
   currentUserID,
   onSaved,
 }: {
   decision: { request: OpeningStockRequest; action: 'approve' | 'reject' } | null;
   onOpenChange: (open: boolean) => void;
   canApprove: boolean;
+  canAdminOverride: boolean;
   currentUserID?: string;
   onSaved: () => void;
 }) {
@@ -527,6 +535,7 @@ function DecideDialog({
   const isReject = decision?.action === 'reject';
   const requestedByMe =
     decision?.request.requested_by != null && decision.request.requested_by === currentUserID;
+  const selfApprovalBlocked = requestedByMe && !canAdminOverride;
 
   React.useEffect(() => {
     if (open) setNote('');
@@ -552,11 +561,13 @@ function DecideDialog({
         <DialogHeader>
           <DialogTitle>{isReject ? 'Reject opening stock' : 'Approve opening stock'}</DialogTitle>
           <DialogDescription>
-            {requestedByMe
+            {selfApprovalBlocked
               ? 'Another user must approve or reject a request you submitted.'
-              : isReject
-                ? 'Record a reason; the tank can then have a corrected figure re-entered.'
-                : 'Approving posts the genesis opening movement and locks the request.'}
+              : requestedByMe
+                ? 'Approving uses your system admin override and records that in audit.'
+                : isReject
+                  ? 'Record a reason; the tank can then have a corrected figure re-entered.'
+                  : 'Approving posts the genesis opening movement and locks the request.'}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -584,7 +595,7 @@ function DecideDialog({
               type="submit"
               variant={isReject ? 'secondary' : 'primary'}
               disabled={
-                requestedByMe || !canApprove || decide.isPending || (isReject && !note.trim())
+                selfApprovalBlocked || !canApprove || decide.isPending || (isReject && !note.trim())
               }
             >
               {decide.isPending ? 'Saving…' : isReject ? 'Reject' : 'Approve & lock'}

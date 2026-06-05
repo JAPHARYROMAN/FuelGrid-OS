@@ -49,6 +49,7 @@ export interface MePermissions {
   permissions: PermissionItem[];
   station_ids?: string[];
   tenant_wide: boolean;
+  is_system_admin?: boolean;
 }
 
 export interface Company {

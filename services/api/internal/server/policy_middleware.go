@@ -129,6 +129,20 @@ func (s *Server) authorizeStation(w http.ResponseWriter, r *http.Request, actor 
 	return false
 }
 
+func (s *Server) actorIsSystemAdmin(w http.ResponseWriter, r *http.Request, actor identity.Actor) (bool, bool) {
+	ps, err := s.policy.LoadFor(r.Context(), actor)
+	if err == nil {
+		return ps.IsSystemAdmin, true
+	}
+	if errors.Is(err, identity.ErrUnauthenticated) {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return false, false
+	}
+	s.logger.Error("policy load", "error", err, "permission", "system_admin")
+	writeError(w, http.StatusInternalServerError, "authorization error")
+	return false, false
+}
+
 // requirePermissionHeld builds a middleware that allows the request when the
 // actor *holds* the permission in any scope, without demanding a specific
 // station. It's the right gate for tenant-wide catalogue reads (list/get of

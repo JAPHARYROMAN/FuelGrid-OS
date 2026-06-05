@@ -157,11 +157,12 @@ func (r *Repo) ListOpeningRequestsPage(ctx context.Context, tenantID uuid.UUID, 
 // it seeds the genesis 'opening' movement (via the same SetOpeningBalance path
 // as the direct seed) and flips the request to 'approved', linking the movement
 // and snapshotting the balance. Separation of duties: the approver must not be
-// the requester (checked under a row lock). Approval is idempotent and
-// immutable — only a 'draft' request approves; once 'approved' it can never
-// re-approve (status guard + the uq_osr_movement unique index). Runs in the
-// caller's tx so the ledger row and the lock commit together or not at all.
-func (r *Repo) ApproveOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id, approverID uuid.UUID, note *string) (*OpeningRequest, *Movement, error) {
+// the requester unless allowSelfApprove is true for a system-admin override
+// (checked under a row lock). Approval is idempotent and immutable — only a
+// 'draft' request approves; once 'approved' it can never re-approve (status
+// guard + the uq_osr_movement unique index). Runs in the caller's tx so the
+// ledger row and the lock commit together or not at all.
+func (r *Repo) ApproveOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id, approverID uuid.UUID, note *string, allowSelfApprove bool) (*OpeningRequest, *Movement, error) {
 	// Lock the lifecycle row first so two concurrent approvers serialize on it,
 	// and so the state + requester (separation-of-duties) check is atomic with
 	// the transition.
@@ -182,7 +183,7 @@ func (r *Repo) ApproveOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id,
 	if status != "draft" {
 		return nil, nil, ErrOpeningRequestBadState
 	}
-	if requestedBy == approverID {
+	if requestedBy == approverID && !allowSelfApprove {
 		return nil, nil, ErrOpeningRequestSelfApprove
 	}
 
@@ -220,10 +221,11 @@ func (r *Repo) ApproveOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id,
 }
 
 // RejectOpeningStock moves a draft request -> rejected, recording a reason. The
-// requester may not reject (decide) their own request, mirroring approve's
-// separation of duties. A rejected request frees the tank for a corrected
-// figure (the live-per-tank unique index exempts rejected rows).
-func (r *Repo) RejectOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id, deciderID uuid.UUID, note *string) (*OpeningRequest, error) {
+// requester may not reject (decide) their own request unless allowSelfDecide is
+// true for a system-admin override, mirroring approve's separation of duties. A
+// rejected request frees the tank for a corrected figure (the live-per-tank
+// unique index exempts rejected rows).
+func (r *Repo) RejectOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id, deciderID uuid.UUID, note *string, allowSelfDecide bool) (*OpeningRequest, error) {
 	var status string
 	var requestedBy uuid.UUID
 	err := tx.QueryRow(ctx, `
@@ -240,7 +242,7 @@ func (r *Repo) RejectOpeningStock(ctx context.Context, tx pgx.Tx, tenantID, id, 
 	if status != "draft" {
 		return nil, ErrOpeningRequestBadState
 	}
-	if requestedBy == deciderID {
+	if requestedBy == deciderID && !allowSelfDecide {
 		return nil, ErrOpeningRequestSelfApprove
 	}
 

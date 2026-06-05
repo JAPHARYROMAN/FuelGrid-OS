@@ -13,9 +13,10 @@ import (
 // Tokens never need a database round-trip to decide whether to show a
 // button — this payload is all they need.
 type mePermissionsResponse struct {
-	Permissions []permissionItem `json:"permissions"`
-	StationIDs  []uuid.UUID      `json:"station_ids,omitempty"`
-	TenantWide  bool             `json:"tenant_wide"`
+	Permissions   []permissionItem `json:"permissions"`
+	StationIDs    []uuid.UUID      `json:"station_ids,omitempty"`
+	TenantWide    bool             `json:"tenant_wide"`
+	IsSystemAdmin bool             `json:"is_system_admin"`
 }
 
 type permissionItem struct {
@@ -37,7 +38,7 @@ func (s *Server) handleMePermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := mePermissionsResponse{TenantWide: ps.TenantWide}
+	resp := mePermissionsResponse{TenantWide: ps.TenantWide, IsSystemAdmin: ps.IsSystemAdmin}
 	for code := range ps.Permissions {
 		resp.Permissions = append(resp.Permissions, permissionItem{
 			Code:          code,

@@ -44,6 +44,8 @@ export function canUsePermission(
   code: string,
   opts: UsePermissionOptions = {},
 ): boolean {
+  if (data.is_system_admin) return true;
+
   const perm = data.permissions.find((p) => p.code === code);
   if (!perm) return false;
 

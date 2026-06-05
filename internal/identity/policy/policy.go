@@ -46,6 +46,7 @@ type PermissionSet struct {
 	Permissions   map[string]bool
 	StationIDs    map[uuid.UUID]bool
 	TenantWide    bool
+	IsSystemAdmin bool
 	StationScoped map[string]bool // which permission codes require a station
 }
 

@@ -46,6 +46,7 @@ export const mePermissionsSchema = z.object({
   permissions: z.array(permissionItemSchema),
   station_ids: z.array(z.string()).optional(),
   tenant_wide: z.boolean(),
+  is_system_admin: z.boolean().optional(),
 });
 
 /**
