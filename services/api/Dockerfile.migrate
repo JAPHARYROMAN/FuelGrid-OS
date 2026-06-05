@@ -28,7 +28,18 @@
 FROM migrate/migrate:v4.17.1
 
 # Bake the SQL migrations into the image so the droplet needs no checkout.
-COPY services/api/migrations /migrations
+# Copy as the unprivileged user so /migrations is readable when we drop root.
+COPY --chown=65534:65534 services/api/migrations /migrations
+
+# Run as a non-root user (nobody, uid/gid 65534 — present in the alpine base).
+# golang-migrate only needs to read /migrations and open an outbound DB
+# connection, so no elevated privileges are required (Trivy DS002).
+USER 65534:65534
+
+# This is a one-shot migration job, not a long-running service, so a liveness
+# probe is meaningless — declare NONE explicitly to satisfy linters (DS026)
+# and to keep any orchestrator from health-gating a container that exits 0.
+HEALTHCHECK NONE
 
 # Default to applying all pending migrations against $DATABASE_URL. The compose
 # `migrate` service sets DATABASE_URL (the OWNER DSN) from the .env file; the
