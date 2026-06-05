@@ -324,6 +324,7 @@ func (s *Server) registerInventoryRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("pumps.manage")).Delete("/pumps/{id}", s.handleDeletePump)
 	r.With(s.requirePermissionHeld("pumps.manage")).Post("/nozzles", s.handleCreateNozzle)
 	r.With(s.requirePermissionHeld("pumps.manage")).Patch("/nozzles/{id}", s.handleUpdateNozzle)
+	r.With(s.requirePermissionHeld("pumps.manage")).Post("/nozzles/{id}/initial-meter", s.handleSetNozzleInitialMeter)
 	r.With(s.requirePermissionHeld("pumps.manage")).Delete("/nozzles/{id}", s.handleDeleteNozzle)
 
 	// Tank calibration: reads ride station.read; CSV upload

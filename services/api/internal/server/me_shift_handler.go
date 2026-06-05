@@ -12,17 +12,18 @@ import (
 )
 
 type myNozzleDTO struct {
-	NozzleID           uuid.UUID `json:"nozzle_id"`
-	PumpNumber         int       `json:"pump_number"`
-	NozzleNumber       int       `json:"nozzle_number"`
-	ProductName        string    `json:"product_name"`
-	ProductColor       string    `json:"product_color"`
-	TankID             uuid.UUID `json:"tank_id"`
-	TankCode           string    `json:"tank_code"`
-	DefaultPrice       float64   `json:"default_price"`
-	MeterDecimalPlaces int       `json:"meter_decimal_places"`
-	OpeningReading     *float64  `json:"opening_reading,omitempty"`
-	ClosingReading     *float64  `json:"closing_reading,omitempty"`
+	NozzleID            uuid.UUID `json:"nozzle_id"`
+	PumpNumber          int       `json:"pump_number"`
+	NozzleNumber        int       `json:"nozzle_number"`
+	ProductName         string    `json:"product_name"`
+	ProductColor        string    `json:"product_color"`
+	TankID              uuid.UUID `json:"tank_id"`
+	TankCode            string    `json:"tank_code"`
+	DefaultPrice        float64   `json:"default_price"`
+	MeterDecimalPlaces  int       `json:"meter_decimal_places"`
+	InitialMeterReading *string   `json:"initial_meter_reading,omitempty"`
+	OpeningReading      *float64  `json:"opening_reading,omitempty"`
+	ClosingReading      *float64  `json:"closing_reading,omitempty"`
 }
 
 type myTankDTO struct {
@@ -102,6 +103,7 @@ func (s *Server) handleMyActiveShift(w http.ResponseWriter, r *http.Request) {
 			ProductName: d.ProductName, ProductColor: d.ProductColor,
 			TankID: d.TankID, TankCode: d.TankCode,
 			DefaultPrice: d.DefaultPrice, MeterDecimalPlaces: d.MeterDecimalPlaces,
+			InitialMeterReading: d.InitialMeterReading,
 		}
 		if e := byNozzle[d.NozzleID]; e != nil {
 			n.OpeningReading = e.opening

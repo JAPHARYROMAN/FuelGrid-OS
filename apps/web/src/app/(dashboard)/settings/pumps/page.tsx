@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Gauge, Plus, Trash2 } from 'lucide-react';
 
 import { SdkError, type Nozzle, type Pump, type Tank } from '@fuelgrid/sdk';
 import {
@@ -53,6 +53,17 @@ interface NozzleFormState {
   number: string;
   default_price: string;
   meter_decimal_places: string;
+  initial_meter_reading: string;
+  initial_meter_note: string;
+}
+
+interface MeterFormState {
+  nozzle_id: string;
+  label: string;
+  reading: string;
+  note: string;
+  meter_decimal_places: number;
+  current?: string;
 }
 
 export default function PumpsPage() {
@@ -67,6 +78,10 @@ export default function PumpsPage() {
   const [nozzleOpen, setNozzleOpen] = useState(false);
   const [nozzleForm, setNozzleForm] = useState<NozzleFormState | null>(null);
   const [nozzleError, setNozzleError] = useState<string | null>(null);
+
+  const [meterOpen, setMeterOpen] = useState(false);
+  const [meterForm, setMeterForm] = useState<MeterFormState | null>(null);
+  const [meterError, setMeterError] = useState<string | null>(null);
 
   // Inline deletes have no dialog of their own — surface their failure in a
   // page-level banner so a failed delete isn't silent.
@@ -167,6 +182,10 @@ export default function PumpsPage() {
         meter_decimal_places: input.meter_decimal_places
           ? Number(input.meter_decimal_places)
           : undefined,
+        initial_meter_reading: input.initial_meter_reading.trim()
+          ? input.initial_meter_reading.trim()
+          : undefined,
+        initial_meter_note: input.initial_meter_note.trim() || undefined,
       }),
     onSuccess: () => {
       invalidateStation();
@@ -184,6 +203,22 @@ export default function PumpsPage() {
     },
     onError: (err) =>
       setDeleteError(err instanceof SdkError ? err.message : 'Could not delete nozzle'),
+  });
+
+  const setNozzleMeter = useMutation({
+    mutationFn: (input: MeterFormState) =>
+      api.setNozzleInitialMeter(input.nozzle_id, {
+        reading: input.reading.trim(),
+        note: input.note.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setMeterError(null);
+      invalidateStation();
+      setMeterOpen(false);
+      setMeterForm(null);
+    },
+    onError: (err) =>
+      setMeterError(err instanceof SdkError ? err.message : 'Could not save meter reading'),
   });
 
   function toggle(id: string) {
@@ -211,9 +246,26 @@ export default function PumpsPage() {
       number: String(next),
       default_price: '',
       meter_decimal_places: '2',
+      initial_meter_reading: '',
+      initial_meter_note: '',
     });
     setNozzleError(null);
     setNozzleOpen(true);
+  }
+
+  function openMeterAdjust(nozzle: Nozzle) {
+    const product = productLookup.get(nozzle.product_id);
+    const tank = tankLookup.get(nozzle.tank_id);
+    setMeterForm({
+      nozzle_id: nozzle.id,
+      label: `N${nozzle.number} · ${product?.name ?? 'Product'} · ${tank?.code ?? 'Tank'}`,
+      reading: nozzle.initial_meter_reading ?? '',
+      note: '',
+      meter_decimal_places: nozzle.meter_decimal_places,
+      current: nozzle.initial_meter_reading,
+    });
+    setMeterError(null);
+    setMeterOpen(true);
   }
 
   // When the tank changes in the nozzle dialog, prefill the price from the
@@ -255,7 +307,28 @@ export default function PumpsPage() {
       setNozzleError('A positive nozzle number is required');
       return;
     }
+    if (nozzleForm.initial_meter_reading.trim() && Number(nozzleForm.initial_meter_reading) < 0) {
+      setNozzleError('Initial meter reading cannot be negative');
+      return;
+    }
     createNozzle.mutate(nozzleForm);
+  }
+
+  function submitMeter() {
+    if (!meterForm) return;
+    if (canManage === false) {
+      setMeterError("You don't have permission to manage pumps at this station");
+      return;
+    }
+    if (!meterForm.reading.trim()) {
+      setMeterError('Enter the meter reading shown on the nozzle');
+      return;
+    }
+    if (Number(meterForm.reading) < 0) {
+      setMeterError('Meter reading cannot be negative');
+      return;
+    }
+    setNozzleMeter.mutate(meterForm);
   }
 
   const noStations = (stations.data?.items?.length ?? 0) === 0;
@@ -263,6 +336,10 @@ export default function PumpsPage() {
   const lockedProduct = nozzleForm?.tank_id
     ? productLookup.get(tankLookup.get(nozzleForm.tank_id)?.product_id ?? '')
     : undefined;
+  const nozzleMeterStep = nozzleForm
+    ? 1 / Math.pow(10, Number(nozzleForm.meter_decimal_places || '2'))
+    : 0.01;
+  const adjustMeterStep = meterForm ? 1 / Math.pow(10, meterForm.meter_decimal_places) : 0.01;
 
   return (
     <div className="flex flex-col gap-7">
@@ -400,28 +477,44 @@ export default function PumpsPage() {
                             return (
                               <div
                                 key={n.id}
-                                className="flex items-center justify-between gap-3 py-2"
+                                className="flex flex-col gap-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                               >
-                                <div className="flex items-center gap-3">
+                                <div className="flex min-w-0 items-center gap-3">
                                   <span className="w-16 font-mono text-xs text-muted-foreground">
                                     N{n.number}
                                   </span>
-                                  <span className="inline-flex items-center gap-2">
-                                    <span
-                                      className="inline-block size-3 rounded-full border border-border"
-                                      style={{ backgroundColor: product?.color ?? '#64748b' }}
-                                      aria-hidden
-                                    />
-                                    {product?.name ?? '—'}
-                                  </span>
-                                  <span className="text-sm text-muted-foreground">
-                                    ← {tank ? `${tank.name} (${tank.code})` : 'tank'}
-                                  </span>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="inline-flex items-center gap-2">
+                                      <span
+                                        className="inline-block size-3 rounded-full border border-border"
+                                        style={{ backgroundColor: product?.color ?? '#64748b' }}
+                                        aria-hidden
+                                      />
+                                      {product?.name ?? '—'}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {tank ? `${tank.name} (${tank.code})` : 'tank'} · Initial{' '}
+                                      {n.initial_meter_reading ?? 'not set'}
+                                    </span>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-4">
+                                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                                   <span className="font-mono text-sm tabular-nums">
                                     {formatMoney(n.default_price)}
                                   </span>
+                                  <PermissionGate
+                                    permission="pumps.manage"
+                                    stationId={effectiveStation}
+                                  >
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => openMeterAdjust(n)}
+                                    >
+                                      <Gauge className="size-4" />
+                                      {n.initial_meter_reading ? 'Adjust meter' : 'Seed meter'}
+                                    </Button>
+                                  </PermissionGate>
                                   <PermissionGate
                                     permission="pumps.manage"
                                     stationId={effectiveStation}
@@ -588,7 +681,7 @@ export default function PumpsPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="nozzle_number">Number</Label>
                   <Input
@@ -614,7 +707,7 @@ export default function PumpsPage() {
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="nozzle_dp">Meter dp</Label>
+                  <Label htmlFor="nozzle_dp">Meter decimals</Label>
                   <Input
                     id="nozzle_dp"
                     type="number"
@@ -626,6 +719,33 @@ export default function PumpsPage() {
                     }
                   />
                 </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="nozzle_initial_meter">Initial meter</Label>
+                  <Input
+                    id="nozzle_initial_meter"
+                    type="number"
+                    inputMode="decimal"
+                    step={nozzleMeterStep}
+                    min="0"
+                    value={nozzleForm.initial_meter_reading}
+                    onChange={(e) =>
+                      setNozzleForm({ ...nozzleForm, initial_meter_reading: e.target.value })
+                    }
+                    placeholder="Optional"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="nozzle_initial_note">Initial meter note</Label>
+                <Input
+                  id="nozzle_initial_note"
+                  value={nozzleForm.initial_meter_note}
+                  onChange={(e) =>
+                    setNozzleForm({ ...nozzleForm, initial_meter_note: e.target.value })
+                  }
+                  placeholder="Optional"
+                />
               </div>
 
               {nozzleError ? (
@@ -639,6 +759,67 @@ export default function PumpsPage() {
                 </Button>
                 <Button type="submit" disabled={createNozzle.isPending || noTanks}>
                   {createNozzle.isPending ? 'Saving…' : 'Save'}
+                </Button>
+              </DialogFooter>
+            </form>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Nozzle initial meter dialog */}
+      <Dialog open={meterOpen} onOpenChange={setMeterOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Initial meter</DialogTitle>
+            <DialogDescription>{meterForm?.label}</DialogDescription>
+          </DialogHeader>
+          {meterForm ? (
+            <form
+              className="flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitMeter();
+              }}
+            >
+              {meterForm.current ? (
+                <div className="rounded-md border border-border bg-muted px-3 py-2 text-sm">
+                  Current baseline{' '}
+                  <span className="font-mono tabular-nums">{meterForm.current}</span>
+                </div>
+              ) : null}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="initial_meter_reading">Meter reading</Label>
+                <Input
+                  id="initial_meter_reading"
+                  type="number"
+                  inputMode="decimal"
+                  step={adjustMeterStep}
+                  min="0"
+                  value={meterForm.reading}
+                  onChange={(e) => setMeterForm({ ...meterForm, reading: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="initial_meter_note">Note</Label>
+                <Input
+                  id="initial_meter_note"
+                  value={meterForm.note}
+                  onChange={(e) => setMeterForm({ ...meterForm, note: e.target.value })}
+                  placeholder="Service, replacement, or correction note"
+                />
+              </div>
+              {meterError ? (
+                <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+                  {meterError}
+                </p>
+              ) : null}
+              <DialogFooter>
+                <Button type="button" variant="ghost" onClick={() => setMeterOpen(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={setNozzleMeter.isPending}>
+                  {setNozzleMeter.isPending ? 'Saving…' : 'Save'}
                 </Button>
               </DialogFooter>
             </form>

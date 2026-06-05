@@ -10,15 +10,16 @@ import (
 // nozzle the attendant runs plus the labels (pump/product/tank) needed to
 // render it, so the attendant needs no station-wide read access.
 type AssignedNozzleDetail struct {
-	NozzleID           uuid.UUID
-	PumpNumber         int
-	NozzleNumber       int
-	ProductName        string
-	ProductColor       string
-	TankID             uuid.UUID
-	TankCode           string
-	DefaultPrice       float64
-	MeterDecimalPlaces int
+	NozzleID            uuid.UUID
+	PumpNumber          int
+	NozzleNumber        int
+	ProductName         string
+	ProductColor        string
+	TankID              uuid.UUID
+	TankCode            string
+	DefaultPrice        float64
+	MeterDecimalPlaces  int
+	InitialMeterReading *string
 }
 
 // ActiveShiftForAttendant returns the actor's most recent non-approved shift
@@ -45,7 +46,7 @@ func (r *Repo) ActiveShiftForAttendant(ctx context.Context, tenantID, userID uui
 func (r *Repo) AssignedNozzleDetails(ctx context.Context, tenantID, shiftID, attendantID uuid.UUID) ([]AssignedNozzleDetail, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT n.id, p.number, n.number, pr.name, pr.color, t.id, t.code,
-		       n.default_price, n.meter_decimal_places
+		       n.default_price, n.meter_decimal_places, trim_scale(n.initial_meter_reading)::text
 		FROM shift_nozzle_assignments sna
 		JOIN nozzles n  ON n.id  = sna.nozzle_id
 		JOIN pumps p    ON p.id  = n.pump_id
@@ -62,7 +63,8 @@ func (r *Repo) AssignedNozzleDetails(ctx context.Context, tenantID, shiftID, att
 	for rows.Next() {
 		var d AssignedNozzleDetail
 		if err := rows.Scan(&d.NozzleID, &d.PumpNumber, &d.NozzleNumber, &d.ProductName,
-			&d.ProductColor, &d.TankID, &d.TankCode, &d.DefaultPrice, &d.MeterDecimalPlaces); err != nil {
+			&d.ProductColor, &d.TankID, &d.TankCode, &d.DefaultPrice, &d.MeterDecimalPlaces,
+			&d.InitialMeterReading); err != nil {
 			return nil, err
 		}
 		out = append(out, d)

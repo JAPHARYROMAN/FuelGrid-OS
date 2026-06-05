@@ -1209,6 +1209,19 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/nozzles/{id}/initial-meter:
+    post:
+      tags: [Nozzles]
+      summary: Seed or adjust a nozzle's initial meter reading
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NozzleInitialMeterSet' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Nozzle' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: Reading exceeds nozzle meter precision }
+
   /api/v1/incidents:
     get:
       tags: [Incidents]
@@ -5863,6 +5876,10 @@ components:
         number:               { type: integer }
         default_price:        { type: number }
         meter_decimal_places: { type: integer }
+        initial_meter_reading:     { type: string }
+        initial_meter_recorded_at: { type: string, format: date-time }
+        initial_meter_recorded_by: { type: string, format: uuid }
+        initial_meter_note:        { type: string }
         status:               { type: string }
     NozzleCreate:
       type: object
@@ -5873,6 +5890,8 @@ components:
         number:               { type: integer }
         default_price:        { type: number }
         meter_decimal_places: { type: integer }
+        initial_meter_reading: { type: string }
+        initial_meter_note:    { type: string }
     NozzleUpdate:
       type: object
       properties:
@@ -5881,6 +5900,12 @@ components:
         default_price:        { type: number }
         meter_decimal_places: { type: integer }
         status:               { type: string }
+    NozzleInitialMeterSet:
+      type: object
+      required: [reading]
+      properties:
+        reading: { type: string }
+        note:    { type: string }
     NozzleList:
       type: object
       properties:
@@ -6257,6 +6282,7 @@ components:
         tank_code:            { type: string }
         default_price:        { type: number }
         meter_decimal_places: { type: integer }
+        initial_meter_reading: { type: string }
         opening_reading:      { type: number }
         closing_reading:      { type: number }
     MyShiftTank:

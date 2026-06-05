@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -13,6 +14,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/audit"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/nozzles"
+	"github.com/japharyroman/fuelgrid-os/internal/readings"
 )
 
 type nozzleDTO struct {
@@ -24,9 +26,13 @@ type nozzleDTO struct {
 	ProductID uuid.UUID `json:"product_id"`
 	Number    int       `json:"number"`
 	// DefaultPrice is an exact decimal STRING (numeric(14,2)).
-	DefaultPrice       string `json:"default_price"`
-	MeterDecimalPlaces int    `json:"meter_decimal_places"`
-	Status             string `json:"status"`
+	DefaultPrice           string     `json:"default_price"`
+	MeterDecimalPlaces     int        `json:"meter_decimal_places"`
+	InitialMeterReading    *string    `json:"initial_meter_reading,omitempty"`
+	InitialMeterRecordedAt *string    `json:"initial_meter_recorded_at,omitempty"`
+	InitialMeterRecordedBy *uuid.UUID `json:"initial_meter_recorded_by,omitempty"`
+	InitialMeterNote       *string    `json:"initial_meter_note,omitempty"`
+	Status                 string     `json:"status"`
 }
 
 func toNozzleDTO(n *nozzles.Nozzle) nozzleDTO {
@@ -34,8 +40,36 @@ func toNozzleDTO(n *nozzles.Nozzle) nozzleDTO {
 		ID: n.ID, TenantID: n.TenantID, StationID: n.StationID,
 		PumpID: n.PumpID, TankID: n.TankID, ProductID: n.ProductID,
 		Number: n.Number, DefaultPrice: n.DefaultPrice,
-		MeterDecimalPlaces: n.MeterDecimalPlaces, Status: n.Status,
+		MeterDecimalPlaces:     n.MeterDecimalPlaces,
+		InitialMeterReading:    n.InitialMeterReading,
+		InitialMeterRecordedAt: fmtTime(n.InitialMeterRecordedAt),
+		InitialMeterRecordedBy: n.InitialMeterRecordedBy,
+		InitialMeterNote:       n.InitialMeterNote,
+		Status:                 n.Status,
 	}
+}
+
+func normalizeNozzleNote(note *string) *string {
+	if note == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*note)
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
+func validateNozzleInitialMeter(w http.ResponseWriter, reading decimalInput, meterDP int) (string, bool) {
+	if !reading.Valid() {
+		writeError(w, http.StatusBadRequest, "initial_meter_reading must be a non-negative decimal")
+		return "", false
+	}
+	if err := readings.ValidateScale(dispDecimal(reading.String()), meterDP); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "initial_meter_reading has more decimals than the nozzle's meter precision")
+		return "", false
+	}
+	return reading.String(), true
 }
 
 func (s *Server) handleListNozzles(w http.ResponseWriter, r *http.Request) {
@@ -79,11 +113,13 @@ func (s *Server) handleListNozzles(w http.ResponseWriter, r *http.Request) {
 }
 
 type createNozzleRequest struct {
-	PumpID             uuid.UUID    `json:"pump_id"`
-	TankID             uuid.UUID    `json:"tank_id"`
-	Number             int          `json:"number"`
-	DefaultPrice       decimalInput `json:"default_price,omitempty"`
-	MeterDecimalPlaces *int         `json:"meter_decimal_places,omitempty"`
+	PumpID              uuid.UUID    `json:"pump_id"`
+	TankID              uuid.UUID    `json:"tank_id"`
+	Number              int          `json:"number"`
+	DefaultPrice        decimalInput `json:"default_price,omitempty"`
+	MeterDecimalPlaces  *int         `json:"meter_decimal_places,omitempty"`
+	InitialMeterReading decimalInput `json:"initial_meter_reading,omitempty"`
+	InitialMeterNote    *string      `json:"initial_meter_note,omitempty"`
 }
 
 func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +148,18 @@ func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
 	if meterDP < 0 || meterDP > 4 {
 		writeError(w, http.StatusBadRequest, "meter_decimal_places must be between 0 and 4")
 		return
+	}
+	var initialMeter *string
+	var initialMeterRecordedBy *uuid.UUID
+	var initialMeterNote *string
+	if req.InitialMeterReading.Set() {
+		v, ok := validateNozzleInitialMeter(w, req.InitialMeterReading, meterDP)
+		if !ok {
+			return
+		}
+		initialMeter = &v
+		initialMeterRecordedBy = &actor.UserID
+		initialMeterNote = normalizeNozzleNote(req.InitialMeterNote)
 	}
 
 	ctx := r.Context()
@@ -167,6 +215,9 @@ func (s *Server) handleCreateNozzle(w http.ResponseWriter, r *http.Request) {
 		StationID: pump.StationID, PumpID: pump.ID, TankID: tank.ID,
 		ProductID: tank.ProductID, Number: req.Number,
 		DefaultPrice: price, MeterDecimalPlaces: meterDP,
+		InitialMeterReading:    initialMeter,
+		InitialMeterRecordedBy: initialMeterRecordedBy,
+		InitialMeterNote:       initialMeterNote,
 	})
 	if isUniqueViolation(err) {
 		writeError(w, http.StatusConflict, "a nozzle with that number already exists on this pump")
@@ -303,6 +354,93 @@ func (s *Server) handleUpdateNozzle(w http.ResponseWriter, r *http.Request) {
 		EntityType: "nozzle", EntityID: after.ID.String(),
 		PreviousValue: toNozzleDTO(before), NewValue: toNozzleDTO(after),
 		IP: clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, toNozzleDTO(after))
+}
+
+type setNozzleInitialMeterRequest struct {
+	Reading decimalInput `json:"reading"`
+	Note    *string      `json:"note,omitempty"`
+}
+
+func (s *Server) handleSetNozzleInitialMeter(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	var req setNozzleInitialMeterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	ctx := r.Context()
+	before, err := s.nozzles.Get(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "pumps.manage", before.StationID) {
+		return
+	}
+
+	reading, ok := validateNozzleInitialMeter(w, req.Reading, before.MeterDecimalPlaces)
+	if !ok {
+		return
+	}
+	note := normalizeNozzleNote(req.Note)
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	after, err := s.nozzles.SetInitialMeter(ctx, tx, actor.TenantID, id, actor.UserID, reading, note)
+	if errors.Is(err, nozzles.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if err != nil {
+		s.logger.Error("set nozzle initial meter", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	action, eventType := "nozzle.initial_meter_seeded", "NozzleInitialMeterSeeded"
+	if before.InitialMeterReading != nil {
+		action, eventType = "nozzle.initial_meter_corrected", "NozzleInitialMeterCorrected"
+	}
+	reason := ""
+	if note != nil {
+		reason = *note
+	}
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: action, EventType: eventType,
+		EntityType: "nozzle", EntityID: after.ID.String(),
+		PreviousValue: toNozzleDTO(before), NewValue: toNozzleDTO(after),
+		Reason: reason,
+		IP:     clientIP(r), UserAgent: r.UserAgent(),
 		RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

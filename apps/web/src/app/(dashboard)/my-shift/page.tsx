@@ -134,39 +134,51 @@ export default function MyShiftPage() {
   function captureRow(n: MyShiftNozzle, type: 'opening' | 'closing', current?: number) {
     const key = `${n.nozzle_id}:${type}`;
     const step = 1 / Math.pow(10, n.meter_decimal_places);
+    const baseline = type === 'opening' ? n.initial_meter_reading : undefined;
     return (
-      <div className="flex items-center justify-between gap-2">
-        <span className="w-16 text-sm capitalize text-muted-foreground">{type}</span>
-        {current != null ? (
-          <span className="flex-1 text-right font-mono tabular-nums">
-            {current.toLocaleString(undefined, { maximumFractionDigits: n.meter_decimal_places })}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="w-16 text-sm capitalize text-muted-foreground">{type}</span>
+          {current != null ? (
+            <span className="flex-1 text-right font-mono tabular-nums">
+              {current.toLocaleString(undefined, { maximumFractionDigits: n.meter_decimal_places })}
+            </span>
+          ) : isOpen ? (
+            <>
+              <Input
+                className="h-12 flex-1 text-right text-base"
+                type="number"
+                inputMode="decimal"
+                step={step}
+                min="0"
+                value={readingInputs[key] ?? ''}
+                onChange={(e) => setReadingInputs((p) => ({ ...p, [key]: e.target.value }))}
+                placeholder={baseline ?? '0'}
+              />
+              <Button
+                className="h-12"
+                size="sm"
+                disabled={!readingInputs[key] || capture.isPending}
+                onClick={() =>
+                  capture.mutate({
+                    nozzleID: n.nozzle_id,
+                    type,
+                    reading: readingInputs[key] ?? '',
+                  })
+                }
+              >
+                Save
+              </Button>
+            </>
+          ) : (
+            <span className="flex-1 text-right text-muted-foreground">—</span>
+          )}
+        </div>
+        {baseline && current == null ? (
+          <span className="self-end font-mono text-xs tabular-nums text-muted-foreground">
+            Initial {baseline}
           </span>
-        ) : isOpen ? (
-          <>
-            <Input
-              className="h-12 flex-1 text-right text-base"
-              type="number"
-              inputMode="decimal"
-              step={step}
-              min="0"
-              value={readingInputs[key] ?? ''}
-              onChange={(e) => setReadingInputs((p) => ({ ...p, [key]: e.target.value }))}
-              placeholder="0"
-            />
-            <Button
-              className="h-12"
-              size="sm"
-              disabled={!readingInputs[key] || capture.isPending}
-              onClick={() =>
-                capture.mutate({ nozzleID: n.nozzle_id, type, reading: readingInputs[key] ?? '' })
-              }
-            >
-              Save
-            </Button>
-          </>
-        ) : (
-          <span className="flex-1 text-right text-muted-foreground">—</span>
-        )}
+        ) : null}
       </div>
     );
   }

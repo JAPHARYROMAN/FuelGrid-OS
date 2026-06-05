@@ -78,6 +78,9 @@ const containerBuild = process.env.CONTAINER_BUILD === '1';
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Drop the `X-Powered-By: Next.js` response header — it discloses the stack
+  // (and implicitly its version) to every client for no functional benefit.
+  poweredByHeader: false,
   typescript: { ignoreBuildErrors: containerBuild },
   eslint: { ignoreDuringBuilds: containerBuild },
   /**

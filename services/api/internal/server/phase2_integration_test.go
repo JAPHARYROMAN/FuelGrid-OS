@@ -643,6 +643,54 @@ func TestPhase2_NozzleProductInvariantDBEnforced(t *testing.T) {
 	}
 }
 
+func TestPhase2_NozzleInitialMeterSeedAndAdjust(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	createBody := fmt.Sprintf(
+		`{"pump_id":%q,"tank_id":%q,"number":2,"meter_decimal_places":2,"initial_meter_reading":"1000.25","initial_meter_note":"physical install"}`,
+		h.ids.pump1.String(), h.ids.tankAGO.String(),
+	)
+	code, created := h.postJSON(t, "/api/v1/nozzles", admin, createBody)
+	if code != http.StatusCreated {
+		t.Fatalf("create nozzle with initial meter: code=%d body=%v", code, created)
+	}
+	if got := created["initial_meter_reading"]; got != "1000.25" {
+		t.Fatalf("created initial_meter_reading=%v (want 1000.25)", got)
+	}
+	if created["initial_meter_recorded_at"] == nil || created["initial_meter_recorded_by"] == nil {
+		t.Fatalf("created nozzle missing initial-meter metadata: %v", created)
+	}
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(context.Background(), `
+		SELECT id FROM nozzles
+		WHERE tenant_id = $1 AND pump_id = $2 AND number = 1 AND status <> 'deleted'
+	`, h.ids.tenantID, h.ids.pump1).Scan(&nozzleID); err != nil {
+		t.Fatalf("lookup seeded nozzle: %v", err)
+	}
+
+	path := "/api/v1/nozzles/" + nozzleID.String() + "/initial-meter"
+	if code, body := h.postJSON(t, path, admin, `{"reading":"12345.67","note":"meter serviced"}`); code != http.StatusOK || body["initial_meter_reading"] != "12345.67" {
+		t.Fatalf("seed existing nozzle initial meter: code=%d body=%v", code, body)
+	}
+	if code, _ := h.postJSON(t, path, admin, `{"reading":"12345.678","note":"too many decimals"}`); code != http.StatusUnprocessableEntity {
+		t.Fatalf("precision reject: code=%d (want 422)", code)
+	}
+	if code, body := h.postJSON(t, path, admin, `{"reading":"12346.00","note":"final calibration"}`); code != http.StatusOK || body["initial_meter_reading"] != "12346" {
+		t.Fatalf("adjust existing nozzle initial meter: code=%d body=%v", code, body)
+	}
+
+	var seeded, corrected int
+	_ = h.pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_logs WHERE tenant_id=$1 AND action='nozzle.initial_meter_seeded'`, h.ids.tenantID).Scan(&seeded)
+	_ = h.pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_logs WHERE tenant_id=$1 AND action='nozzle.initial_meter_corrected'`, h.ids.tenantID).Scan(&corrected)
+	if seeded != 1 || corrected != 1 {
+		t.Fatalf("initial meter audit counts seeded=%d corrected=%d (want 1/1)", seeded, corrected)
+	}
+}
+
 func TestPhase2_CalibrationUploadLookupSupersede(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()
