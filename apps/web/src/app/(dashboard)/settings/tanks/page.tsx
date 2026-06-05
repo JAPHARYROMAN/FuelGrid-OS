@@ -37,6 +37,7 @@ import { api } from '@/lib/api';
 import { formatLitres } from '@/lib/money';
 
 interface FormState {
+  station_id: string;
   product_id: string;
   name: string;
   code: string;
@@ -49,6 +50,7 @@ interface FormState {
 }
 
 const blankForm: FormState = {
+  station_id: '',
   product_id: '',
   name: '',
   code: '',
@@ -84,7 +86,8 @@ export default function TanksPage() {
   // check needs the targeted station. Gates the create/edit submit defensively;
   // PermissionGate hides/disables the controls, and the backend stays
   // authoritative.
-  const canManage = usePermission('tanks.manage', { stationID: effectiveStation });
+  const formStation = form.station_id || effectiveStation;
+  const canManageFormStation = usePermission('tanks.manage', { stationID: formStation });
 
   const list = useQuery({
     queryKey: ['tanks', effectiveStation],
@@ -92,6 +95,10 @@ export default function TanksPage() {
     enabled: Boolean(effectiveStation),
   });
 
+  const stationLookup = useMemo(
+    () => new Map((stations.data?.items ?? []).map((st) => [st.id, st])),
+    [stations.data],
+  );
   const productLookup = useMemo(
     () => new Map((products.data?.items ?? []).map((p) => [p.id, p])),
     [products.data],
@@ -115,9 +122,10 @@ export default function TanksPage() {
 
   const create = useMutation({
     mutationFn: (input: FormState) =>
-      api.createTank({ station_id: effectiveStation, ...buildPayload(input) }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tanks', effectiveStation] });
+      api.createTank({ station_id: input.station_id, ...buildPayload(input) }),
+    onSuccess: (_tank, input) => {
+      setStationID(input.station_id);
+      qc.invalidateQueries({ queryKey: ['tanks'] });
       setOpen(false);
       setForm(blankForm);
     },
@@ -127,8 +135,9 @@ export default function TanksPage() {
   const update = useMutation({
     mutationFn: ({ id, input }: { id: string; input: FormState }) =>
       api.updateTank(id, buildPayload(input)),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tanks', effectiveStation] });
+    onSuccess: (tank) => {
+      setStationID(tank.station_id);
+      qc.invalidateQueries({ queryKey: ['tanks'] });
       setOpen(false);
       setEditing(null);
     },
@@ -137,7 +146,11 @@ export default function TanksPage() {
 
   function openCreate() {
     setEditing(null);
-    setForm({ ...blankForm, product_id: products.data?.items[0]?.id ?? '' });
+    setForm({
+      ...blankForm,
+      station_id: effectiveStation,
+      product_id: products.data?.items[0]?.id ?? '',
+    });
     setSubmitError(null);
     setOpen(true);
   }
@@ -145,6 +158,7 @@ export default function TanksPage() {
   function openEdit(t: Tank) {
     setEditing(t);
     setForm({
+      station_id: t.station_id,
       product_id: t.product_id,
       name: t.name,
       code: t.code,
@@ -160,12 +174,13 @@ export default function TanksPage() {
   }
 
   function submit() {
-    if (canManage === false) {
-      setSubmitError("You don't have permission to manage tanks at this station");
+    const targetStation = editing?.station_id ?? form.station_id;
+    if (!targetStation || !form.product_id || !form.name.trim() || !form.code.trim()) {
+      setSubmitError('Station, product, name, and code are required');
       return;
     }
-    if (!form.product_id || !form.name.trim() || !form.code.trim()) {
-      setSubmitError('Product, name, and code are required');
+    if (canManageFormStation !== true) {
+      setSubmitError("You don't have permission to manage tanks at this station");
       return;
     }
     const cap = Number(form.capacity_litres);
@@ -179,8 +194,8 @@ export default function TanksPage() {
       setSubmitError('Require safe min ≤ safe max ≤ capacity');
       return;
     }
-    if (editing) update.mutate({ id: editing.id, input: form });
-    else create.mutate(form);
+    if (editing) update.mutate({ id: editing.id, input: { ...form, station_id: targetStation } });
+    else create.mutate({ ...form, station_id: targetStation });
   }
 
   const noStations = (stations.data?.items?.length ?? 0) === 0;
@@ -322,8 +337,8 @@ export default function TanksPage() {
             <DialogTitle>{editing ? 'Edit tank' : 'New tank'}</DialogTitle>
             <DialogDescription>
               {editing
-                ? 'Update this tank.'
-                : 'Attach a tank to the selected station and bind it to a product.'}
+                ? 'Update this tank. Its station is locked after creation.'
+                : 'Choose the station this tank belongs to, then bind it to a product.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -334,6 +349,33 @@ export default function TanksPage() {
               submit();
             }}
           >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="tank_station">Station</Label>
+              <select
+                id="tank_station"
+                className="h-10 rounded-md border border-border bg-background px-3 text-sm"
+                value={form.station_id}
+                onChange={(e) => setForm({ ...form, station_id: e.target.value })}
+                disabled={Boolean(editing) || noStations}
+                required
+              >
+                <option value="" disabled>
+                  Select station...
+                </option>
+                {(stations.data?.items ?? []).map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {st.name} ({st.code})
+                  </option>
+                ))}
+              </select>
+              {editing ? (
+                <span className="text-xs text-muted-foreground">
+                  Existing tank location: {stationLookup.get(form.station_id)?.name ?? 'station'}.
+                  Create a new tank for a different station.
+                </span>
+              ) : null}
+            </div>
+
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="product">Product</Label>
               <select
@@ -454,7 +496,20 @@ export default function TanksPage() {
               <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={create.isPending || update.isPending}>
+              <Button
+                type="submit"
+                disabled={
+                  create.isPending ||
+                  update.isPending ||
+                  !form.station_id ||
+                  canManageFormStation !== true
+                }
+                title={
+                  canManageFormStation === false
+                    ? "You don't have permission to manage tanks at this station"
+                    : undefined
+                }
+              >
                 {create.isPending || update.isPending ? 'Saving…' : 'Save'}
               </Button>
             </DialogFooter>

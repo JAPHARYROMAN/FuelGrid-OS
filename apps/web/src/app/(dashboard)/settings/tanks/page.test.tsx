@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { Product, Station, Tank } from '@fuelgrid/sdk';
 
 // usePermission backs PermissionGate; mocking it lets us flip the manage
 // permission deterministically without wiring the /me/permissions query.
-const usePermission = vi.fn<(code: string) => boolean | null>();
+const usePermission = vi.fn<(code: string, opts?: unknown) => boolean | null>();
 vi.mock('@/hooks/use-permissions', () => ({
-  usePermission: (code: string) => usePermission(code),
+  usePermission: (code: string, opts?: unknown) => usePermission(code, opts),
 }));
 
 // next/link renders an <a>; stub it so the row "Calibration" link doesn't need
@@ -22,13 +23,15 @@ vi.mock('next/link', () => ({
 const listStations = vi.fn();
 const listProducts = vi.fn();
 const listTanks = vi.fn();
+const createTank = vi.fn();
+const updateTank = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     listStations: (...a: unknown[]) => listStations(...a),
     listProducts: (...a: unknown[]) => listProducts(...a),
     listTanks: (...a: unknown[]) => listTanks(...a),
-    createTank: vi.fn(),
-    updateTank: vi.fn(),
+    createTank: (...a: unknown[]) => createTank(...a),
+    updateTank: (...a: unknown[]) => updateTank(...a),
   },
 }));
 
@@ -42,6 +45,13 @@ const station: Station = {
   code: 'MD',
   timezone: 'UTC',
   status: 'active',
+};
+
+const station2: Station = {
+  ...station,
+  id: 'st-2',
+  name: 'Airport Station',
+  code: 'AP',
 };
 
 const product: Product = {
@@ -87,9 +97,11 @@ function renderPage() {
 
 beforeEach(() => {
   usePermission.mockReturnValue(true);
-  listStations.mockResolvedValue({ items: [station], count: 1 });
+  listStations.mockResolvedValue({ items: [station, station2], count: 2 });
   listProducts.mockResolvedValue({ items: [product], count: 1 });
   listTanks.mockResolvedValue({ items: [tank], count: 1 });
+  createTank.mockResolvedValue({ ...tank, id: 'tk-2' });
+  updateTank.mockResolvedValue(tank);
 });
 
 afterEach(() => {
@@ -136,5 +148,57 @@ describe('TanksPage', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /new tank/i })).not.toBeDisabled(),
     );
+  });
+
+  it('creates tanks against the station chosen in the dialog', async () => {
+    const user = userEvent.setup();
+    listTanks.mockResolvedValue({ items: [], count: 0 });
+    createTank.mockResolvedValue({
+      ...tank,
+      id: 'tk-2',
+      station_id: station2.id,
+      name: 'Airport Tank',
+      code: 'AP1',
+    });
+    renderPage();
+
+    await screen.findByText('No tanks at this station');
+    await user.click(screen.getByRole('button', { name: /new tank/i }));
+
+    const dialog = screen.getByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Station'), station2.id);
+    await user.type(within(dialog).getByLabelText('Name'), 'Airport Tank');
+    await user.type(within(dialog).getByLabelText('Code'), 'AP1');
+    await user.type(within(dialog).getByLabelText('Capacity (L)'), '10000');
+    await user.type(within(dialog).getByLabelText('Safe max (L)'), '9000');
+    await user.click(within(dialog).getByRole('button', { name: /save/i }));
+
+    await waitFor(() =>
+      expect(createTank).toHaveBeenCalledWith(
+        expect.objectContaining({
+          station_id: station2.id,
+          product_id: product.id,
+          name: 'Airport Tank',
+          code: 'AP1',
+          capacity_litres: '10000',
+          safe_max_litres: '9000',
+        }),
+      ),
+    );
+  });
+
+  it('shows the tank station as locked when editing', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Tank 1');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText('Station')).toHaveValue(station.id);
+    expect(within(dialog).getByLabelText('Station')).toBeDisabled();
+    expect(
+      within(dialog).getByText(/create a new tank for a different station/i),
+    ).toBeInTheDocument();
   });
 });
