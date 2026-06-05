@@ -1,0 +1,65 @@
+# =============================================================================
+# FuelGrid OS — Caddy reverse proxy (production, DigitalOcean Droplet)
+# =============================================================================
+# Caddy is the single public ingress. It terminates TLS with automatic
+# Let's Encrypt certificates (HTTP-01/TLS-ALPN-01) and reverse-proxies to the
+# two app services on the private compose network:
+#
+#   {$WEB_DOMAIN} -> web:3000   the public app + same-origin BFF (browser target)
+#   {$API_DOMAIN} -> api:8080   the public API host (M-Pesa Daraja STK callback
+#                               + any direct API client)
+#
+# {$WEB_DOMAIN} / {$API_DOMAIN} are substituted from the .env file (compose
+# passes them into the caddy container's environment). DNS A records for BOTH
+# must point at the droplet before first boot or ACME issuance fails.
+#
+# The Go API already sets its own CSP / HSTS-relevant + security headers and the
+# Next.js middleware sets a per-request CSP nonce, so we DO NOT set or override
+# CSP here. We only add a couple of trivial, non-conflicting transport headers.
+#
+# Validate (with the two env vars set):
+#   docker run --rm -e WEB_DOMAIN=app.example.com -e API_DOMAIN=api.example.com \
+#     -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine \
+#     caddy validate --config /etc/caddy/Caddyfile
+# =============================================================================
+
+# Public web app + BFF.
+{$WEB_DOMAIN} {
+	encode zstd gzip
+
+	# Caddy adds X-Forwarded-For/-Proto/-Host to upstream requests by default;
+	# the API is told to trust exactly 1 proxy hop (API_TRUSTED_PROXY_DEPTH=1).
+	reverse_proxy web:3000
+
+	header {
+		# Defense-in-depth transport headers that do NOT touch the app's CSP.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		# Don't leak the proxy software version.
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Public API host — needed for the M-Pesa Daraja callback and direct clients.
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy api:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

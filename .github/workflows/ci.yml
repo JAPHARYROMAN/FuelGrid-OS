@@ -718,9 +718,9 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           docker tag fuelgrid-api:ci fuelgrid-api:main
-          # Registry push lands with the first real Fly deploy; for now
-          # the tag exists locally to the job and the SHA-pinned tag is
-          # the durable handle.
+          # Registry push to GHCR is owned by the CD workflow
+          # (.github/workflows/deploy.yml); here the tag exists locally to the
+          # job and the SHA-pinned tag is the durable handle.
           docker image ls --filter=reference='fuelgrid-api:*'
 
       - name: Smoke test the image

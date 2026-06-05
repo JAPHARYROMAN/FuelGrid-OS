@@ -88,15 +88,15 @@ For the full design, read:
 
 ## Tech Stack
 
-| Layer         | Stack                                                                              |
-| ------------- | ---------------------------------------------------------------------------------- |
-| Web app       | Next.js, React, TypeScript, TanStack Query, Tailwind CSS, shared `@fuelgrid/ui`    |
-| API           | Go, chi HTTP router, pgx, Redis, slog, OpenTelemetry/Sentry hooks                  |
-| Database      | PostgreSQL, SQL migrations, tenant-aware schema conventions, optional RLS app role |
-| Cache/session | Redis for sessions, rate limits, scheduler coordination, and operational state     |
-| SDK           | TypeScript API client in `packages/sdk`, backed by `docs/openapi.yaml`             |
-| Tooling       | pnpm workspaces, Vitest, Playwright, Redocly, Docker Compose, GitHub Actions       |
-| Deployment    | Docker images, Fly.io config, GHCR image publishing, guarded CD workflow           |
+| Layer         | Stack                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| Web app       | Next.js, React, TypeScript, TanStack Query, Tailwind CSS, shared `@fuelgrid/ui`                  |
+| API           | Go, chi HTTP router, pgx, Redis, slog, OpenTelemetry/Sentry hooks                                |
+| Database      | PostgreSQL, SQL migrations, tenant-aware schema conventions, optional RLS app role               |
+| Cache/session | Redis for sessions, rate limits, scheduler coordination, and operational state                   |
+| SDK           | TypeScript API client in `packages/sdk`, backed by `docs/openapi.yaml`                           |
+| Tooling       | pnpm workspaces, Vitest, Playwright, Redocly, Docker Compose, GitHub Actions                     |
+| Deployment    | Docker images, DigitalOcean Droplet + compose config, GHCR image publishing, guarded CD workflow |
 
 ## Repository Layout
 
@@ -105,7 +105,7 @@ For the full design, read:
 |-- apps/
 |   `-- web/                     # Next.js command-center UI
 |-- services/
-|   `-- api/                     # Go API service, migrations, Docker/Fly config
+|   `-- api/                     # Go API service, migrations, Docker config
 |-- internal/                    # Go domain packages and platform modules
 |-- packages/
 |   |-- config/                  # Shared TypeScript config
@@ -325,9 +325,11 @@ Operational probes:
 
 ## Deployment
 
-The current deployment target is Fly.io, with Docker images, Fly app
-configuration, GHCR image publishing, and a guarded CD workflow already in the
-repository.
+The current deployment target is a **DigitalOcean Droplet** running
+`docker compose` (self-hosted Postgres + Redis behind a Caddy reverse proxy that
+does automatic HTTPS), with Docker images, the production compose stack in
+[`deploy/`](deploy/), GHCR image publishing, and a guarded SSH-based CD workflow
+already in the repository.
 
 The CD workflow is designed to be safe before production secrets are configured:
 it can build and publish images, while migration and smoke-test jobs skip when

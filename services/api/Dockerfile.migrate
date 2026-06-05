@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1.7
+#
+# =============================================================================
+# FuelGrid OS — migrate image (golang-migrate + the SQL migrations)
+# =============================================================================
+# The production API image (services/api/Dockerfile) is distroless and ships
+# ONLY the /api binary — it has no shell, no migrate tool, and no migrations
+# directory. The DigitalOcean droplet has no repo checkout either, so schema
+# migration on deploy has to come from a self-contained image.
+#
+# This image bundles the upstream golang-migrate CLI with the project's SQL
+# migrations baked in at /migrations. The production compose stack
+# (deploy/docker-compose.prod.yml) runs it as a one-shot:
+#
+#   docker compose -f deploy/docker-compose.prod.yml run --rm migrate
+#
+# which executes `migrate -path /migrations -database "$DATABASE_URL" up`
+# (the ENTRYPOINT is `migrate`, the CMD below supplies the args). It connects
+# as the table OWNER via DATABASE_URL — distinct from the non-owner
+# DATABASE_APP_URL the running API uses — matching the discipline in
+# services/api/cmd/migrate (golang-migrate v4; `up` is idempotent: no pending
+# migrations exits 0).
+#
+# Build context is the repo ROOT (CD passes `context: .`) so services/api/migrations
+# is reachable. Pin the migrate base by digest-able tag for reproducibility.
+# =============================================================================
+
+FROM migrate/migrate:v4.17.1
+
+# Bake the SQL migrations into the image so the droplet needs no checkout.
+COPY services/api/migrations /migrations
+
+# Default to applying all pending migrations against $DATABASE_URL. The compose
+# `migrate` service sets DATABASE_URL (the OWNER DSN) from the .env file; the
+# ENTRYPOINT is `migrate`, so these args run `migrate ... up`. Override on the
+# CLI for other subcommands, e.g.:
+#   docker compose ... run --rm migrate -path /migrations -database "$DATABASE_URL" version
+CMD ["-path", "/migrations", "-database", "${DATABASE_URL}", "up"]

@@ -1,215 +1,368 @@
 # Deployment
 
-How FuelGrid OS reaches production. Stage 10 picks the target and wires the CI image build; the *actual* first deploy is deliberately deferred until Phase 2 features are real.
+How FuelGrid OS reaches production. The CI image build + GHCR publishing is
+live; the production runtime is a single DigitalOcean Droplet running
+`docker compose`.
 
-## Target: Fly.io
+## Target: DigitalOcean Droplet + docker compose
 
-Decided Stage 10. Revisitable when traffic patterns are known.
+A single Droplet runs the whole stack with `docker compose`: the Go API, the
+Next.js web app, **self-hosted Postgres + Redis on the same VM**, all behind a
+**Caddy** reverse proxy doing automatic HTTPS (Let's Encrypt). The production
+stack lives in [`deploy/`](../deploy/):
 
-### Why Fly
+```
+deploy/docker-compose.prod.yml   # the production stack (separate from the local-dev compose)
+deploy/Caddyfile                 # reverse proxy: WEB_DOMAIN -> web, API_DOMAIN -> api, auto-TLS
+deploy/backup/                   # nightly pg_dump + systemd timer + restore drill
+.env.production.example          # full prod config + secret inventory (copy to .env on the droplet)
+services/api/Dockerfile.migrate  # golang-migrate + the SQL migrations baked in (the migrate image)
+.github/workflows/deploy.yml     # gated CD: build+push 3 GHCR images, SSH deploy, smoke gate
+```
 
-| Concern | Fly.io fit |
+### Why a Droplet + compose
+
+| Concern | Fit |
 |---|---|
-| Modular monolith + workers | Single `fly.toml` per app; `[processes]` lets the API and any future worker tier share one image. |
-| Postgres | Managed Postgres clusters with point-in-time restore, easy major-version upgrades, regional read replicas when needed. |
-| Redis | Native Upstash add-on, or run Redis as a Fly app for $0–$2/mo at dev scale. |
-| Dockerfile-first | Our [services/api/Dockerfile](../services/api/Dockerfile) (distroless, multi-stage) deploys as-is — no platform-specific build step. |
-| Multi-region | Fuel businesses outside the deployment region need low-latency reads. Fly's Anycast + region scheduling is the cheapest path. |
-| Cost | Free tier serves a single-station demo. Paid tiers scale linearly without surprise per-resource markups. |
+| One box, low ops | A single Droplet with `docker compose` is the cheapest, simplest topology for an early-stage product; everything is one `up -d`. |
+| Portable images | The API ([services/api/Dockerfile](../services/api/Dockerfile), distroless/nonroot) and web ([apps/web/Dockerfile](../apps/web/Dockerfile), Next.js standalone) images are platform-neutral — no platform-specific build step. |
+| TLS without glue | Caddy obtains + renews Let's Encrypt certs automatically; no cert plumbing. |
+| Data you control | Self-hosted Postgres + Redis on named volumes; you own the backups (see [deploy/backup/](../deploy/backup/)). |
+| Predictable cost | Flat Droplet pricing; scale up the VM or split out DO Managed Postgres when load justifies it. |
 
-### What we did **not** pick
+### What we did **not** pick (and the trade-off accepted)
 
-- **Railway** — best onboarding ergonomics but per-resource pricing accelerates fast, and the region story is thin.
-- **Render** — solid managed services, but cold-start behavior on free tier and steeper per-service pricing on production tiers.
-- **Self-hosted (k8s)** — most control, most ops surface. Reasonable when we have ≥3 customers and a need that managed platforms don't meet; today it's premature.
+- **Fly.io** (the previous target) — good multi-region story, but more
+  platform-specific config (`fly.toml`, `fly secrets`, managed PG add-ons) than a
+  single-box launch needs.
+- **Managed everything (DO App Platform / Managed PG + Redis)** — less ops, more
+  cost; the natural next step once one VM is no longer enough.
+- **Self-hosted PG trade-off:** the nightly `pg_dump` is a *logical* backup — no
+  point-in-time recovery. This is acceptable for launch; the migration path to
+  PITR (WAL archiving or DO Managed Postgres) is documented in
+  [deploy/backup/RESTORE.md](../deploy/backup/RESTORE.md).
 
 ## Deploy topology
 
 ```
-                    ┌────────────────────────────────────┐
-                    │  Cloudflare (DNS + WAF + cache)    │
-                    └───────────────┬────────────────────┘
-                                    │
-                ┌───────────────────┴────────────────────┐
-                │                                        │
-        ┌───────▼──────────┐                  ┌──────────▼─────────┐
-        │  fuelgrid-web    │                  │  fuelgrid-api      │
-        │  Next.js (Fly)   │ ── /api/v1/ ────►│  Go / chi (Fly)    │
-        │  3000            │                  │  8080              │
-        └──────────────────┘                  └──────────┬─────────┘
-                                                         │
-                                            ┌────────────┴────────────┐
-                                            │                         │
-                                    ┌───────▼────────┐      ┌─────────▼────────┐
-                                    │  Postgres 16   │      │  Redis 7         │
-                                    │  Fly Managed   │      │  Fly app or      │
-                                    │  Pg cluster    │      │  Upstash add-on  │
-                                    └────────────────┘      └──────────────────┘
+                          Internet
+                             │  (DNS A records: WEB_DOMAIN, API_DOMAIN → droplet IP)
+                             ▼
+            ┌──────────────────────────────────────────────┐
+            │              DigitalOcean Droplet              │
+            │   DO firewall: inbound 22 / 80 / 443 only      │
+            │                                                │
+            │   ┌────────────────────────────────────────┐  │
+            │   │  caddy  (:80/:443, auto-HTTPS)           │  │
+            │   │   WEB_DOMAIN → web:3000                  │  │
+            │   │   API_DOMAIN → api:8080  (M-Pesa cb)     │  │
+            │   └───────┬───────────────────┬──────────────┘  │
+            │           │                   │                 │
+            │   ┌───────▼──────┐    ┌───────▼───────┐         │
+            │   │  web :3000   │──► │   api :8080   │         │  (web BFF → api via API_ORIGIN=http://api:8080)
+            │   │  Next.js BFF │    │   Go / chi    │         │
+            │   └──────────────┘    └───┬───────┬───┘         │
+            │                           │       │             │
+            │                  ┌────────▼──┐ ┌──▼─────────┐   │
+            │                  │ postgres  │ │  redis     │   │  (private compose network; not host-published)
+            │                  │ 16-alpine │ │  7-alpine  │   │
+            │                  │  pgdata   │ │ redisdata  │   │
+            │                  └───────────┘ └────────────┘   │
+            └────────────────────────────────────────────────┘
 ```
 
-## Repository conventions for the deploy
-
-These now exist in-repo:
-
-```
-services/api/fly.toml         # process model, scaling, /readyz healthcheck (image-based deploy)
-apps/web/fly.toml             # Next.js standalone, port 3000, /login healthcheck
-.github/workflows/deploy.yml  # gated on main; flyctl rollout gated on FLY_API_TOKEN
-.env.production.example        # full prod config + secret inventory
-```
-
-The Dockerfile is already production-ready: distroless, non-root, multi-stage, BuildKit cache mounts.
+Only Caddy publishes host ports (80/443). The browser only ever talks to
+`https://WEB_DOMAIN`; the web app's same-origin BFF forwards server-side to the
+API over the private compose network at `http://api:8080` (the
+`API_ORIGIN`). Postgres + Redis are never exposed to the host, so
+`sslmode=disable` on the private network is correct (config.go has no sslmode
+requirement).
 
 ## CI image strategy
 
-Today's CI ([.github/workflows/ci.yml](../.github/workflows/ci.yml)):
-
-1. Builds the api image on every push / PR via `docker/build-push-action`.
-2. **Does not push** — the image is built and load-tested in CI only.
-3. Smoke-tests the image: boots it, hits `/healthz` and `/readyz`.
-
-Stage-10 addition: **on push to `main`**, the image is also tagged with the commit SHA. Pushing to a registry is added with the first deploy.
+CI ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) builds + smoke-tests
+the api image on every push/PR (it does not push). On push to `main` it tags the
+image with the commit SHA. **Pushing images to GHCR is owned by the CD workflow.**
 
 ## Continuous Deployment (CICD-4 / OPS-5)
 
-The CD pipeline lives in [.github/workflows/deploy.yml](../.github/workflows/deploy.yml). It is a **separate** workflow from CI and runs on push to `main` and on `v*` tags, single-flight per ref (`concurrency: deploy-<ref>`, `cancel-in-progress: false` so a migration is never interrupted mid-flight).
+The CD pipeline lives in [.github/workflows/deploy.yml](../.github/workflows/deploy.yml).
+It runs on push to `main` and on `v*` tags, single-flight per ref
+(`concurrency: deploy-<ref>`, `cancel-in-progress: false` so a migration is
+never interrupted mid-flight).
 
-It is intentionally a **safe no-op until the deployment secrets are configured** — the workflow is lint-valid and runnable today; the migrate and smoke jobs skip cleanly when their secrets are absent.
+It is intentionally a **safe no-op until the deployment secrets are configured**:
+the three image build/push jobs always run (GHCR auth via the automatic
+`GITHUB_TOKEN`), while the SSH deploy and smoke jobs skip cleanly when their
+secrets are absent.
 
 ### Jobs
 
-1. **build-push** — builds `services/api/Dockerfile` and **pushes to GHCR** at `ghcr.io/<owner>/<repo>-api` (lowercased), via `docker/build-push-action`. Tags:
-   - `sha-<full-sha>` — immutable handle for every build.
-   - `latest` — only on `main` branch pushes.
-   - `<tag>` — the git tag name on `v*` tag pushes (e.g. `v1.2.3`).
+1. **build-push** — builds `services/api/Dockerfile` and pushes to GHCR at
+   `ghcr.io/<owner>/<repo>-api`.
+2. **build-push-web** — builds `apps/web/Dockerfile` → `…-web`.
+3. **build-push-migrate** — builds `services/api/Dockerfile.migrate` (golang-migrate
+   + the `services/api/migrations` SQL baked in) → `…-migrate`. This is what lets
+   the droplet (no repo checkout) apply the schema.
 
-   GHCR auth is automatic: `docker/login-action` uses the built-in `GITHUB_TOKEN` with `packages: write` permission — **no manually-created registry secret is needed**.
+   All three tag: `sha-<full-sha>` (immutable, per commit), `latest` (main branch
+   only), and `<tag>` on `v*` tags. GHCR auth is the automatic `GITHUB_TOKEN` —
+   no manually-created registry secret needed.
 
-2. **migrate** — runs `go run ./services/api/cmd/migrate up` (the project's golang-migrate v4 wrapper) against `${{ secrets.DATABASE_URL }}`. Guarded: if `DATABASE_URL` is unset the job no-ops (emits a `::notice::` and skips). `up` is idempotent (`ErrNoChange` → success).
+4. **deploy** — *gated on `DEPLOY_SSH_KEY`.* SSHes into the droplet
+   (`appleboy/ssh-action`, pinned) as `DEPLOY_USER` (default `deploy`) on
+   `DEPLOY_HOST` and, from `/opt/fuelgrid`, runs:
+   - optional `docker login ghcr.io` (only if `GHCR_PULL_TOKEN` is set — needed
+     only for a private package),
+   - pins `API_IMAGE` / `WEB_IMAGE` / `MIGRATE_IMAGE` = `…:sha-<sha>` into the
+     on-droplet `.env`,
+   - `docker compose -f docker-compose.prod.yml pull api web migrate`,
+   - `docker compose -f docker-compose.prod.yml run --rm migrate` (schema first),
+   - `docker compose -f docker-compose.prod.yml up -d`,
+   - `docker image prune -f`.
 
-3. **smoke** — curls the deployed `/readyz` (`${{ secrets.DEPLOY_HEALTH_URL }}`) and **fails the deploy unless it returns `200` with `{"status":"ready"}`** (i.e. postgres + redis checks pass). Polls up to 30× with 5s backoff. Guarded the same way: if `DEPLOY_HEALTH_URL` is unset the gate no-ops.
+5. **smoke** — *gated on `DEPLOY_HEALTH_URL`.* Curls the deployed `/readyz` and
+   **fails the deploy unless it returns `200` with `{"status":"ready"}`** (postgres
+   + redis ok). Polls up to 30× with 5s backoff.
 
-All three jobs use `environment: production`, so GitHub Environment protection rules (required reviewers, wait timers, branch restrictions) apply when configured in repo settings.
+All jobs use `environment: production`, so GitHub Environment protection rules
+apply when configured.
+
+### Gating pattern (safe no-op)
+
+Secrets can't be used in a job-level `if:`, so each guarded job's first step
+checks the secret and exports `configured=true|false`; every real step is
+`if: steps.gate.outputs.configured == 'true'` and emits a `::notice::` + skips
+when the secret is absent. Until `DEPLOY_SSH_KEY` exists the pipeline still
+builds + pushes all three images but does not touch the droplet; until
+`DEPLOY_HEALTH_URL` exists the smoke gate no-ops.
 
 ### Required secrets / configuration
 
 | Name | Where | Purpose | Behavior if unset |
 |---|---|---|---|
-| `GITHUB_TOKEN` | automatic (no setup) | Push the image to GHCR | Always present |
-| `DATABASE_URL` | repo/environment secret | Target DB for `migrate up` (e.g. `postgres://...?sslmode=require`) | migrate job no-ops |
-| `DEPLOY_HEALTH_URL` | repo/environment secret | Full URL of the deployed `/readyz` (e.g. `https://api.example.com/readyz`) | smoke gate no-ops |
-| `FLY_API_TOKEN` | repo/environment secret | Deploy-scoped Fly token (`fly tokens create deploy`) for the flyctl rollout | deploy job no-ops |
-
-Add the secrets under **Settings → Secrets and variables → Actions** (or scope them to the `production` Environment). Until both are set the pipeline still builds and publishes the image but does not touch a database or assert on a live endpoint.
+| `GITHUB_TOKEN` | automatic | Push the three images to GHCR | Always present |
+| `DEPLOY_SSH_KEY` | repo/environment secret | Private SSH key for the droplet deploy user | deploy job no-ops |
+| `DEPLOY_HOST` | repo/environment secret | Droplet public IP / hostname | (used only by the gated deploy) |
+| `DEPLOY_USER` | repo/environment secret | Deploy user (default `deploy`) | falls back to `deploy` |
+| `DEPLOY_HEALTH_URL` | repo/environment secret | `https://<API_DOMAIN>/readyz` for the smoke gate | smoke gate no-ops |
+| `GHCR_PULL_TOKEN` | repo/environment secret (optional) | PAT w/ `read:packages` if the GHCR package is private | compose pull runs unauthenticated (public package) |
 
 ### Deploy flow
 
 ```
 push to main / v* tag
-  → build-push  (image → GHCR: :sha-…, :latest | :<tag>)
-  → migrate     (golang-migrate up @ DATABASE_URL; gated on DATABASE_URL)
-  → deploy      (flyctl deploy --image ghcr.io/<owner>/<repo>-api:sha-<sha>; gated on FLY_API_TOKEN)
-  → smoke       (curl /readyz @ DEPLOY_HEALTH_URL must be 200; gated on DEPLOY_HEALTH_URL)
+  → build-push, build-push-web, build-push-migrate  (3 images → GHCR :sha-…, :latest | :<tag>)
+  → deploy   (SSH to droplet: pull → migrate one-shot → up -d → prune; gated on DEPLOY_SSH_KEY)
+  → smoke    (curl /readyz @ DEPLOY_HEALTH_URL must be 200; gated on DEPLOY_HEALTH_URL)
 ```
 
-The `deploy` job rolls the freshly-pushed GHCR image onto the Fly API app with
-`flyctl deploy --config services/api/fly.toml --image …:sha-<sha>` (pinned to
-the immutable per-commit tag, never a moving `:latest`). It sits between
-`migrate` and `smoke`, so the ordering encodes the online-migration discipline:
-**schema first → rollout → health-assert last**.
+## Database migrations on deploy
 
-It is gated on `FLY_API_TOKEN` exactly like the `migrate`/`smoke` guards: a
-first step checks the secret and exports a flag; every real step is
-`if: steps.gate.outputs.configured == 'true'`. When `FLY_API_TOKEN` is unset
-the job emits a `::notice::` and skips — the pipeline stays a safe, lint-valid
-no-op until the Fly runtime is provisioned. The web rollout in the same job is
-additionally guarded on a published web image existing in GHCR (it `docker
-manifest inspect`s the tag and skips with a notice if absent), so it never
-fails the pipeline before the web image pipeline exists.
+Migrations run **on the droplet inside the deploy**, NOT from the GitHub runner
+(the self-hosted Postgres is not publicly reachable). The `build-push-migrate`
+job publishes a dedicated migrate image — `migrate/migrate` with the
+`services/api/migrations` directory baked in (see
+[services/api/Dockerfile.migrate](../services/api/Dockerfile.migrate)). The
+compose `migrate` service (profile `migrate`, `restart: "no"`) runs it as a
+one-shot:
 
-`FLY_API_TOKEN` is created with `fly tokens create deploy` (a deploy-scoped
-token) and added under **Settings → Secrets and variables → Actions** (or the
-`production` Environment).
+```
+docker compose -f docker-compose.prod.yml run --rm migrate
+```
+
+which executes `migrate -path /migrations -database "$DATABASE_URL" up`.
+`DATABASE_URL` is the table **OWNER** DSN (compose interpolates it from `.env`);
+`up` is idempotent (no pending migrations → exit 0). The deploy runs this BEFORE
+`up -d` — schema first, then roll out. The running API uses the **non-owner**
+`fuelgrid_app` pool (`DATABASE_APP_URL`) so Postgres RLS enforces tenant
+isolation on every request.
 
 ## Environment variables in production
 
-The complete production config + secret inventory — every variable, where it
-comes from, which are **SECRET** (set via `fly secrets`) vs plain config
-(`fly.toml [env]`), and which **fail-stop** the boot outside dev — lives in
-[.env.production.example](../.env.production.example). Secrets are injected, not
-filed:
+The complete config + secret inventory — every variable, where it comes from,
+which are **SECRET** vs config, and which **fail-stop** the boot outside dev —
+lives in [.env.production.example](../.env.production.example). On the droplet
+you `cp .env.production.example .env`, fill it in (chmod 600), and place it next
+to `docker-compose.prod.yml`; the `api` service loads it via `env_file` and
+compose interpolates `${VAR}` references (image refs, domains, DB creds).
 
-```sh
-fly secrets set --app fuelgrid-api \
-    DATABASE_URL="postgres://<owner>:<pw>@<host>:5432/fuelgrid?sslmode=require" \
-    DATABASE_APP_URL="postgres://fuelgrid_app:<pw>@<host>:5432/fuelgrid?sslmode=require" \
-    REDIS_URL="rediss://default:<pw>@<host>:6379/0" \
-    AUTH_PASSWORD_PEPPER="$(openssl rand -base64 32)" \
-    SENTRY_DSN="<dsn>"
-```
-
-`DATABASE_APP_URL` (non-owner `fuelgrid_app` role) is **required outside dev** —
-the API refuses to boot without it when a DB is configured, so it never runs
-request queries RLS-bypassed on the owner pool. `API_CORS_ALLOWED_ORIGINS` must
-be **https** origins (config fail-stops on `http://` or `*`). See the Go-live
-runbook below for the full ordered procedure.
-
-Rotation: secrets are stored in Fly's Vault, never committed. The `AUTH_PASSWORD_PEPPER` rotation invalidates all existing password hashes — coordinate carefully (force a password reset wave).
-
-The full secret inventory, redaction model (the `config.Secret` type redacts secrets in logs/errors), rotation procedures, and leak response live in [docs/security/secrets.md](security/secrets.md).
+Key fail-stops (config.go `validate`): `API_CORS_ALLOWED_ORIGINS` must be
+explicit `https://` origins (no `*`, no `http://`); `DATABASE_APP_URL` must be
+set and **distinct** from `DATABASE_URL`, pointing at the non-owner
+`fuelgrid_app` role. `AUTH_PASSWORD_PEPPER` rotation invalidates all password
+hashes + MFA-at-rest — treat it as permanent. The redaction model, rotation
+procedures, and leak response live in
+[docs/security/secrets.md](security/secrets.md).
 
 ## Observability in production
 
 | Signal | Endpoint | Scraper |
 |---|---|---|
-| Metrics | `GET /metrics` (Prometheus exposition) | Grafana Cloud Free, scraped via the Grafana Agent we'll bake into the Fly machine |
-| Traces | OTLP over gRPC | Grafana Tempo or Honeycomb; `OTEL_EXPORTER=otlp` + `OTEL_EXPORTER_OTLP_ENDPOINT=...` |
-| Errors | Sentry | `SENTRY_DSN=...`, sample rate per env |
-| Structured logs | stdout (JSON) → Fly logs → BetterStack/Loki | Standardized field names per [.github/workflows/ci.yml](../.github/workflows/ci.yml) middleware |
+| Metrics | `GET /metrics` (Prometheus) | A Prometheus/Grafana Agent on the droplet or a remote scraper reachable over the private network |
+| Traces | OTLP over gRPC | Set `OTEL_EXPORTER=otlp` + `OTEL_EXPORTER_OTLP_ENDPOINT=…` (Tempo/Honeycomb) |
+| Errors | Sentry | `SENTRY_DSN=…`, sample rate per env |
+| Structured logs | container stdout (JSON) → `docker compose logs` / a log shipper | Standardized field names per the API middleware |
 
-The `/metrics` endpoint is intentionally open in dev. In production it MUST be reached only via the metrics scraper — gate it via Fly's internal network or an ingress rule.
+`/metrics` is not fronted by Caddy in this stack — it is reachable only inside
+the compose network (the api service is not host-published), so scrape it from a
+sidecar on the droplet or add a dedicated, authenticated Caddy route if you need
+remote scraping. When `OTEL_EXPORTER=otlp` the endpoint MUST be reachable or the
+API refuses to boot (no silent trace loss).
 
-### Distributed tracing (OTLP)
+## Go-live runbook
 
-The API exports spans through OpenTelemetry. `OTEL_EXPORTER` selects the exporter:
+The exact ordered steps an operator runs for the **first real deploy**. Replace
+every `<...>` placeholder with your values; never commit a populated `.env`.
 
-| `OTEL_EXPORTER` | Behaviour |
-|---|---|
-| `none` (default) | Tracing disabled — spans are created but discarded (no-op provider). Boot never fails. |
-| `stdout` | Pretty-prints spans to stderr. Dev / CI only. |
-| `otlp` | Ships spans over **OTLP/gRPC** to the collector at `OTEL_EXPORTER_OTLP_ENDPOINT`. |
+### Pre-launch checklist (all must be true before flipping traffic on)
 
-`OTEL_EXPORTER_OTLP_ENDPOINT` is the collector address used when `OTEL_EXPORTER=otlp`:
+- [ ] DNS A records for **both** `WEB_DOMAIN` and `API_DOMAIN` resolve to the droplet IP (Caddy needs this for ACME).
+- [ ] DO firewall allows inbound **80/443** and **22 restricted** to your IP(s); nothing else.
+- [ ] `API_CORS_ALLOWED_ORIGINS=https://<WEB_DOMAIN>` (https only — the API fail-stops on `*`/`http://`).
+- [ ] `DATABASE_APP_URL` points at the non-owner `fuelgrid_app` role with a **strong** password, distinct from `DATABASE_URL`.
+- [ ] `AUTH_PASSWORD_PEPPER` generated **once** and recorded safely (rotation invalidates every password hash + MFA enrollment).
+- [ ] `/readyz` returns `200 {"status":"ready"}` (postgres + redis ok) and a login smoke passes.
+- [ ] Nightly backup timer active (`systemctl list-timers fuelgrid-backup.timer`).
+- [ ] GHCR pull works on the droplet (`docker compose pull` succeeds).
+- [ ] GitHub Actions CD secrets set: `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_HEALTH_URL`.
 
-- A bare `host:port` (e.g. `tempo:4317`) or an `https://` URL connects over **TLS** — the secure default for a remote collector.
-- An `http://` prefix forces an **insecure/plaintext** connection, intended for a local collector or a same-host sidecar.
+### (a) Create the Droplet
 
-**Fail-stop semantics:** when `OTEL_EXPORTER=otlp` and the exporter cannot be built (endpoint unset, malformed, or unresolvable), the API **refuses to boot** — it exits with a non-zero status rather than start with traces silently dropped. Telemetry the operator explicitly asked for must never disappear unnoticed. The `none` and `stdout` paths stay best-effort: a failure there is logged and the API continues.
+- Create an Ubuntu LTS (24.04) Droplet. A **2 vCPU / 4 GB** Droplet is a sane
+  starting size for API + web + Postgres + Redis + Caddy on one box; scale up
+  later. Add your **deploy SSH public key** at creation.
+- Create a DO **Cloud Firewall** and attach it: allow inbound **TCP 22** (from
+  your admin IPs only), **TCP 80**, **TCP 443** (and **UDP 443** for HTTP/3);
+  deny everything else inbound.
 
-The tracer provider is flushed on shutdown (`SIGTERM`/`SIGINT`) with a 5s timeout so in-flight span batches are delivered before exit.
+### (b) Install Docker engine + compose plugin
 
-## Database migrations on deploy
+```sh
+ssh root@<droplet-ip>
+curl -fsSL https://get.docker.com | sh        # installs engine + compose plugin
+docker compose version                        # confirm the plugin is present
+```
 
-**Migrations are owned by the CD `migrate` job, NOT by a Fly `release_command`** —
-we pick one place to migrate so the schema is never applied twice. The `migrate`
-job runs `go run ./services/api/cmd/migrate up` against `secrets.DATABASE_URL`
-(the table **owner** role) *before* the `deploy` job rolls the new image — the
-standard online-migration discipline (schema first, then replace replicas).
+### (c) Create the deploy user + dirs, copy the stack files
 
-`services/api/fly.toml` therefore has **no** `release_command`: its `[deploy]`
-block only sets `strategy = "rolling"`. The distroless production image ships
-only the `/api` binary (no migrate binary), so there is nothing to run as a Fly
-release command anyway. If you ever prefer Fly-driven migrations instead, you
-must remove the CD `migrate` job to avoid double-migrating — and ship a migrate
-binary in the image — but the CD path is the supported one.
+```sh
+# As root on the droplet:
+adduser --disabled-password --gecos '' deploy
+usermod -aG docker deploy
+mkdir -p /opt/fuelgrid /var/backups/fuelgrid
+chown -R deploy:deploy /opt/fuelgrid /var/backups/fuelgrid
+# Authorize the CD deploy key for the deploy user:
+mkdir -p /home/deploy/.ssh && cp ~/.ssh/authorized_keys /home/deploy/.ssh/ \
+  && chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
+```
 
-Migrations run as the **owner** (`DATABASE_URL`); the running API uses the
-**non-owner** `fuelgrid_app` pool (`DATABASE_APP_URL`) so Postgres RLS enforces
-tenant isolation on every request.
+From your workstation, copy the three files onto the droplet:
+
+```sh
+scp deploy/docker-compose.prod.yml deploy/Caddyfile \
+    deploy:<droplet-ip>:/opt/fuelgrid/
+# Create the .env from the example, fill it in, then copy it (0600):
+cp .env.production.example .env   # edit it locally, NEVER commit it
+scp .env deploy@<droplet-ip>:/opt/fuelgrid/.env
+ssh deploy@<droplet-ip> 'chmod 600 /opt/fuelgrid/.env'
+```
+
+### (d) Point DNS at the droplet
+
+Create A records for `WEB_DOMAIN` and `API_DOMAIN` → the droplet's public IP.
+Wait for them to resolve (`dig +short <WEB_DOMAIN>`) before bringing Caddy up,
+or ACME issuance will fail.
+
+### (e) First migrate, then set the fuelgrid_app password
+
+```sh
+ssh deploy@<droplet-ip>
+cd /opt/fuelgrid
+
+# Pull images first (set API_IMAGE/WEB_IMAGE/MIGRATE_IMAGE in .env to the
+# :sha-<sha> refs CD built, or :latest for a manual first cut):
+docker compose -f docker-compose.prod.yml pull
+
+# Apply migrations as the OWNER (creates the fuelgrid_app role with a WEAK default):
+docker compose -f docker-compose.prod.yml run --rm migrate
+
+# Rotate the non-owner role to a strong password and put it in DATABASE_APP_URL:
+docker compose -f docker-compose.prod.yml exec postgres \
+  psql -U fuelgrid -c "ALTER ROLE fuelgrid_app PASSWORD '<STRONG_APP_ROLE_PASSWORD>';"
+# Then edit /opt/fuelgrid/.env so DATABASE_APP_URL uses <STRONG_APP_ROLE_PASSWORD>.
+```
+
+> The `migrate` one-shot only depends on postgres being healthy — compose starts
+> just postgres (+ its deps) for the `run`. If postgres isn't up yet, run
+> `docker compose -f docker-compose.prod.yml up -d postgres` first.
+
+### (f) Bring the stack up
+
+```sh
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml ps      # all healthy/running
+docker compose -f docker-compose.prod.yml logs -f caddy   # watch ACME issue certs
+```
+
+### (g) Verify
+
+```sh
+curl -fsS https://<API_DOMAIN>/readyz             # expect 200 {"status":"ready"} (postgres+redis ok)
+# Login smoke against the web BFF (no token leaves the server):
+curl -i -X POST https://<WEB_DOMAIN>/api/bff/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"<user>","password":"<pw>"}'
+```
+
+### (h) Configure GitHub Actions secrets for CD
+
+Under **Settings → Secrets and variables → Actions** (or the `production`
+Environment):
+
+```
+DEPLOY_SSH_KEY     = <private key whose public half is in deploy's authorized_keys>
+DEPLOY_HOST        = <droplet public IP / hostname>
+DEPLOY_USER        = deploy
+DEPLOY_HEALTH_URL  = https://<API_DOMAIN>/readyz
+# Optional, only if the GHCR package is private:
+GHCR_PULL_TOKEN    = <PAT with read:packages>
+```
+
+Until `DEPLOY_SSH_KEY` exists the CD pipeline still builds + pushes all three
+images but no-ops the deploy + smoke jobs.
+
+### (i) Enable nightly backups
+
+```sh
+# As root (or via sudo) on the droplet:
+cp /opt/fuelgrid/pg_backup.sh /opt/fuelgrid/pg_backup.sh 2>/dev/null || true
+scp deploy/backup/pg_backup.sh deploy@<droplet-ip>:/opt/fuelgrid/pg_backup.sh
+ssh root@<droplet-ip> '
+  chmod +x /opt/fuelgrid/pg_backup.sh
+  cp /opt/fuelgrid/fuelgrid-backup.service /etc/systemd/system/ 2>/dev/null || true
+'
+scp deploy/backup/fuelgrid-backup.service deploy/backup/fuelgrid-backup.timer \
+    root@<droplet-ip>:/etc/systemd/system/
+ssh root@<droplet-ip> '
+  systemctl daemon-reload
+  systemctl enable --now fuelgrid-backup.timer
+  systemctl list-timers fuelgrid-backup.timer
+'
+```
+
+Backups are **logical** (`pg_dump -Fc`), rotated `BACKUP_KEEP_DAYS` days, with an
+optional push to DigitalOcean Spaces when `SPACES_BUCKET` is set. Restore drill +
+the PITR caveat: [deploy/backup/RESTORE.md](../deploy/backup/RESTORE.md).
+
+### (j) Seeding note
+
+Seeding is **prod-guarded** — `services/api/cmd/seed` refuses to run unless
+`NODE_ENV=development` *or* `ALLOW_SEED=true`. Do **not** seed demo data into a
+real production tenant. Provision real tenants via
+`POST /api/v1/platform/tenants` (authenticated with `PLATFORM_ADMIN_TOKEN`).
 
 ## Branch protection (one-time setup)
-
-Apply once via the GitHub UI or `gh`:
 
 ```sh
 gh api -X PUT repos/JAPHARYROMAN/FuelGrid-OS/branches/main/protection \
@@ -224,144 +377,8 @@ gh api -X PUT repos/JAPHARYROMAN/FuelGrid-OS/branches/main/protection \
     -F restrictions=null
 ```
 
-Once applied, `main` cannot be pushed to directly; PRs must pass all four checks.
-
-## Go-live runbook
-
-The exact ordered steps an operator runs for the **first real deploy**. Replace
-every `<...>` placeholder with your values; never paste real secrets into a
-file that gets committed. App configs: [`services/api/fly.toml`](../services/api/fly.toml),
-[`apps/web/fly.toml`](../apps/web/fly.toml). Full env/secret inventory:
-[`.env.production.example`](../.env.production.example).
-
-### Pre-launch checklist (all must be true before flipping traffic on)
-
-- [ ] Both Fly apps created; `services/api/fly.toml` and `apps/web/fly.toml` placeholders (app name, `primary_region`, `API_ORIGIN`) replaced.
-- [ ] Managed Postgres + Redis provisioned; backups / point-in-time restore enabled on Postgres.
-- [ ] `fuelgrid_app` non-owner role has a **strong** password set; `DATABASE_APP_URL` built from it and **distinct** from `DATABASE_URL`.
-- [ ] All API secrets set via `fly secrets` (see step 4); `AUTH_PASSWORD_PEPPER` generated **once** and recorded safely (rotation invalidates every password hash).
-- [ ] `API_CORS_ALLOWED_ORIGINS` is **https only** (no `*`, no `http://`) — the API fail-stops otherwise.
-- [ ] GitHub Actions secrets set: `DATABASE_URL`, `DEPLOY_HEALTH_URL`, `FLY_API_TOKEN`.
-- [ ] `/readyz` returns `200 {"status":"ready"}` (postgres + redis ok) and a login smoke passes.
-- [ ] RLS confirmed: the API runs on the non-owner `DATABASE_APP_URL` pool (it refuses to boot in prod without it).
-
-### (a) Create the two Fly apps
-
-```sh
-flyctl auth login
-flyctl apps create fuelgrid-api          # match services/api/fly.toml `app`
-flyctl apps create fuelgrid-web          # match apps/web/fly.toml `app`
-```
-
-### (b) Provision Postgres + Redis
-
-```sh
-# Managed Postgres (or bring an external Postgres 16 with sslmode=require):
-flyctl postgres create --name fuelgrid-pg --region <region>
-flyctl postgres attach fuelgrid-pg --app fuelgrid-api   # prints the owner DSN
-
-# Redis — Upstash add-on (TLS rediss://) or a Fly Redis app:
-flyctl redis create     # note the rediss:// URL it prints
-```
-
-Enable scheduled backups / PITR on the Postgres cluster in the Fly dashboard.
-
-### (c) Create the non-owner `fuelgrid_app` role password + build the app DSN
-
-Migration `0005_rls.up.sql` (run in step f) **creates** the `fuelgrid_app`
-LOGIN role and grants it RLS-confined DML. The operator must set a **strong
-password** for it and build `DATABASE_APP_URL` from that. Connect as the owner
-and set it:
-
-```sh
-flyctl postgres connect --app fuelgrid-pg
-```
-```sql
-ALTER ROLE fuelgrid_app WITH PASSWORD '<STRONG_APP_ROLE_PASSWORD>';
-```
-
-Then assemble (note: **distinct** from the owner DSN, `sslmode=require`):
-
-```
-DATABASE_URL     = postgres://<owner>:<owner_pw>@<pg-host>:5432/fuelgrid?sslmode=require
-DATABASE_APP_URL = postgres://fuelgrid_app:<STRONG_APP_ROLE_PASSWORD>@<pg-host>:5432/fuelgrid?sslmode=require
-```
-
-> Chicken-and-egg: the role does not exist until migrations run (step f). Either
-> run migrations once with only `DATABASE_URL` set, then set the role password
-> and `DATABASE_APP_URL` and redeploy; or pre-create the role manually before
-> the first migrate. Both reach the same end state.
-
-### (d) Set the API secrets (never in fly.toml)
-
-```sh
-flyctl secrets set --app fuelgrid-api \
-  DATABASE_URL="postgres://<owner>:<owner_pw>@<pg-host>:5432/fuelgrid?sslmode=require" \
-  DATABASE_APP_URL="postgres://fuelgrid_app:<app_pw>@<pg-host>:5432/fuelgrid?sslmode=require" \
-  REDIS_URL="rediss://default:<redis_pw>@<redis-host>:6379/0" \
-  AUTH_PASSWORD_PEPPER="$(openssl rand -base64 32)" \
-  PLATFORM_ADMIN_TOKEN="$(openssl rand -hex 32)"
-# Optional integrations (only if used): SENTRY_DSN, SMTP_PASSWORD,
-# MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET / MPESA_PASSKEY, OTEL_EXPORTER_OTLP_ENDPOINT.
-
-# Web app secrets (the API_ORIGIN itself is non-secret config in apps/web/fly.toml):
-flyctl secrets set --app fuelgrid-web NEXT_PUBLIC_SENTRY_DSN="<dsn-or-omit>"
-```
-
-Set non-secret config (`API_CORS_ALLOWED_ORIGINS=https://...`, `MPESA_*`
-non-secret fields, `APP_BASE_URL`) in `services/api/fly.toml` `[env]`, and the
-web `API_ORIGIN` in `apps/web/fly.toml` `[env]`.
-
-### (e) Configure GitHub Actions secrets for CD
-
-Under **Settings → Secrets and variables → Actions** (or the `production`
-Environment):
-
-```
-DATABASE_URL       = <owner DSN, sslmode=require>           # CD migrate job
-DEPLOY_HEALTH_URL  = https://<api-public-host>/readyz       # CD smoke gate
-FLY_API_TOKEN      = $(fly tokens create deploy)            # CD flyctl rollout
-```
-
-Until all three exist the CD pipeline still builds + pushes the image but
-no-ops migrate / deploy / smoke (each emits a `::notice::`).
-
-### (f) First deploy
-
-The web app currently has no published image, so build it from source once
-(add a Next.js standalone `apps/web/Dockerfile` referenced by
-`apps/web/fly.toml`), then let CD own the API:
-
-```sh
-# Web (from source, first time):
-flyctl deploy --config apps/web/fly.toml --app fuelgrid-web
-
-# API: push to main → CD runs build-push → migrate → deploy (flyctl rollout)
-#      → smoke automatically. Or roll out manually for the very first cut:
-flyctl deploy --config services/api/fly.toml \
-  --image ghcr.io/<owner>/<repo>-api:sha-<commit-sha>
-```
-
-### (g) Verify
-
-```sh
-curl -fsS https://<api-public-host>/readyz        # expect 200 {"status":"ready"}
-# Login smoke against the web BFF (no token leaves the server):
-curl -i -X POST https://<web-host>/api/bff/auth/login \
-  -H 'content-type: application/json' \
-  -d '{"email":"<user>","password":"<pw>"}'
-```
-
-**Tenant seed decision:** seeding is **prod-guarded** — `services/api/cmd/seed`
-refuses to run unless `NODE_ENV=development` *or* `ALLOW_SEED=true` is set
-explicitly. Do **not** seed demo data into a real production tenant. Provision
-real tenants instead via `POST /api/v1/platform/tenants` (authenticated with
-`PLATFORM_ADMIN_TOKEN`). Only run the seeder against a throwaway staging DB, and
-only with `ALLOW_SEED=true` set deliberately.
-
 ## Defer list
 
-- Replication / read-replica config on Fly Postgres.
-- A published web image + image-based web rollout in CD (today the web app deploys from source per the runbook; the CD `deploy` job already skips the web rollout cleanly until a `…-web` image exists in GHCR).
-
-These land alongside scale-out, not the first launch.
+- DigitalOcean Managed Postgres + PITR (or self-hosted WAL archiving) once the RPO requires it (see RESTORE.md).
+- Horizontal scale-out (multiple Droplets / a load balancer) and remote `/metrics` scraping behind an authenticated route.
+- Offsite-backup verification automation (a scheduled restore-drill job).
