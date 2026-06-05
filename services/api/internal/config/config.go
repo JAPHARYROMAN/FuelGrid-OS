@@ -100,6 +100,18 @@ type Config struct {
 	AuthLoginLockFor     time.Duration `envconfig:"AUTH_LOGIN_LOCK_FOR" default:"30m"`
 	AuthPasswordResetTTL time.Duration `envconfig:"AUTH_PASSWORD_RESET_TTL" default:"1h"`
 
+	// SR-L3: per-IP HTTP-layer rate limit on the public password-reset request and
+	// confirm endpoints. These routes sit outside the per-tenant limiter (no actor
+	// yet) and outside the identity service's login buckets, so without this guard
+	// an attacker who already holds a reset token could replay /confirm without any
+	// HTTP-layer throttle. We reuse the Redis-backed ratelimit.Limiter under a
+	// dedicated IP prefix. The window is kept lenient so a legitimate user fat-
+	// fingering a token a few times is never locked out. A non-positive max
+	// disables the guard (the Go zero value), so a Config built without Load() —
+	// the integration harness — never throttles unless a test opts in.
+	AuthPasswordResetRateMax    int64         `envconfig:"AUTH_PASSWORD_RESET_RATE_LIMIT" default:"10"`
+	AuthPasswordResetRateWindow time.Duration `envconfig:"AUTH_PASSWORD_RESET_RATE_WINDOW" default:"15m"`
+
 	// AuthEnforceMfaForPrivilegedRoles gates the requireMFASatisfied middleware
 	// (SR-M1): when true, an actor whose role mandates a second factor
 	// (identity.RoleRequiresMfa) is refused the sensitive admin-console routes

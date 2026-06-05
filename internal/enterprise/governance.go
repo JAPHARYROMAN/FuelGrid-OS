@@ -94,7 +94,52 @@ func (r *Repo) ListGroupMembers(ctx context.Context, tenantID, groupID uuid.UUID
 
 // ---- Delegated scopes (Stage 2) ----
 
+// ErrScopeTargetNotFound is returned by GrantScope when a non-tenant scope's
+// scope_id does not resolve to a row owned by the granting tenant (SR-L4). The
+// HTTP layer maps it to a 400 so a caller cannot mint a grant that references
+// another tenant's company/region/group/station id.
+var ErrScopeTargetNotFound = errors.New("enterprise: scope target not found for tenant")
+
+// scopeTargetTable maps a non-tenant scope_type to the table its scope_id must
+// reference. A `tenant` scope carries no scope_id and is not listed here.
+var scopeTargetTable = map[string]string{
+	"company": "companies",
+	"region":  "regions",
+	"group":   "station_groups",
+	"station": "stations",
+}
+
+// GrantScope records a delegated enterprise scope for a user. SR-L4: for any
+// scope_type other than `tenant` it first verifies (in the same tenant-scoped
+// tx, so RLS bounds the lookup) that scope_id is non-nil and resolves to a row
+// of the matching kind owned by the tenant — otherwise it returns
+// ErrScopeTargetNotFound rather than persisting a grant that points at another
+// tenant's (or a non-existent) entity. This is defensive hardening: enterprise
+// scopes drive UI lensing only, and resource authorization is enforced
+// separately, but a cross-tenant scope_id should never be storable.
 func (r *Repo) GrantScope(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, scopeType string, scopeID *uuid.UUID) (uuid.UUID, error) {
+	if scopeType != "tenant" {
+		table, known := scopeTargetTable[scopeType]
+		if !known {
+			// Unknown scope_type: let the DB CHECK constraint reject it as before.
+			table = ""
+		}
+		if table != "" {
+			if scopeID == nil {
+				return uuid.Nil, ErrScopeTargetNotFound
+			}
+			var exists bool
+			// #nosec G201 -- table is selected from a fixed in-code allowlist
+			// (scopeTargetTable), never from caller input.
+			q := "SELECT EXISTS (SELECT 1 FROM " + table + " WHERE tenant_id = $1 AND id = $2)"
+			if err := tx.QueryRow(ctx, q, tenantID, *scopeID).Scan(&exists); err != nil {
+				return uuid.Nil, err
+			}
+			if !exists {
+				return uuid.Nil, ErrScopeTargetNotFound
+			}
+		}
+	}
 	var id uuid.UUID
 	err := tx.QueryRow(ctx, `
 		INSERT INTO enterprise_scope_grants (tenant_id, user_id, scope_type, scope_id)

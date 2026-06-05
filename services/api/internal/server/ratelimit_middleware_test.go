@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/identity/ratelimit"
 )
 
 // TestTenantBucketKey pins the per-tenant bucket-key derivation: the key is
@@ -149,6 +151,50 @@ func TestPerTenantNoActorPasses(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/me", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("disabled per-tenant guard must pass: got %d", rec.Code)
+	}
+}
+
+// TestPwResetBucketKey pins the per-IP password-reset bucket-key derivation
+// (SR-L3): namespaced and keyed strictly by client IP, so two different IPs get
+// independent budgets.
+func TestPwResetBucketKey(t *testing.T) {
+	if got := pwResetBucketKey("203.0.113.7"); got != "pwreset:ip:203.0.113.7" {
+		t.Fatalf("unexpected pw-reset bucket key: %q", got)
+	}
+	if pwResetBucketKey("203.0.113.7") == pwResetBucketKey("203.0.113.8") {
+		t.Fatalf("different IPs must get different pw-reset bucket keys")
+	}
+}
+
+// TestPwResetEnabledPredicate documents the enable/disable matrix for the
+// per-IP password-reset guard so a future edit can't silently flip it on for
+// the integration harness (which leaves the limit at its zero value).
+func TestPwResetEnabledPredicate(t *testing.T) {
+	if newRateLimiter(nil, 0, 0, 0).withPasswordReset(nil, 10, time.Minute).pwResetEnabled() {
+		t.Fatalf("pw-reset guard must be off when no limiter (Redis) is wired")
+	}
+	if newRateLimiter(nil, 0, 0, 0).withPasswordReset(&ratelimit.Limiter{}, 0, time.Minute).pwResetEnabled() {
+		t.Fatalf("pw-reset guard must be off when the limit is non-positive")
+	}
+	if !newRateLimiter(nil, 0, 0, 0).withPasswordReset(&ratelimit.Limiter{}, 10, time.Minute).pwResetEnabled() {
+		t.Fatalf("pw-reset guard must be on when a limiter is wired and limit > 0")
+	}
+}
+
+// TestPwResetDisabledPasses: a disabled per-IP guard is a no-op — every request
+// passes regardless of how many arrive. This is the default the integration
+// harness relies on.
+func TestPwResetDisabledPasses(t *testing.T) {
+	s := newRateLimitServer(newRateLimiter(nil, 0, 0, 0).withPasswordReset(nil, 10, time.Minute))
+	h := s.rateLimitPasswordResetIP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for i := 0; i < 100; i++ {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/auth/password-reset/confirm", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d: disabled pw-reset guard must pass, got %d", i, rec.Code)
+		}
 	}
 }
 

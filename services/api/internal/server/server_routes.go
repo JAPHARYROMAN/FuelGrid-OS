@@ -159,8 +159,14 @@ func (s *Server) registerAuthRoutes(r chi.Router) {
 		r.Post("/login", s.handleLogin)
 		r.Post("/logout", s.handleLogout)
 		r.Post("/refresh", s.handleRefresh)
-		r.Post("/password-reset/request", s.handlePasswordResetRequest)
-		r.Post("/password-reset/confirm", s.handlePasswordResetConfirm)
+		// SR-L3: the public password-reset endpoints sit outside both the
+		// per-tenant limiter (no actor yet) and the identity login buckets, so
+		// guard them with the per-IP password-reset limiter to throttle reset-
+		// token replay/brute-force at the HTTP layer.
+		r.With(s.rateLimitPasswordResetIP).Group(func(r chi.Router) {
+			r.Post("/password-reset/request", s.handlePasswordResetRequest)
+			r.Post("/password-reset/confirm", s.handlePasswordResetConfirm)
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)

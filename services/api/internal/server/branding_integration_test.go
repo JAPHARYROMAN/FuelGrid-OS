@@ -137,6 +137,22 @@ func TestLetterhead_LogoUploadValidation(t *testing.T) {
 		t.Fatalf("GET logo did not return PNG bytes")
 	}
 
+	// SR-L2: the logo download must carry X-Content-Type-Options: nosniff and an
+	// inline Content-Disposition, for parity with the attachments handler.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, h.baseURL+"/api/v1/branding/logo", nil)
+	req.Header.Set("Authorization", "Bearer "+admin)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET logo headers: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("logo download X-Content-Type-Options = %q; want nosniff", got)
+	}
+	if got := resp.Header.Get("Content-Disposition"); got != "inline" {
+		t.Fatalf("logo download Content-Disposition = %q; want inline", got)
+	}
+
 	// DELETE clears it; a subsequent GET is 404.
 	if code, _ := h.do(t, http.MethodDelete, "/api/v1/branding/logo", admin, nil, ""); code != http.StatusNoContent {
 		t.Fatalf("DELETE logo: code=%d (want 204)", code)

@@ -139,11 +139,15 @@ func (s *Server) handleGrantScope(w http.ResponseWriter, r *http.Request) {
 	}, func(tx pgx.Tx) (string, error) {
 		id, err := s.enterprise.GrantScope(r.Context(), tx, actor.TenantID, req.UserID, req.ScopeType, req.ScopeID)
 		if err != nil {
-			if isForeignKeyViolation(err) {
+			switch {
+			case errors.Is(err, enterprise.ErrScopeTargetNotFound):
+				// SR-L4: scope_id does not resolve to a tenant-owned row.
+				writeError(w, http.StatusBadRequest, "scope_id is not a valid target for this tenant")
+			case isForeignKeyViolation(err):
 				writeError(w, http.StatusBadRequest, "unknown user")
-				return "", err
+			default:
+				writeError(w, http.StatusInternalServerError, "internal error")
 			}
-			writeError(w, http.StatusInternalServerError, "internal error")
 			return "", err
 		}
 		grantID = id
