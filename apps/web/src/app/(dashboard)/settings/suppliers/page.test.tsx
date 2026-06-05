@@ -19,8 +19,9 @@ vi.mock('@/lib/api', () => ({
 }));
 
 let permitted = true;
+const usePermission = vi.fn((_code: string, _opts?: unknown) => permitted);
 vi.mock('@/hooks/use-permissions', () => ({
-  usePermission: () => permitted,
+  usePermission: (code: string, opts?: unknown) => usePermission(code, opts),
 }));
 
 import SuppliersPage from './page';
@@ -49,6 +50,7 @@ const sampleSupplier: Supplier = {
 describe('SuppliersPage', () => {
   beforeEach(() => {
     permitted = true;
+    usePermission.mockClear();
     listSuppliers.mockReset();
     listProducts.mockReset();
     listProducts.mockResolvedValue({ items: [], count: 0 });
@@ -91,5 +93,20 @@ describe('SuppliersPage', () => {
 
     await screen.findByText('Acme Fuels Ltd');
     expect(screen.getByRole('button', { name: /new supplier/i })).toBeEnabled();
+  });
+
+  it('checks the suppliers PDF controls with held purchase_order.read permission', async () => {
+    permitted = true;
+    listSuppliers.mockResolvedValue({ items: [sampleSupplier], count: 1 });
+    renderPage();
+
+    await screen.findByText('Acme Fuels Ltd');
+
+    expect(screen.getByRole('button', { name: /^view$/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^download$/i })).toBeEnabled();
+    expect(usePermission).toHaveBeenCalledWith(
+      'purchase_order.read',
+      expect.objectContaining({ mode: 'held' }),
+    );
   });
 });

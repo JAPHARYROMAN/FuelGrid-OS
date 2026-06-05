@@ -7,6 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
 
 type Supplier struct {
@@ -69,22 +71,12 @@ func (r *Repo) ListSuppliers(ctx context.Context, tenantID uuid.UUID) ([]Supplie
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	out := []Supplier{}
-	for rows.Next() {
-		var s Supplier
-		if err := scanSupplier(rows, &s); err != nil {
-			return nil, err
-		}
-		ids, err := r.supplierProductIDs(ctx, r.pool, tenantID, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		s.ProductIDs = ids
-		out = append(out, s)
+	out, err := scanSupplierRows(rows)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	return r.withSupplierProductIDs(ctx, r.pool, tenantID, out)
 }
 
 // ListSuppliersPage is the paginated variant of ListSuppliers (REL-REPO). name
@@ -100,22 +92,12 @@ func (r *Repo) ListSuppliersPage(ctx context.Context, tenantID uuid.UUID, limit,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	out := []Supplier{}
-	for rows.Next() {
-		var s Supplier
-		if err := scanSupplier(rows, &s); err != nil {
-			return nil, err
-		}
-		ids, err := r.supplierProductIDs(ctx, r.pool, tenantID, s.ID)
-		if err != nil {
-			return nil, err
-		}
-		s.ProductIDs = ids
-		out = append(out, s)
+	out, err := scanSupplierRows(rows)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	return r.withSupplierProductIDs(ctx, r.pool, tenantID, out)
 }
 
 func (r *Repo) GetSupplier(ctx context.Context, tenantID, id uuid.UUID) (*Supplier, error) {
@@ -146,6 +128,44 @@ func (r *Repo) getSupplier(ctx context.Context, q pgxQuerier, tenantID, id uuid.
 type pgxQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func scanSupplierRows(rows pgx.Rows) ([]Supplier, error) {
+	defer rows.Close()
+
+	out := []Supplier{}
+	for rows.Next() {
+		var s Supplier
+		if err := scanSupplier(rows, &s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) withSupplierProductIDs(ctx context.Context, q pgxQuerier, tenantID uuid.UUID, suppliers []Supplier) ([]Supplier, error) {
+	if len(suppliers) == 0 {
+		return suppliers, nil
+	}
+
+	supplierIDs := make([]uuid.UUID, 0, len(suppliers))
+	for i := range suppliers {
+		supplierIDs = append(supplierIDs, suppliers[i].ID)
+	}
+
+	productIDs, err := r.supplierProductIDsBySupplier(ctx, q, tenantID, supplierIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range suppliers {
+		ids := productIDs[suppliers[i].ID]
+		if ids == nil {
+			ids = []uuid.UUID{}
+		}
+		suppliers[i].ProductIDs = ids
+	}
+	return suppliers, nil
 }
 
 func (r *Repo) CreateSupplier(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in SupplierInput) (*Supplier, error) {
@@ -239,6 +259,33 @@ func (r *Repo) supplierProductIDs(ctx context.Context, q pgxQuerier, tenantID, s
 			return nil, err
 		}
 		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repo) supplierProductIDsBySupplier(ctx context.Context, q pgxQuerier, tenantID uuid.UUID, supplierIDs []uuid.UUID) (map[uuid.UUID][]uuid.UUID, error) {
+	if len(supplierIDs) == 0 {
+		return map[uuid.UUID][]uuid.UUID{}, nil
+	}
+	rows, err := q.Query(ctx, `
+		SELECT supplier_id, product_id
+		FROM supplier_products
+		WHERE tenant_id = $1
+		  AND supplier_id = ANY($2::uuid[])
+		ORDER BY supplier_id, product_id
+	`, tenantID, database.UUIDStrings(supplierIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[uuid.UUID][]uuid.UUID, len(supplierIDs))
+	for rows.Next() {
+		var supplierID, productID uuid.UUID
+		if err := rows.Scan(&supplierID, &productID); err != nil {
+			return nil, err
+		}
+		out[supplierID] = append(out[supplierID], productID)
 	}
 	return out, rows.Err()
 }

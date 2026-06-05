@@ -31,6 +31,26 @@ func TestPhase5_ProcurementFlow(t *testing.T) {
 		t.Fatalf("create supplier: %d %v", code, supplier)
 	}
 	supplierID := supplier["id"].(string)
+	code, suppliers := h.getJSON(t, "/api/v1/suppliers", admin)
+	if code != http.StatusOK {
+		t.Fatalf("list suppliers after create: %d %v", code, suppliers)
+	}
+	items := suppliers["items"].([]any)
+	var listedSupplier map[string]any
+	for _, raw := range items {
+		item := raw.(map[string]any)
+		if item["id"] == supplierID {
+			listedSupplier = item
+			break
+		}
+	}
+	if listedSupplier == nil {
+		t.Fatalf("created supplier %s missing from list: %v", supplierID, suppliers)
+	}
+	productIDs := listedSupplier["product_ids"].([]any)
+	if len(productIDs) != 1 || productIDs[0] != h.ids.agoProduct.String() {
+		t.Fatalf("listed supplier product_ids = %v, want [%s]", productIDs, h.ids.agoProduct)
+	}
 
 	// Draft PO, submitted, confirmed. Lines are immutable after submission.
 	code, po := h.invPostJSON(t, "/api/v1/purchase-orders", admin, map[string]any{

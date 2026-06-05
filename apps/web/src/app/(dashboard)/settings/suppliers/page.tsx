@@ -151,6 +151,7 @@ export default function SuppliersPage() {
               onFetch={() => api.suppliersPdf()}
               filename="suppliers.pdf"
               permission="purchase_order.read"
+              permissionMode="held"
             />
             <PermissionGate permission="supplier.manage">
               <Button onClick={openCreate}>

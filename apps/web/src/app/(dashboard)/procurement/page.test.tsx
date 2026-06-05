@@ -26,8 +26,9 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+const usePermission = vi.fn((_code: string, _opts?: unknown) => true);
 vi.mock('@/hooks/use-permissions', () => ({
-  usePermission: () => true,
+  usePermission: (code: string, opts?: unknown) => usePermission(code, opts),
 }));
 
 import ProcurementPage from './page';
@@ -101,6 +102,7 @@ const linkedInvoice: SupplierInvoice = {
 
 describe('ProcurementPage linkage (7.2)', () => {
   beforeEach(() => {
+    usePermission.mockClear();
     listStations.mockResolvedValue({
       items: [{ id: 'stn-1', name: 'Westlands', code: 'WL' }],
       count: 1,
@@ -140,5 +142,16 @@ describe('ProcurementPage linkage (7.2)', () => {
       expect.anything(),
     );
     expect(screen.getByText('Goods receipts (deliveries)')).toBeInTheDocument();
+  });
+
+  it('checks the purchase orders PDF with held purchase_order.read permission', async () => {
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: /view pos/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /pos pdf/i })).toBeEnabled();
+    expect(usePermission).toHaveBeenCalledWith(
+      'purchase_order.read',
+      expect.objectContaining({ mode: 'held' }),
+    );
   });
 });

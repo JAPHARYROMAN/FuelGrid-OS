@@ -140,6 +140,7 @@ export default function ProcurementPage() {
               onFetch={() => api.purchaseOrdersPdf()}
               filename="purchase-orders.pdf"
               permission="purchase_order.read"
+              permissionMode="held"
               viewLabel="View POs"
               downloadLabel="POs PDF"
             />
