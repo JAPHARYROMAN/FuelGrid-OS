@@ -415,14 +415,14 @@ func (r *Repo) UpsertStep(ctx context.Context, tx pgx.Tx, tenantID, actorID uuid
 	err := tx.QueryRow(ctx, `
 		INSERT INTO setup_steps (tenant_id, code, status, completed_by, completed_at, updated_by, notes)
 		VALUES (
-			$1, $2, $3,
-			CASE WHEN $3 = 'completed' THEN $4 ELSE NULL END,
-			CASE WHEN $3 = 'completed' THEN now() ELSE NULL END,
-			$4, $5
+			$1, $2, $3::text,
+			CASE WHEN $3::text = 'completed' THEN $4::uuid ELSE NULL::uuid END,
+			CASE WHEN $3::text = 'completed' THEN now() ELSE NULL END,
+			$4::uuid, $5
 		)
 		ON CONFLICT (tenant_id, code) DO UPDATE SET
 			status = EXCLUDED.status,
-			completed_by = CASE WHEN EXCLUDED.status = 'completed' THEN EXCLUDED.updated_by ELSE NULL END,
+			completed_by = CASE WHEN EXCLUDED.status = 'completed' THEN EXCLUDED.updated_by ELSE NULL::uuid END,
 			completed_at = CASE
 				WHEN EXCLUDED.status = 'completed' THEN COALESCE(setup_steps.completed_at, now())
 				ELSE NULL
