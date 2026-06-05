@@ -86,3 +86,41 @@ func TestPagination_ListEmployeesEnvelope(t *testing.T) {
 		t.Fatalf("garbage limit status = %d (want 400)", code)
 	}
 }
+
+func TestPagination_ListUsersInvitedUserEmptyGrants(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	ctx := context.Background()
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO users (tenant_id, email, full_name, status)
+		VALUES ($1, 'invited-no-grants@example.test', 'No Grants', 'invited')`,
+		h.ids.tenantID); err != nil {
+		t.Fatalf("seed invited user: %v", err)
+	}
+
+	code, page := h.getJSON(t, "/api/v1/users?limit=20", admin)
+	if code != http.StatusOK {
+		t.Fatalf("users status = %d (want 200)", code)
+	}
+	items, ok := page["items"].([]any)
+	if !ok {
+		t.Fatalf("items missing or wrong type: %T", page["items"])
+	}
+	for _, item := range items {
+		u := item.(map[string]any)
+		if u["email"] != "invited-no-grants@example.test" {
+			continue
+		}
+		if roles, ok := u["roles"].([]any); !ok || len(roles) != 0 {
+			t.Fatalf("roles = %#v, want empty JSON array", u["roles"])
+		}
+		if stations, ok := u["station_ids"].([]any); !ok || len(stations) != 0 {
+			t.Fatalf("station_ids = %#v, want empty JSON array", u["station_ids"])
+		}
+		return
+	}
+	t.Fatal("invited user not returned")
+}

@@ -153,91 +153,95 @@ export default function UsersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {list.data!.items.map((u) => (
-                  <TableRow key={u.id}>
-                    <TableCell className="font-medium">{u.full_name}</TableCell>
-                    <TableCell className="text-muted-foreground">{u.email}</TableCell>
-                    <TableCell>
-                      <Badge
-                        tone={
-                          u.status === 'active'
-                            ? 'success'
-                            : u.status === 'invited'
-                              ? 'info'
-                              : 'warning'
-                        }
-                      >
-                        {u.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge tone={u.mfa_enabled ? 'success' : 'neutral'}>
-                        {u.mfa_enabled ? 'on' : 'off'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {u.roles.length === 0 ? (
-                          <span className="text-xs text-muted-foreground">none</span>
+                {list.data!.items.map((u) => {
+                  const userRoles = u.roles ?? [];
+                  const stationIDs = u.station_ids ?? [];
+                  return (
+                    <TableRow key={u.id}>
+                      <TableCell className="font-medium">{u.full_name}</TableCell>
+                      <TableCell className="text-muted-foreground">{u.email}</TableCell>
+                      <TableCell>
+                        <Badge
+                          tone={
+                            u.status === 'active'
+                              ? 'success'
+                              : u.status === 'invited'
+                                ? 'info'
+                                : 'warning'
+                          }
+                        >
+                          {u.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge tone={u.mfa_enabled ? 'success' : 'neutral'}>
+                          {u.mfa_enabled ? 'on' : 'off'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {userRoles.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">none</span>
+                          ) : (
+                            userRoles.map((r) => (
+                              <Badge key={r} tone="accent">
+                                {r}
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {u.tenant_wide ? (
+                          <Badge tone="info">tenant-wide</Badge>
                         ) : (
-                          u.roles.map((r) => (
-                            <Badge key={r} tone="accent">
-                              {r}
-                            </Badge>
-                          ))
+                          <span className="font-mono text-xs">{stationIDs.length} station(s)</span>
                         )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {u.tenant_wide ? (
-                        <Badge tone="info">tenant-wide</Badge>
-                      ) : (
-                        <span className="font-mono text-xs">{u.station_ids.length} station(s)</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <PermissionGate permission="users.assign_roles">
-                          <Button variant="ghost" size="sm" onClick={() => openScope(u)}>
-                            Manage
-                          </Button>
-                        </PermissionGate>
-                        {u.status === 'active' ? (
-                          <PermissionGate permission="users.manage">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={
-                                updateStatus.isPending && updateStatus.variables?.userID === u.id
-                              }
-                              onClick={() =>
-                                updateStatus.mutate({ userID: u.id, status: 'suspended' })
-                              }
-                              title="Suspend user"
-                            >
-                              <ShieldOff className="size-3.5" />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <PermissionGate permission="users.assign_roles">
+                            <Button variant="ghost" size="sm" onClick={() => openScope(u)}>
+                              Manage
                             </Button>
                           </PermissionGate>
-                        ) : u.status === 'suspended' ? (
-                          <PermissionGate permission="users.manage">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={
-                                updateStatus.isPending && updateStatus.variables?.userID === u.id
-                              }
-                              onClick={() =>
-                                updateStatus.mutate({ userID: u.id, status: 'active' })
-                              }
-                            >
-                              Activate
-                            </Button>
-                          </PermissionGate>
-                        ) : null}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          {u.status === 'active' ? (
+                            <PermissionGate permission="users.manage">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={
+                                  updateStatus.isPending && updateStatus.variables?.userID === u.id
+                                }
+                                onClick={() =>
+                                  updateStatus.mutate({ userID: u.id, status: 'suspended' })
+                                }
+                                title="Suspend user"
+                              >
+                                <ShieldOff className="size-3.5" />
+                              </Button>
+                            </PermissionGate>
+                          ) : u.status === 'suspended' ? (
+                            <PermissionGate permission="users.manage">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={
+                                  updateStatus.isPending && updateStatus.variables?.userID === u.id
+                                }
+                                onClick={() =>
+                                  updateStatus.mutate({ userID: u.id, status: 'active' })
+                                }
+                              >
+                                Activate
+                              </Button>
+                            </PermissionGate>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </CardContent>
@@ -327,7 +331,7 @@ export default function UsersPage() {
                 </h4>
                 <div className="flex flex-wrap gap-1.5">
                   {(roles.data?.items ?? []).map((r) => {
-                    const has = scope.roles.includes(r.code);
+                    const has = (scope.roles ?? []).includes(r.code);
                     return (
                       <PermissionGate key={r.id} permission="users.assign_roles">
                         <button
@@ -363,7 +367,7 @@ export default function UsersPage() {
                 ) : null}
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {(stations.data?.items ?? []).map((s) => {
-                    const has = scope.station_ids.includes(s.id);
+                    const has = (scope.station_ids ?? []).includes(s.id);
                     return (
                       <PermissionGate key={s.id} permission="users.assign_roles">
                         <button

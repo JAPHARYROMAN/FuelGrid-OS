@@ -352,7 +352,7 @@ func (r *UserRepo) ListStationAccess(ctx context.Context, userID uuid.UUID) ([]u
 		return nil, err
 	}
 	defer rows.Close()
-	var out []uuid.UUID
+	out := make([]uuid.UUID, 0)
 	for rows.Next() {
 		var sid uuid.UUID
 		if err := rows.Scan(&sid); err != nil {
@@ -376,7 +376,7 @@ func (r *UserRepo) ListRoles(ctx context.Context, userID uuid.UUID) ([]string, e
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	out := make([]string, 0)
 	for rows.Next() {
 		var code string
 		if err := rows.Scan(&code); err != nil {
