@@ -2,9 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarClock, Check, Plus, Users } from 'lucide-react';
+import { CalendarClock, Check, ListChecks, Plus, Users } from 'lucide-react';
 
-import { SdkError, type ShiftTeam } from '@fuelgrid/sdk';
+import {
+  SdkError,
+  type SetupChecklist,
+  type SetupChecklistStep,
+  type ShiftTeam,
+} from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -31,6 +36,36 @@ import { api } from '@/lib/api';
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function findSetupStep(checklist: SetupChecklist | undefined, code: string) {
+  return checklist?.steps.find((step) => step.code === code);
+}
+
+function formatSetupCount(step: SetupChecklistStep | undefined) {
+  if (!step) return '0 / 0';
+  return `${step.count} / ${step.required_count}`;
+}
+
+function setupProgressSummary(checklist: SetupChecklist | undefined): string | null {
+  const teams = findSetupStep(checklist, 'teams');
+  const anchor = findSetupStep(checklist, 'rotation_anchor');
+  if (!teams && !anchor) return null;
+
+  const remaining: string[] = [];
+  if (teams && !teams.ready) remaining.push(`teams ${formatSetupCount(teams)}`);
+  if (anchor && !anchor.ready) remaining.push(`anchors ${formatSetupCount(anchor)}`);
+
+  if (remaining.length > 0) return `Setup still needs ${remaining.join(' and ')}.`;
+  if (teams?.status === 'completed' && anchor?.status === 'completed') {
+    return 'Setup checklist reviewed.';
+  }
+  return 'Setup is ready for review.';
+}
+
+function setupSyncErrorMessage(error: unknown) {
+  if (error instanceof SdkError && (error.status === 401 || error.status === 403)) return null;
+  return error instanceof SdkError ? error.message : 'Could not refresh setup checklist';
 }
 
 export default function TeamsPage() {
@@ -76,18 +111,43 @@ export default function TeamsPage() {
     queryFn: ({ signal }) => api.getRoster(stationID, { days: 7 }, signal),
     enabled: !!stationID,
   });
+  const setupChecklist = useQuery({
+    queryKey: ['setup-checklist'],
+    queryFn: ({ signal }) => api.getSetupChecklist(signal),
+  });
 
   useEffect(() => {
     setAnchorDraft(anchor.data?.rotation_anchor_date ?? '');
   }, [anchor.data]);
 
+  async function syncSetupSteps(stepCodes: string[]) {
+    let checklist = await api.getSetupChecklist();
+    qc.setQueryData(['setup-checklist'], checklist);
+
+    for (const code of stepCodes) {
+      const step = findSetupStep(checklist, code);
+      if (step?.ready && step.status !== 'completed') {
+        checklist = await api.updateSetupStep({ step_code: code, status: 'completed' });
+        qc.setQueryData(['setup-checklist'], checklist);
+      }
+    }
+
+    return checklist;
+  }
+
   const ensure = useMutation({
     mutationFn: () => api.ensureTeams(stationID, {}),
-    onSuccess: () => {
+    onSuccess: async () => {
       setActionError(null);
-      setActionSuccess(null);
       qc.invalidateQueries({ queryKey: teamsKey });
       qc.invalidateQueries({ queryKey: rosterKey });
+      try {
+        const checklist = await syncSetupSteps(['teams', 'rotation_anchor']);
+        setActionSuccess(setupProgressSummary(checklist));
+      } catch (e) {
+        setActionSuccess('Teams created.');
+        setActionError(setupSyncErrorMessage(e));
+      }
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not create teams'),
   });
@@ -95,29 +155,41 @@ export default function TeamsPage() {
   const setMembers = useMutation({
     mutationFn: ({ teamID, employeeIDs }: { teamID: string; employeeIDs: string[] }) =>
       api.setTeamMembers(teamID, employeeIDs),
-    onSuccess: () => {
+    onSuccess: async () => {
       setActionError(null);
-      setActionSuccess(null);
       qc.invalidateQueries({ queryKey: teamsKey });
       qc.invalidateQueries({ queryKey: ['employees', stationID] });
       qc.invalidateQueries({ queryKey: rosterKey });
+      try {
+        const checklist = await syncSetupSteps(['teams', 'rotation_anchor']);
+        setActionSuccess(setupProgressSummary(checklist));
+      } catch (e) {
+        setActionSuccess('Team members updated.');
+        setActionError(setupSyncErrorMessage(e));
+      }
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not update members'),
   });
 
   const saveAnchor = useMutation({
     mutationFn: (nextAnchor: string | null) => api.setRotationAnchor(stationID, nextAnchor),
-    onSuccess: (saved) => {
+    onSuccess: async (saved) => {
       setActionError(null);
       setAnchorDraft(saved.rotation_anchor_date ?? '');
-      setActionSuccess(
-        saved.rotation_anchor_date
-          ? `Rotation anchor saved for ${saved.rotation_anchor_date}`
-          : 'Rotation anchor cleared',
-      );
       qc.setQueryData(anchorKey, saved);
       qc.invalidateQueries({ queryKey: anchorKey });
       qc.invalidateQueries({ queryKey: rosterKey });
+      const base = saved.rotation_anchor_date
+        ? `Rotation anchor saved for ${saved.rotation_anchor_date}`
+        : 'Rotation anchor cleared';
+      try {
+        const checklist = await syncSetupSteps(['teams', 'rotation_anchor']);
+        const progress = setupProgressSummary(checklist);
+        setActionSuccess(progress ? `${base}. ${progress}` : base);
+      } catch (e) {
+        setActionSuccess(base);
+        setActionError(setupSyncErrorMessage(e));
+      }
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not save anchor'),
   });
@@ -157,6 +229,9 @@ export default function TeamsPage() {
 
   const teamList = teams.data?.items ?? [];
   const hasTeams = teamList.length === 3;
+  const teamsStep = findSetupStep(setupChecklist.data, 'teams');
+  const anchorStep = findSetupStep(setupChecklist.data, 'rotation_anchor');
+  const setupSummary = setupProgressSummary(setupChecklist.data);
 
   return (
     <div className="flex flex-col gap-7">
@@ -176,6 +251,31 @@ export default function TeamsPage() {
         <p className="rounded-md bg-success/10 px-3 py-2 text-sm text-success" role="status">
           {actionSuccess}
         </p>
+      ) : null}
+      {teamsStep || anchorStep ? (
+        <Card>
+          <CardContent className="flex flex-wrap items-center gap-3 py-4">
+            <span className="flex size-9 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+              <ListChecks className="size-4" />
+            </span>
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <p className="font-medium text-foreground">Setup coverage</p>
+              {setupSummary ? (
+                <p className="text-sm text-muted-foreground">{setupSummary}</p>
+              ) : null}
+            </div>
+            {teamsStep ? (
+              <Badge tone={teamsStep.ready ? 'success' : 'neutral'}>
+                Teams {formatSetupCount(teamsStep)}
+              </Badge>
+            ) : null}
+            {anchorStep ? (
+              <Badge tone={anchorStep.ready ? 'success' : 'neutral'}>
+                Anchors {formatSetupCount(anchorStep)}
+              </Badge>
+            ) : null}
+          </CardContent>
+        </Card>
       ) : null}
 
       {!stationID ? (
