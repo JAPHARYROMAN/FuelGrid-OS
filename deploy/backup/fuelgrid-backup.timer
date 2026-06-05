@@ -1,0 +1,24 @@
+# =============================================================================
+# FuelGrid OS — nightly Postgres backup (systemd timer)
+# =============================================================================
+# Runs fuelgrid-backup.service every night at 02:30 (server local time), with a
+# randomized delay so multiple droplets don't stampede a shared Spaces bucket.
+# Persistent=true catches up a missed run after the box was powered off.
+#
+# Enable: sudo systemctl enable --now fuelgrid-backup.timer
+# Status: systemctl list-timers fuelgrid-backup.timer
+#
+# Cron equivalent (if you prefer cron over systemd), in the deploy user's
+# crontab (`crontab -e`):
+#   30 2 * * *  DEPLOY_DIR=/opt/fuelgrid BACKUP_DIR=/var/backups/fuelgrid /opt/fuelgrid/pg_backup.sh >> /var/log/fuelgrid-backup.log 2>&1
+# =============================================================================
+[Unit]
+Description=Run FuelGrid OS Postgres backup nightly
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target

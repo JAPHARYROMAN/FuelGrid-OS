@@ -1,0 +1,203 @@
+# =============================================================================
+# FuelGrid OS — PRODUCTION compose stack (DigitalOcean Droplet)
+# =============================================================================
+# A single Droplet runs this whole stack via `docker compose`:
+#
+#   caddy   — the ONLY service publishing host ports (80 + 443). Reverse-proxies
+#             WEB_DOMAIN -> web:3000 and API_DOMAIN -> api:8080, terminating TLS
+#             with automatic Let's Encrypt certs (persisted in caddy_data).
+#   web     — Next.js standalone (GHCR ${WEB_IMAGE}). Same-origin BFF + UI; the
+#             browser only ever talks to WEB_DOMAIN. The web server forwards
+#             SERVER-SIDE to the API via API_ORIGIN=http://api:8080 (internal).
+#   api     — Go API (GHCR ${API_IMAGE}). Reached internally by web (api:8080)
+#             and publicly via Caddy at API_DOMAIN (needed for the M-Pesa Daraja
+#             STK callback + any direct API client). Env from the .env file.
+#   postgres— self-hosted Postgres 16 (matches CI). NOT published to the host.
+#   redis   — self-hosted Redis 7 with appendonly persistence. NOT published.
+#   migrate — ONE-SHOT (profile `migrate`): applies SQL migrations as the table
+#             OWNER (DATABASE_URL) before `up -d`. golang-migrate baked into
+#             ${MIGRATE_IMAGE} (services/api/Dockerfile.migrate).
+#
+# This is SEPARATE from the repo-root docker-compose.yml (local dev) — do not
+# conflate them. Config + secrets come from a `.env` file placed NEXT TO this
+# file on the droplet (copied from .env.production.example). See
+# docs/deployment.md for the go-live runbook.
+#
+# Usage on the droplet (from the directory holding this file + .env + Caddyfile):
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Validate locally:  docker compose -f deploy/docker-compose.prod.yml config
+# =============================================================================
+
+name: fuelgrid-prod
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    # The ONLY ports exposed to the host / public internet. The DO firewall
+    # should allow only 22/80/443 inbound (see docs/deployment.md).
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3 (QUIC)
+    environment:
+      # Caddy reads these {$VAR} placeholders from the .env file (compose passes
+      # them through). The two public hostnames whose certs Caddy auto-obtains.
+      WEB_DOMAIN: ${WEB_DOMAIN:?set WEB_DOMAIN in .env}
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # ACME certs + account keys — MUST persist across deploys
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_started
+      api:
+        condition: service_started
+    networks:
+      - edge
+      - internal
+    healthcheck:
+      # Caddy's admin API on the loopback returns 200 when the server is up.
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/OWNER/REPO-web:REPLACE_ME}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      # The BFF proxy forwards SERVER-SIDE to the API over the private compose
+      # network using the service name — NOT a public URL. (api-origin.ts reads
+      # API_ORIGIN first.)
+      API_ORIGIN: http://api:8080
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-FuelGrid OS}
+      NEXT_PUBLIC_APP_ENV: ${NEXT_PUBLIC_APP_ENV:-production}
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: ${NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE:-0.05}
+    # No host port: Caddy fronts it. Reachable on the internal network as web:3000.
+    expose:
+      - '3000'
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - internal
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/OWNER/REPO-api:REPLACE_ME}
+    restart: unless-stopped
+    # Full runtime config + secrets come from the .env file (DATABASE_URL,
+    # DATABASE_APP_URL, REDIS_URL, AUTH_PASSWORD_PEPPER, API_CORS_ALLOWED_ORIGINS,
+    # MPESA_*, SENTRY_DSN, etc.). See .env.production.example for the full list.
+    env_file:
+      - .env
+    environment:
+      # Hard-set the listener + topology so a malformed .env can't break them.
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: '8080'
+      # Caddy is exactly one trusted proxy hop in front of the API, so trust 1
+      # hop to read the real client IP from X-Forwarded-For (AUTH-09).
+      API_TRUSTED_PROXY_DEPTH: '1'
+    # No host port: web reaches it internally (api:8080); the public API host is
+    # fronted by Caddy (API_DOMAIN -> api:8080) for the M-Pesa callback.
+    expose:
+      - '8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    # No container-level healthcheck: the distroless image ships ONLY /api (no
+    # shell, no wget/curl) and the binary has no self-probe flag, so there is
+    # nothing to exec for a HEALTHCHECK. Readiness is enforced upstream instead —
+    # Caddy retries the api upstream until /readyz is live, and the CD post-deploy
+    # smoke gate fails the rollout unless https://API_DOMAIN/readyz returns
+    # 200 {"status":"ready"} (postgres + redis ok). web/caddy use
+    # `condition: service_started` for ordering only.
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # NOT published to the host — reachable only on the private internal network
+    # as postgres:5432. sslmode=disable is correct over this trusted network.
+    expose:
+      - '5432'
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    # NOT published to the host — reachable only as redis:6379 internally.
+    expose:
+      - '6379'
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  migrate:
+    image: ${MIGRATE_IMAGE:-ghcr.io/OWNER/REPO-migrate:REPLACE_ME}
+    # One-shot: only runs when explicitly invoked (profile gate) and never
+    # restarts. The deploy runs `docker compose run --rm migrate` BEFORE up -d.
+    profiles: ['migrate']
+    restart: 'no'
+    # Apply all pending migrations as the table OWNER. The DATABASE_URL is
+    # interpolated by compose from the .env file (NOT shell-expanded by the
+    # image), so the owner DSN is baked into the argv here. golang-migrate `up`
+    # is idempotent — no pending migrations exits 0.
+    command: ['-path', '/migrations', '-database', '${DATABASE_URL}', 'up']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+
+networks:
+  # Public-facing hop: only Caddy joins this alongside the host port mapping.
+  edge:
+    driver: bridge
+  # Private east-west network for app<->data traffic. Not exposed to the host.
+  internal:
+    driver: bridge
+    internal: false
+
+volumes:
+  pgdata:
+    name: fuelgrid_prod_pgdata
+  redisdata:
+    name: fuelgrid_prod_redisdata
+  caddy_data:
+    name: fuelgrid_prod_caddy_data
+  caddy_config:
+    name: fuelgrid_prod_caddy_config

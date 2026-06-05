@@ -1,13 +1,19 @@
 name: CD
 
-# Continuous Deployment for the FuelGrid OS API (CICD-4 / OPS-5).
+# Continuous Deployment for FuelGrid OS (CICD-4 / OPS-5).
 #
 # This workflow is intentionally a *safe no-op* until the deployment secrets
-# are configured (see docs/deployment.md). The image build + push to GHCR is
+# are configured (see docs/deployment.md). The image builds + pushes to GHCR are
 # always exercised (GHCR auth uses the automatic GITHUB_TOKEN), but the
-# migrate and post-deploy smoke jobs guard on optional secrets — they skip
-# cleanly when those secrets are absent so the pipeline is valid before any
-# real infrastructure exists.
+# SSH-based droplet deploy and the post-deploy smoke jobs guard on optional
+# secrets — they skip cleanly when those secrets are absent so the pipeline is
+# valid before any real infrastructure exists.
+#
+# Target: a single DigitalOcean Droplet running `docker compose` with
+# self-hosted Postgres + Redis behind a Caddy reverse proxy. Migrations run ON
+# THE DROPLET inside the deploy (a dedicated migrate image carries the SQL +
+# golang-migrate) — NOT from this runner, because the self-hosted Postgres is
+# not publicly reachable.
 
 on:
   push:
@@ -107,8 +113,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Web image repo is the lowercased owner/repo with a -web suffix:
-      # ghcr.io/<owner>/<repo>-web. The gated web-rollout step in `deploy`
-      # re-derives this same ref + :sha-<full-sha> tag to roll it out.
+      # ghcr.io/<owner>/<repo>-web. The droplet's .env (WEB_IMAGE) is set by the
+      # deploy job to this same ref + :sha-<full-sha> tag to roll it out.
       - name: Compute image reference
         id: meta
         run: |
@@ -132,7 +138,7 @@ jobs:
 
       # Build context is the repo root (the web image needs the whole pnpm
       # workspace); the Dockerfile lives at apps/web/Dockerfile. Runtime config
-      # (API_ORIGIN) is supplied by Fly env at deploy time, NOT baked here.
+      # (API_ORIGIN) is supplied by the compose `web` service at deploy time.
       - name: Build + push Web image
         uses: docker/build-push-action@v6
         with:
@@ -144,128 +150,149 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  migrate:
-    name: Apply DB migrations (golang-migrate up)
+  build-push-migrate:
+    name: Build + push migrate image to GHCR
     runs-on: ubuntu-latest
-    needs: build-push
     environment: production
+    # Independent of the app builds (no `needs:`) so all three tiers build in
+    # parallel. Carries golang-migrate + the SQL migrations baked in, so the
+    # droplet (which has no repo checkout) can apply the schema as a one-shot.
+    # Same automatic GITHUB_TOKEN GHCR auth — no extra secret.
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
-      # Guard: when DATABASE_URL is unset (no infra yet) this job is a clean
-      # no-op. We cannot use a job-level `if:` on secrets (secrets aren't
-      # allowed in job-level conditionals), so the gate lives in a first step
-      # that exports a flag the rest of the job reads.
-      - name: Check for DATABASE_URL secret
-        id: gate
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          if [ -n "$DATABASE_URL" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "DATABASE_URL is configured — migrations will run."
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::DATABASE_URL secret is not set; skipping migrations (no-op until infra exists)."
-          fi
+      - uses: docker/setup-buildx-action@v3
 
-      - uses: actions/setup-go@v5
-        if: steps.gate.outputs.configured == 'true'
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          go-version-file: go.mod
-          cache: true
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Canonical project invocation: the migrate command wraps golang-migrate
-      # v4 and applies services/api/migrations against $DATABASE_URL. `up` is
-      # idempotent (ErrNoChange -> success), so re-running is safe.
-      - name: Run migrations (up)
-        if: steps.gate.outputs.configured == 'true'
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: go run ./services/api/cmd/migrate up
+      # Migrate image repo is the lowercased owner/repo with a -migrate suffix:
+      # ghcr.io/<owner>/<repo>-migrate. The deploy job sets MIGRATE_IMAGE to this
+      # ref + :sha-<full-sha> and runs `docker compose run --rm migrate`.
+      - name: Compute image reference
+        id: meta
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}-migrate"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "Image repository: $image"
 
-      - name: Confirm migration version
-        if: steps.gate.outputs.configured == 'true'
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: go run ./services/api/cmd/migrate version
+      - name: Docker metadata (tags + labels)
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.meta.outputs.image }}
+          tags: |
+            type=sha,prefix=sha-,format=long
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
+
+      # Build context is the repo root so services/api/migrations is reachable;
+      # the Dockerfile.migrate copies them into a migrate/migrate base image.
+      - name: Build + push migrate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/api/Dockerfile.migrate
+          push: true
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   deploy:
-    name: Roll out image to Fly.io (flyctl deploy)
+    name: Deploy to DigitalOcean droplet (SSH + docker compose)
     runs-on: ubuntu-latest
-    # `migrate` gates the API rollout (schema first). `build-push-web` is added
-    # so the web image is published before the gated web-rollout step's
-    # `docker manifest inspect` check runs — otherwise the rollout could race
-    # the build and skip on a missing manifest.
-    needs: [migrate, build-push-web]
+    # All three images must be published before the droplet pulls them: migrate
+    # for the one-shot, api/web for `up -d`.
+    needs: [build-push, build-push-web, build-push-migrate]
     environment: production
     steps:
-      - uses: actions/checkout@v4
-
-      # Guard on FLY_API_TOKEN exactly like the migrate (DATABASE_URL) and smoke
-      # (DEPLOY_HEALTH_URL) gates: secrets can't be used in a job-level `if:`,
-      # so the gate lives in a first step that exports a flag. When the token is
-      # unset (no Fly runtime provisioned yet) the rollout is a clean no-op so
-      # the pipeline stays lint-valid and green before any infra exists.
-      - name: Check for FLY_API_TOKEN secret
+      # Guard on DEPLOY_SSH_KEY exactly like the smoke (DEPLOY_HEALTH_URL) gate:
+      # secrets can't be used in a job-level `if:`, so the gate lives in a first
+      # step that exports a flag the rest of the job reads. When the SSH key is
+      # unset (no droplet provisioned yet) the deploy is a clean no-op so the
+      # pipeline stays lint-valid and green before any infra exists.
+      - name: Check for DEPLOY_SSH_KEY secret
         id: gate
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
         run: |
-          if [ -n "$FLY_API_TOKEN" ]; then
+          if [ -n "$DEPLOY_SSH_KEY" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "FLY_API_TOKEN is configured — flyctl rollout will run."
+            echo "DEPLOY_SSH_KEY is configured — droplet deploy will run."
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::FLY_API_TOKEN secret is not set; skipping Fly rollout (no-op until the runtime target is provisioned)."
+            echo "::notice::DEPLOY_SSH_KEY secret is not set; skipping droplet deploy (no-op until the droplet is provisioned)."
           fi
 
-      - name: Set up flyctl
+      # SSH into the droplet and run the rollout: log into GHCR, pin the just-
+      # built sha-<sha> image refs into the on-droplet .env (the compose file +
+      # Caddyfile + .env already live there — placed once per the runbook), apply
+      # migrations as a one-shot, then `up -d` and prune dangling images.
+      #
+      # The deploy user (DEPLOY_USER, default `deploy`) owns /opt/fuelgrid and can
+      # run docker compose. GHCR_TOKEN falls back to GITHUB_TOKEN — note a repo
+      # GITHUB_TOKEN is not valid off the runner, so set GHCR_PULL_TOKEN (a PAT or
+      # the droplet's own login) when the package is private; for a public package
+      # `docker compose pull` needs no auth at all.
+      - name: Deploy over SSH (appleboy/ssh-action)
         if: steps.gate.outputs.configured == 'true'
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Fail the job (and the deploy) on any non-zero command.
+          script_stop: true
+          envs: GITHUB_REPOSITORY,GITHUB_SHA,GHCR_ACTOR,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+            cd /opt/fuelgrid
 
-      # Resolve the immutable image just pushed by build-push. We re-derive the
-      # ghcr.io/<owner>/<repo>-api repo (lowercased) and pin the :sha-<full-sha>
-      # tag (build-push always publishes it), so the rollout deploys EXACTLY the
-      # image CI built for this commit — never a moving :latest.
-      - name: Compute image reference
-        id: image
-        if: steps.gate.outputs.configured == 'true'
-        run: |
-          image="ghcr.io/${GITHUB_REPOSITORY,,}-api:sha-${GITHUB_SHA}"
-          echo "ref=$image" >> "$GITHUB_OUTPUT"
-          echo "Deploying image: $image"
+            owner_repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+            api_image="ghcr.io/${owner_repo}-api:sha-${GITHUB_SHA}"
+            web_image="ghcr.io/${owner_repo}-web:sha-${GITHUB_SHA}"
+            migrate_image="ghcr.io/${owner_repo}-migrate:sha-${GITHUB_SHA}"
 
-      # API rollout: image-based (no in-Fly build), pinned to the GHCR sha tag,
-      # using services/api/fly.toml. Runs AFTER migrate (schema first) and
-      # BEFORE smoke (health-assert last). --ha=false keeps the launch footprint
-      # to the configured single machine; drop it once you scale out.
-      - name: Deploy API to Fly
-        if: steps.gate.outputs.configured == 'true'
+            # Authenticate to GHCR if a pull token was provided (private package).
+            if [ -n "${GHCR_TOKEN:-}" ]; then
+              echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
+            fi
+
+            # Pin the immutable image refs for this commit into the on-droplet
+            # .env so `docker compose` interpolates them. Replace any prior lines.
+            sed -i "\#^API_IMAGE=#d;\#^WEB_IMAGE=#d;\#^MIGRATE_IMAGE=#d" .env
+            {
+              echo "API_IMAGE=${api_image}"
+              echo "WEB_IMAGE=${web_image}"
+              echo "MIGRATE_IMAGE=${migrate_image}"
+            } >> .env
+
+            # Pull the freshly-built images.
+            docker compose -f docker-compose.prod.yml pull api web migrate
+
+            # Schema first: apply migrations as the OWNER (one-shot), then roll
+            # out. golang-migrate `up` is idempotent (no pending = exit 0).
+            docker compose -f docker-compose.prod.yml run --rm migrate
+
+            # Roll out the app tiers + Caddy.
+            docker compose -f docker-compose.prod.yml up -d
+
+            # Reclaim disk from superseded image layers.
+            docker image prune -f
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          flyctl deploy \
-            --config services/api/fly.toml \
-            --image "${{ steps.image.outputs.ref }}" \
-            --ha=false
-
-      # Web rollout: gated additionally on a web image existing in GHCR. Until a
-      # web image is published the web app is deployed from source by the
-      # operator (see docs/deployment.md Go-live runbook), so this step is a
-      # documented no-op here and does not fail the pipeline.
-      - name: Deploy Web to Fly (if a web image is published)
-        if: steps.gate.outputs.configured == 'true'
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: |
-          web_image="ghcr.io/${GITHUB_REPOSITORY,,}-web:sha-${GITHUB_SHA}"
-          if docker manifest inspect "$web_image" >/dev/null 2>&1; then
-            echo "Web image found — rolling out $web_image"
-            flyctl deploy --config apps/web/fly.toml --image "$web_image" --ha=false
-          else
-            echo "::notice::No web image at $web_image; skipping web rollout (deploy apps/web from source per the runbook)."
-          fi
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          GHCR_ACTOR: ${{ github.actor }}
+          # Optional: a PAT with read:packages if the GHCR package is private.
+          # Leave unset for a public package (compose pull needs no auth).
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
 
   smoke:
     name: Post-deploy smoke (/readyz must be 200)
@@ -273,8 +300,8 @@ jobs:
     needs: deploy
     environment: production
     steps:
-      # Guard on DEPLOY_HEALTH_URL the same way as the migrate job: skip
-      # cleanly when the health URL secret is unset.
+      # Guard on DEPLOY_HEALTH_URL the same way as the deploy gate: skip cleanly
+      # when the health URL secret is unset.
       - name: Check for DEPLOY_HEALTH_URL secret
         id: gate
         env:

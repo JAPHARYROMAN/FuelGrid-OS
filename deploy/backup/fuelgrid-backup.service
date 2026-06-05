@@ -1,0 +1,28 @@
+# =============================================================================
+# FuelGrid OS — nightly Postgres backup (systemd service)
+# =============================================================================
+# Oneshot unit invoked by fuelgrid-backup.timer. Install on the droplet:
+#
+#   sudo cp deploy/backup/pg_backup.sh /opt/fuelgrid/pg_backup.sh
+#   sudo chmod +x /opt/fuelgrid/pg_backup.sh
+#   sudo cp deploy/backup/fuelgrid-backup.service /etc/systemd/system/
+#   sudo cp deploy/backup/fuelgrid-backup.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now fuelgrid-backup.timer
+#
+# Adjust User= / DEPLOY_DIR to match your install (the deploy user must be able
+# to run `docker compose`). Inspect runs with: journalctl -u fuelgrid-backup.
+# =============================================================================
+[Unit]
+Description=FuelGrid OS nightly Postgres logical backup
+Wants=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Environment=DEPLOY_DIR=/opt/fuelgrid
+Environment=BACKUP_DIR=/var/backups/fuelgrid
+ExecStart=/opt/fuelgrid/pg_backup.sh
+# Don't hang a timer forever if Postgres is wedged.
+TimeoutStartSec=1800
