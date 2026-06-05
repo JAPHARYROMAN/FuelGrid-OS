@@ -26,21 +26,28 @@ type Nozzle struct {
 	Number    int
 	// DefaultPrice is an exact decimal STRING (default_price numeric(14,2) read
 	// ::text); never a Go float64.
-	DefaultPrice       string
-	MeterDecimalPlaces int
-	Status             string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	DefaultPrice           string
+	MeterDecimalPlaces     int
+	InitialMeterReading    *string
+	InitialMeterRecordedAt *time.Time
+	InitialMeterRecordedBy *uuid.UUID
+	InitialMeterNote       *string
+	Status                 string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 type CreateInput struct {
-	StationID          uuid.UUID
-	PumpID             uuid.UUID
-	TankID             uuid.UUID
-	ProductID          uuid.UUID
-	Number             int
-	DefaultPrice       string // numeric(14,2), bound $N::numeric
-	MeterDecimalPlaces int
+	StationID              uuid.UUID
+	PumpID                 uuid.UUID
+	TankID                 uuid.UUID
+	ProductID              uuid.UUID
+	Number                 int
+	DefaultPrice           string // numeric(14,2), bound $N::numeric
+	MeterDecimalPlaces     int
+	InitialMeterReading    *string // numeric(14,4), bound $N::numeric
+	InitialMeterRecordedBy *uuid.UUID
+	InitialMeterNote       *string
 }
 
 // UpdateInput patches a nozzle. TankID/StationID/ProductID move together —
@@ -62,13 +69,18 @@ func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const columns = `
     id, tenant_id, station_id, pump_id, tank_id, product_id, number,
-    default_price::text, meter_decimal_places, status, created_at, updated_at
+    default_price::text, meter_decimal_places,
+    trim_scale(initial_meter_reading)::text, initial_meter_recorded_at,
+    initial_meter_recorded_by, initial_meter_note,
+    status, created_at, updated_at
 `
 
 func scan(row pgx.Row, n *Nozzle) error {
 	return row.Scan(
 		&n.ID, &n.TenantID, &n.StationID, &n.PumpID, &n.TankID, &n.ProductID,
-		&n.Number, &n.DefaultPrice, &n.MeterDecimalPlaces, &n.Status,
+		&n.Number, &n.DefaultPrice, &n.MeterDecimalPlaces,
+		&n.InitialMeterReading, &n.InitialMeterRecordedAt,
+		&n.InitialMeterRecordedBy, &n.InitialMeterNote, &n.Status,
 		&n.CreatedAt, &n.UpdatedAt,
 	)
 }
@@ -148,11 +160,14 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cre
 	if err := scan(tx.QueryRow(ctx, `
 		INSERT INTO nozzles
 		    (tenant_id, station_id, pump_id, tank_id, product_id, number,
-		     default_price, meter_decimal_places)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8)
+		     default_price, meter_decimal_places, initial_meter_reading,
+		     initial_meter_recorded_at, initial_meter_recorded_by, initial_meter_note)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8, $9::numeric,
+		        CASE WHEN $9::numeric IS NULL THEN NULL ELSE now() END, $10, $11)
 		RETURNING `+columns,
 		tenantID, in.StationID, in.PumpID, in.TankID, in.ProductID, in.Number,
-		in.DefaultPrice, in.MeterDecimalPlaces,
+		in.DefaultPrice, in.MeterDecimalPlaces, in.InitialMeterReading,
+		in.InitialMeterRecordedBy, in.InitialMeterNote,
 	), &n); err != nil {
 		return nil, err
 	}
@@ -175,6 +190,27 @@ func (r *Repo) Update(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in
 		id, tenantID,
 		in.TankID, in.StationID, in.ProductID, in.Number,
 		in.DefaultPrice, in.MeterDecimalPlaces, in.Status,
+	), &n)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+func (r *Repo) SetInitialMeter(ctx context.Context, tx pgx.Tx, tenantID, id, recordedBy uuid.UUID, reading string, note *string) (*Nozzle, error) {
+	var n Nozzle
+	err := scan(tx.QueryRow(ctx, `
+		UPDATE nozzles
+		SET initial_meter_reading    = $3::numeric,
+		    initial_meter_recorded_at = now(),
+		    initial_meter_recorded_by = $4,
+		    initial_meter_note        = $5
+		WHERE id = $1 AND tenant_id = $2 AND status <> 'deleted'
+		RETURNING `+columns,
+		id, tenantID, reading, recordedBy, note,
 	), &n)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

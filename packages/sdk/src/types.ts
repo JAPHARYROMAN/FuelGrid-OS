@@ -514,6 +514,11 @@ export interface Nozzle {
   /** Default price is an exact decimal STRING (numeric(14,2) -> text). */
   default_price: string;
   meter_decimal_places: number;
+  /** Current nozzle-level baseline meter reading, exact decimal string. */
+  initial_meter_reading?: string;
+  initial_meter_recorded_at?: string;
+  initial_meter_recorded_by?: string;
+  initial_meter_note?: string;
   status: string;
 }
 
@@ -901,6 +906,7 @@ export interface MyShiftNozzle {
   tank_code: string;
   default_price: number;
   meter_decimal_places: number;
+  initial_meter_reading?: string;
   opening_reading?: number;
   closing_reading?: number;
 }

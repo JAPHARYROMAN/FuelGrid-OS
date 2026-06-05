@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import type { Nozzle, Product, Pump, Station, Tank } from '@fuelgrid/sdk';
 
 // usePermission backs PermissionGate; mocking it flips pumps.manage
 // deterministically.
-const usePermission = vi.fn<(code: string) => boolean | null>();
+const usePermission = vi.fn<(code: string, opts?: unknown) => boolean | null>();
 vi.mock('@/hooks/use-permissions', () => ({
-  usePermission: (code: string) => usePermission(code),
+  usePermission: (code: string, opts?: unknown) => usePermission(code, opts),
 }));
 
 vi.mock('next/link', () => ({
@@ -22,6 +23,11 @@ const listProducts = vi.fn();
 const listTanks = vi.fn();
 const listPumps = vi.fn();
 const listNozzles = vi.fn();
+const createPump = vi.fn();
+const deletePump = vi.fn();
+const createNozzle = vi.fn();
+const deleteNozzle = vi.fn();
+const setNozzleInitialMeter = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     listStations: (...a: unknown[]) => listStations(...a),
@@ -29,10 +35,11 @@ vi.mock('@/lib/api', () => ({
     listTanks: (...a: unknown[]) => listTanks(...a),
     listPumps: (...a: unknown[]) => listPumps(...a),
     listNozzles: (...a: unknown[]) => listNozzles(...a),
-    createPump: vi.fn(),
-    deletePump: vi.fn(),
-    createNozzle: vi.fn(),
-    deleteNozzle: vi.fn(),
+    createPump: (...a: unknown[]) => createPump(...a),
+    deletePump: (...a: unknown[]) => deletePump(...a),
+    createNozzle: (...a: unknown[]) => createNozzle(...a),
+    deleteNozzle: (...a: unknown[]) => deleteNozzle(...a),
+    setNozzleInitialMeter: (...a: unknown[]) => setNozzleInitialMeter(...a),
   },
 }));
 
@@ -97,6 +104,7 @@ const nozzle: Nozzle = {
   number: 1,
   default_price: '1.50',
   meter_decimal_places: 2,
+  initial_meter_reading: '500.5',
   status: 'active',
 };
 
@@ -118,6 +126,11 @@ beforeEach(() => {
   listTanks.mockResolvedValue({ items: [tank], count: 1 });
   listPumps.mockResolvedValue({ items: [pump], count: 1 });
   listNozzles.mockResolvedValue({ items: [nozzle], count: 1 });
+  createPump.mockResolvedValue(pump);
+  createNozzle.mockResolvedValue({ ...nozzle, id: 'nz-2', number: 2 });
+  setNozzleInitialMeter.mockResolvedValue({ ...nozzle, initial_meter_reading: '501' });
+  deletePump.mockResolvedValue(undefined);
+  deleteNozzle.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -159,6 +172,50 @@ describe('PumpsPage', () => {
     await screen.findByText('Pump 1');
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /new pump/i })).not.toBeDisabled(),
+    );
+  });
+
+  it('shows the nozzle initial meter and can adjust it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Pump 1/i }));
+
+    expect(await screen.findByText(/Initial 500.5/i)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Adjust meter/i }));
+    await user.clear(screen.getByLabelText(/Meter reading/i));
+    await user.type(screen.getByLabelText(/Meter reading/i), '501.00');
+    await user.type(screen.getByLabelText('Note'), 'meter serviced');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(setNozzleInitialMeter).toHaveBeenCalledWith('nz-1', {
+        reading: '501',
+        note: 'meter serviced',
+      }),
+    );
+  });
+
+  it('sends an initial meter reading when creating a nozzle', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Pump 1');
+    await user.click(screen.getByRole('button', { name: 'Nozzle' }));
+    await user.selectOptions(screen.getByLabelText('Tank'), 'tk-1');
+    await user.type(screen.getByLabelText(/Initial meter$/i), '1000.25');
+    await user.type(screen.getByLabelText(/Initial meter note/i), 'physical install');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(createNozzle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          pump_id: 'pm-1',
+          tank_id: 'tk-1',
+          initial_meter_reading: '1000.25',
+          initial_meter_note: 'physical install',
+        }),
+      ),
     );
   });
 });

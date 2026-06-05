@@ -1333,6 +1333,8 @@ export class Client {
       number: number;
       default_price?: string;
       meter_decimal_places?: number;
+      initial_meter_reading?: string;
+      initial_meter_note?: string;
     },
     signal?: AbortSignal,
   ): Promise<Nozzle> {
@@ -1348,6 +1350,18 @@ export class Client {
   ): Promise<Nozzle> {
     return this.request<Nozzle>(`/api/v1/nozzles/${encodeURIComponent(id)}`, {
       method: 'PATCH',
+      body: req,
+      signal,
+    });
+  }
+
+  setNozzleInitialMeter(
+    id: string,
+    req: { reading: string; note?: string },
+    signal?: AbortSignal,
+  ): Promise<Nozzle> {
+    return this.request<Nozzle>(`/api/v1/nozzles/${encodeURIComponent(id)}/initial-meter`, {
+      method: 'POST',
       body: req,
       signal,
     });

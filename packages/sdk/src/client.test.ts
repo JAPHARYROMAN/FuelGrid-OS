@@ -254,6 +254,23 @@ describe('Client setup and tank inventory methods', () => {
   });
 });
 
+describe('Client nozzle meter methods', () => {
+  it('POSTs nozzle initial-meter adjustments to the documented endpoint', async () => {
+    const f = jsonFetch(200, { id: 'nz-1', initial_meter_reading: '501' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+
+    await client.setNozzleInitialMeter('nz-1', {
+      reading: '501.00',
+      note: 'meter serviced',
+    });
+
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/nozzles/nz-1/initial-meter');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ reading: '501.00', note: 'meter serviced' }));
+  });
+});
+
 describe('Client.request transport errors (SDK-03)', () => {
   it('wraps a network failure as an SdkError with status 0, not a raw TypeError', async () => {
     const f = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
