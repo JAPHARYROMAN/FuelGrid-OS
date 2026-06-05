@@ -10,6 +10,7 @@ const listProducts = vi.fn();
 const listTanks = vi.fn();
 const listTankLedger = vi.fn();
 const listOpeningStockRequests = vi.fn();
+const me = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -18,6 +19,7 @@ vi.mock('@/lib/api', () => ({
     listTanks: (...args: unknown[]) => listTanks(...args),
     listTankLedger: (...args: unknown[]) => listTankLedger(...args),
     listOpeningStockRequests: (...args: unknown[]) => listOpeningStockRequests(...args),
+    me: (...args: unknown[]) => me(...args),
     requestOpeningStock: vi.fn(),
     approveOpeningStock: vi.fn(),
     rejectOpeningStock: vi.fn(),
@@ -93,6 +95,13 @@ describe('OpeningStockPage', () => {
     listTanks.mockReset();
     listTankLedger.mockReset();
     listOpeningStockRequests.mockReset();
+    me.mockReset();
+    me.mockResolvedValue({
+      user_id: 'current-user',
+      tenant_id: 't',
+      session_id: 's',
+      mfa_satisfied: true,
+    });
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -147,6 +156,27 @@ describe('OpeningStockPage', () => {
     renderPage();
 
     await screen.findByText('Tank A');
+    expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^reject$/i })).toBeDisabled();
+  });
+
+  it('disables approval when the current user submitted the draft', async () => {
+    seedStationAndProducts();
+    me.mockResolvedValue({
+      user_id: 'u-1',
+      tenant_id: 't',
+      session_id: 's',
+      mfa_satisfied: true,
+    });
+    listOpeningStockRequests.mockResolvedValue({
+      items: [draftRequest],
+      count: 1,
+      has_more: false,
+    });
+    renderPage();
+
+    await screen.findByText('Tank A');
+    expect(screen.getByText('Submitted by you; another user must approve.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^approve$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^reject$/i })).toBeDisabled();
   });

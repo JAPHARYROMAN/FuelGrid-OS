@@ -81,13 +81,6 @@ export default function OpeningStockPage() {
     action: 'approve' | 'reject';
   } | null>(null);
 
-  // The approve/reject controls require stock.approve_adjustment at the row's
-  // station; entering a draft requires stock.adjust. Both are surfaced as hints.
-  const canEnter = usePermission('stock.adjust', { stationID: stationID || undefined });
-  const canApprove = usePermission('stock.approve_adjustment', {
-    stationID: stationID || undefined,
-  });
-
   const stations = useQuery({
     queryKey: ['stations'],
     queryFn: ({ signal }) => api.listStations({}, signal),
@@ -98,6 +91,17 @@ export default function OpeningStockPage() {
   });
 
   const effectiveStation = stationID || stations.data?.items[0]?.id || '';
+  // The approve/reject controls require stock.approve_adjustment at the row's
+  // station; entering a draft requires stock.adjust. Use the effective station
+  // shown in the dropdown, including the initial first station selection.
+  const canEnter = usePermission('stock.adjust', { stationID: effectiveStation || undefined });
+  const canApprove = usePermission('stock.approve_adjustment', {
+    stationID: effectiveStation || undefined,
+  });
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: ({ signal }) => api.me(signal),
+  });
 
   const rows = useQuery({
     queryKey: ['opening-stock', effectiveStation],
@@ -257,6 +261,9 @@ export default function OpeningStockPage() {
                   const product = productLookup.get(row.tank.product_id);
                   const badge = stateBadge(row.state);
                   const litres = row.request?.litres ?? row.opening?.litres;
+                  const requestedByMe =
+                    row.request?.requested_by != null &&
+                    row.request.requested_by === me.data?.user_id;
                   return (
                     <TableRow key={row.tank.id}>
                       <TableCell>
@@ -284,9 +291,11 @@ export default function OpeningStockPage() {
                         <Badge tone={badge.tone}>{badge.label}</Badge>
                       </TableCell>
                       <TableCell className="min-w-52 text-sm text-muted-foreground">
-                        {row.state === 'rejected' && row.request?.decision_note
-                          ? `Rejected: ${row.request.decision_note}`
-                          : (row.request?.notes ?? row.opening?.notes ?? '—')}
+                        {row.state === 'draft' && requestedByMe
+                          ? 'Submitted by you; another user must approve.'
+                          : row.state === 'rejected' && row.request?.decision_note
+                            ? `Rejected: ${row.request.decision_note}`
+                            : (row.request?.notes ?? row.opening?.notes ?? '—')}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-2">
@@ -299,6 +308,12 @@ export default function OpeningStockPage() {
                                 <Button
                                   size="sm"
                                   variant="secondary"
+                                  disabled={requestedByMe}
+                                  title={
+                                    requestedByMe
+                                      ? 'Another user must approve a request you submitted'
+                                      : undefined
+                                  }
                                   onClick={() =>
                                     setDecideFor({ request: row.request!, action: 'approve' })
                                   }
@@ -313,6 +328,12 @@ export default function OpeningStockPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
+                                  disabled={requestedByMe}
+                                  title={
+                                    requestedByMe
+                                      ? 'Another user must reject a request you submitted'
+                                      : undefined
+                                  }
                                   onClick={() =>
                                     setDecideFor({ request: row.request!, action: 'reject' })
                                   }
@@ -373,6 +394,7 @@ export default function OpeningStockPage() {
           if (!open) setDecideFor(null);
         }}
         canApprove={canApprove === true}
+        currentUserID={me.data?.user_id}
         onSaved={() => {
           setDecideFor(null);
           invalidate();
@@ -491,16 +513,20 @@ function DecideDialog({
   decision,
   onOpenChange,
   canApprove,
+  currentUserID,
   onSaved,
 }: {
   decision: { request: OpeningStockRequest; action: 'approve' | 'reject' } | null;
   onOpenChange: (open: boolean) => void;
   canApprove: boolean;
+  currentUserID?: string;
   onSaved: () => void;
 }) {
   const [note, setNote] = React.useState('');
   const open = decision !== null;
   const isReject = decision?.action === 'reject';
+  const requestedByMe =
+    decision?.request.requested_by != null && decision.request.requested_by === currentUserID;
 
   React.useEffect(() => {
     if (open) setNote('');
@@ -526,9 +552,11 @@ function DecideDialog({
         <DialogHeader>
           <DialogTitle>{isReject ? 'Reject opening stock' : 'Approve opening stock'}</DialogTitle>
           <DialogDescription>
-            {isReject
-              ? 'Record a reason; the tank can then have a corrected figure re-entered.'
-              : 'Approving posts the genesis opening movement and locks the request.'}
+            {requestedByMe
+              ? 'Another user must approve or reject a request you submitted.'
+              : isReject
+                ? 'Record a reason; the tank can then have a corrected figure re-entered.'
+                : 'Approving posts the genesis opening movement and locks the request.'}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -555,7 +583,9 @@ function DecideDialog({
             <Button
               type="submit"
               variant={isReject ? 'secondary' : 'primary'}
-              disabled={!canApprove || decide.isPending || (isReject && !note.trim())}
+              disabled={
+                requestedByMe || !canApprove || decide.isPending || (isReject && !note.trim())
+              }
             >
               {decide.isPending ? 'Saving…' : isReject ? 'Reject' : 'Approve & lock'}
             </Button>
