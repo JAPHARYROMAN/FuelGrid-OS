@@ -17,7 +17,7 @@ deploy/Caddyfile                 # reverse proxy: WEB_DOMAIN -> web, API_DOMAIN 
 deploy/backup/                   # nightly pg_dump + systemd timer + restore drill
 .env.production.example          # full prod config + secret inventory (copy to .env on the droplet)
 services/api/Dockerfile.migrate  # golang-migrate + the SQL migrations baked in (the migrate image)
-.github/workflows/deploy.yml     # gated CD: build+push 3 GHCR images, SSH deploy, smoke gate
+.github/workflows/deploy.yml     # CD: build+push 3 GHCR images, self-hosted droplet deploy, smoke gate
 ```
 
 ### Why a Droplet + compose
@@ -91,10 +91,12 @@ It runs on push to `main` and on `v*` tags, single-flight per ref
 (`concurrency: deploy-<ref>`, `cancel-in-progress: false` so a migration is
 never interrupted mid-flight).
 
-It is intentionally a **safe no-op until the deployment secrets are configured**:
-the three image build/push jobs always run (GHCR auth via the automatic
-`GITHUB_TOKEN`), while the SSH deploy and smoke jobs skip cleanly when their
-secrets are absent.
+The three image build/push jobs always run on GitHub-hosted runners (GHCR auth
+via the automatic `GITHUB_TOKEN`). The deploy job runs on a dedicated
+self-hosted runner installed on the production droplet with the label
+`fuelgrid-prod`; that runner polls GitHub over outbound HTTPS, so SSH can remain
+locked down to operator IPs. The smoke job still runs from GitHub-hosted infra
+and skips cleanly when `DEPLOY_HEALTH_URL` is absent.
 
 ### Jobs
 
@@ -109,15 +111,15 @@ secrets are absent.
    only), and `<tag>` on `v*` tags. GHCR auth is the automatic `GITHUB_TOKEN` —
    no manually-created registry secret needed.
 
-4. **deploy** — *gated on `DEPLOY_SSH_KEY`.* SSHes into the droplet
-   (`appleboy/ssh-action`, pinned) as `DEPLOY_USER` (default `deploy`) on
-   `DEPLOY_HOST` and, from `/opt/fuelgrid`, runs:
+4. **deploy** — runs on the production droplet's self-hosted runner
+   (`runs-on: [self-hosted, Linux, X64, fuelgrid-prod]`) as the `deploy` user
+   and, from `/opt/fuelgrid`, runs:
    - optional `docker login ghcr.io` (only if `GHCR_PULL_TOKEN` is set — needed
      only for a private package),
    - pins `API_IMAGE` / `WEB_IMAGE` / `MIGRATE_IMAGE` = `…:sha-<sha>` into the
      on-droplet `.env`,
    - `docker compose -f docker-compose.prod.yml pull api web migrate`,
-   - `docker compose -f docker-compose.prod.yml run --rm migrate` (schema first),
+   - `docker compose -f docker-compose.prod.yml run --rm -T migrate` (schema first),
    - `docker compose -f docker-compose.prod.yml up -d`,
    - `docker image prune -f`.
 
@@ -130,38 +132,39 @@ apply when configured.
 
 ### Gating pattern (safe no-op)
 
-Secrets can't be used in a job-level `if:`, so each guarded job's first step
-checks the secret and exports `configured=true|false`; every real step is
-`if: steps.gate.outputs.configured == 'true'` and emits a `::notice::` + skips
-when the secret is absent. Until `DEPLOY_SSH_KEY` exists the pipeline still
-builds + pushes all three images but does not touch the droplet; until
-`DEPLOY_HEALTH_URL` exists the smoke gate no-ops.
+Only the smoke job is secret-gated now. Secrets can't be used in a job-level
+`if:`, so its first step checks `DEPLOY_HEALTH_URL` and exports
+`configured=true|false`; the probe step emits a `::notice::` + skips when the
+secret is absent.
 
 ### Required secrets / configuration
 
 | Name | Where | Purpose | Behavior if unset |
 |---|---|---|---|
 | `GITHUB_TOKEN` | automatic | Push the three images to GHCR | Always present |
-| `DEPLOY_SSH_KEY` | repo/environment secret | Private SSH key for the droplet deploy user | deploy job no-ops |
-| `DEPLOY_HOST` | repo/environment secret | Droplet public IP / hostname | (used only by the gated deploy) |
-| `DEPLOY_USER` | repo/environment secret | Deploy user (default `deploy`) | falls back to `deploy` |
 | `DEPLOY_HEALTH_URL` | repo/environment secret | `https://<API_DOMAIN>/readyz` for the smoke gate | smoke gate no-ops |
 | `GHCR_PULL_TOKEN` | repo/environment secret (optional) | PAT w/ `read:packages` if the GHCR package is private | compose pull runs unauthenticated (public package) |
+
+Infrastructure requirement: register one repo self-hosted runner on the droplet,
+running as `deploy`, with labels `self-hosted`, `Linux`, `X64`, and
+`fuelgrid-prod`. The runner service must be enabled and the `deploy` user must
+belong to the `docker` group.
 
 ### Deploy flow
 
 ```
 push to main / v* tag
   → build-push, build-push-web, build-push-migrate  (3 images → GHCR :sha-…, :latest | :<tag>)
-  → deploy   (SSH to droplet: pull → migrate one-shot → up -d → prune; gated on DEPLOY_SSH_KEY)
+  → deploy   (droplet self-hosted runner: pull → migrate one-shot → up -d → prune)
   → smoke    (curl /readyz @ DEPLOY_HEALTH_URL must be 200; gated on DEPLOY_HEALTH_URL)
 ```
 
 ## Database migrations on deploy
 
-Migrations run **on the droplet inside the deploy**, NOT from the GitHub runner
-(the self-hosted Postgres is not publicly reachable). The `build-push-migrate`
-job publishes a dedicated migrate image — `migrate/migrate` with the
+Migrations run **on the droplet inside the deploy**, not from a GitHub-hosted
+runner (the self-hosted Postgres is not publicly reachable). The
+`build-push-migrate` job publishes a dedicated migrate image — `migrate/migrate`
+with the
 `services/api/migrations` directory baked in (see
 [services/api/Dockerfile.migrate](../services/api/Dockerfile.migrate)). The
 compose `migrate` service (profile `migrate`, `restart: "no"`) runs it as a
@@ -225,13 +228,14 @@ every `<...>` placeholder with your values; never commit a populated `.env`.
 - [ ] `/readyz` returns `200 {"status":"ready"}` (postgres + redis ok) and a login smoke passes.
 - [ ] Nightly backup timer active (`systemctl list-timers fuelgrid-backup.timer`).
 - [ ] GHCR pull works on the droplet (`docker compose pull` succeeds).
-- [ ] GitHub Actions CD secrets set: `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_HEALTH_URL`.
+- [ ] GitHub Actions self-hosted runner is online with label `fuelgrid-prod`.
+- [ ] GitHub Actions CD smoke secret set: `DEPLOY_HEALTH_URL`.
 
 ### (a) Create the Droplet
 
 - Create an Ubuntu LTS (24.04) Droplet. A **2 vCPU / 4 GB** Droplet is a sane
   starting size for API + web + Postgres + Redis + Caddy on one box; scale up
-  later. Add your **deploy SSH public key** at creation.
+  later. Add your **operator SSH public key** at creation.
 - Create a DO **Cloud Firewall** and attach it: allow inbound **TCP 22** (from
   your admin IPs only), **TCP 80**, **TCP 443** (and **UDP 443** for HTTP/3);
   deny everything else inbound.
@@ -252,7 +256,7 @@ adduser --disabled-password --gecos '' deploy
 usermod -aG docker deploy
 mkdir -p /opt/fuelgrid /var/backups/fuelgrid
 chown -R deploy:deploy /opt/fuelgrid /var/backups/fuelgrid
-# Authorize the CD deploy key for the deploy user:
+# Authorize your operator key for the deploy user:
 mkdir -p /home/deploy/.ssh && cp ~/.ssh/authorized_keys /home/deploy/.ssh/ \
   && chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
 ```
@@ -315,22 +319,35 @@ curl -i -X POST https://<WEB_DOMAIN>/api/bff/auth/login \
   -d '{"email":"<user>","password":"<pw>"}'
 ```
 
-### (h) Configure GitHub Actions secrets for CD
+### (h) Register the GitHub Actions deploy runner
 
-Under **Settings → Secrets and variables → Actions** (or the `production`
-Environment):
+Create a repository self-hosted runner from **Settings → Actions → Runners**.
+Install it on the droplet as the `deploy` user, add the label `fuelgrid-prod`,
+and install it as a systemd service. The resulting runner must show as online
+with labels `self-hosted`, `Linux`, `X64`, and `fuelgrid-prod`.
+
+The runner service keeps an outbound connection to GitHub; no inbound GitHub SSH
+access is needed. Keep firewall port 22 restricted to operator IPs.
+
+Verify on the droplet:
+
+```sh
+systemctl is-active actions.runner.*.service
+sudo -u deploy docker ps
+```
+
+Then set the smoke secret under **Settings → Secrets and variables → Actions**
+(or the `production` Environment):
 
 ```
-DEPLOY_SSH_KEY     = <private key whose public half is in deploy's authorized_keys>
-DEPLOY_HOST        = <droplet public IP / hostname>
-DEPLOY_USER        = deploy
 DEPLOY_HEALTH_URL  = https://<API_DOMAIN>/readyz
 # Optional, only if the GHCR package is private:
 GHCR_PULL_TOKEN    = <PAT with read:packages>
 ```
 
-Until `DEPLOY_SSH_KEY` exists the CD pipeline still builds + pushes all three
-images but no-ops the deploy + smoke jobs.
+Until the runner is online, the deploy job will wait for a matching runner. Until
+`DEPLOY_HEALTH_URL` exists, the CD pipeline still builds, deploys, and skips only
+the post-deploy smoke gate.
 
 ### (i) Enable nightly backups
 

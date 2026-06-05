@@ -2,12 +2,12 @@ name: CD
 
 # Continuous Deployment for FuelGrid OS (CICD-4 / OPS-5).
 #
-# This workflow is intentionally a *safe no-op* until the deployment secrets
-# are configured (see docs/deployment.md). The image builds + pushes to GHCR are
-# always exercised (GHCR auth uses the automatic GITHUB_TOKEN), but the
-# SSH-based droplet deploy and the post-deploy smoke jobs guard on optional
-# secrets — they skip cleanly when those secrets are absent so the pipeline is
-# valid before any real infrastructure exists.
+# The image builds + pushes to GHCR are always exercised (GHCR auth uses the
+# automatic GITHUB_TOKEN). The droplet deploy runs on a dedicated self-hosted
+# runner installed on the production droplet. The runner polls GitHub over
+# outbound HTTPS, so port 22 can stay locked down to operator IPs instead of
+# being opened to GitHub-hosted runner address ranges. The post-deploy smoke job
+# still runs from GitHub-hosted infra and guards on DEPLOY_HEALTH_URL.
 #
 # Target: a single DigitalOcean Droplet running `docker compose` with
 # self-hosted Postgres + Redis behind a Caddy reverse proxy. Migrations run ON
@@ -206,86 +206,54 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: Deploy to DigitalOcean droplet (SSH + docker compose)
-    runs-on: ubuntu-latest
+    name: Deploy on DigitalOcean droplet (self-hosted runner)
+    runs-on: [self-hosted, Linux, X64, fuelgrid-prod]
     # All three images must be published before the droplet pulls them: migrate
     # for the one-shot, api/web for `up -d`.
     needs: [build-push, build-push-web, build-push-migrate]
     environment: production
+    timeout-minutes: 15
     steps:
-      # Guard on DEPLOY_SSH_KEY exactly like the smoke (DEPLOY_HEALTH_URL) gate:
-      # secrets can't be used in a job-level `if:`, so the gate lives in a first
-      # step that exports a flag the rest of the job reads. When the SSH key is
-      # unset (no droplet provisioned yet) the deploy is a clean no-op so the
-      # pipeline stays lint-valid and green before any infra exists.
-      - name: Check for DEPLOY_SSH_KEY secret
-        id: gate
-        env:
-          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      # Run on the droplet itself. The runner user is `deploy`, owns
+      # /opt/fuelgrid, and is in the docker group. The compose file, Caddyfile,
+      # and production .env already live on the droplet from the runbook.
+      - name: Deploy local docker compose stack
         run: |
-          if [ -n "$DEPLOY_SSH_KEY" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-            echo "DEPLOY_SSH_KEY is configured — droplet deploy will run."
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::DEPLOY_SSH_KEY secret is not set; skipping droplet deploy (no-op until the droplet is provisioned)."
+          set -euo pipefail
+          cd /opt/fuelgrid
+
+          owner_repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          api_image="ghcr.io/${owner_repo}-api:sha-${GITHUB_SHA}"
+          web_image="ghcr.io/${owner_repo}-web:sha-${GITHUB_SHA}"
+          migrate_image="ghcr.io/${owner_repo}-migrate:sha-${GITHUB_SHA}"
+
+          # Authenticate to GHCR if a pull token was provided (private package).
+          if [ -n "${GHCR_TOKEN:-}" ]; then
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
           fi
 
-      # SSH into the droplet and run the rollout: log into GHCR, pin the just-
-      # built sha-<sha> image refs into the on-droplet .env (the compose file +
-      # Caddyfile + .env already live there — placed once per the runbook), apply
-      # migrations as a one-shot, then `up -d` and prune dangling images.
-      #
-      # The deploy user (DEPLOY_USER, default `deploy`) owns /opt/fuelgrid and can
-      # run docker compose. GHCR_TOKEN falls back to GITHUB_TOKEN — note a repo
-      # GITHUB_TOKEN is not valid off the runner, so set GHCR_PULL_TOKEN (a PAT or
-      # the droplet's own login) when the package is private; for a public package
-      # `docker compose pull` needs no auth at all.
-      - name: Deploy over SSH (appleboy/ssh-action)
-        if: steps.gate.outputs.configured == 'true'
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER || 'deploy' }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          # Fail the job (and the deploy) on any non-zero command.
-          script_stop: true
-          envs: GITHUB_REPOSITORY,GITHUB_SHA,GHCR_ACTOR,GHCR_TOKEN
-          script: |
-            set -euo pipefail
-            cd /opt/fuelgrid
+          # Pin the immutable image refs for this commit into the on-droplet
+          # .env so `docker compose` interpolates them. Replace any prior lines.
+          sed -i "\#^API_IMAGE=#d;\#^WEB_IMAGE=#d;\#^MIGRATE_IMAGE=#d" .env
+          {
+            echo "API_IMAGE=${api_image}"
+            echo "WEB_IMAGE=${web_image}"
+            echo "MIGRATE_IMAGE=${migrate_image}"
+          } >> .env
 
-            owner_repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
-            api_image="ghcr.io/${owner_repo}-api:sha-${GITHUB_SHA}"
-            web_image="ghcr.io/${owner_repo}-web:sha-${GITHUB_SHA}"
-            migrate_image="ghcr.io/${owner_repo}-migrate:sha-${GITHUB_SHA}"
+          # Pull the freshly-built images.
+          docker compose -f docker-compose.prod.yml pull api web migrate
 
-            # Authenticate to GHCR if a pull token was provided (private package).
-            if [ -n "${GHCR_TOKEN:-}" ]; then
-              echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_ACTOR}" --password-stdin
-            fi
+          # Schema first: apply migrations as the OWNER (one-shot), then roll
+          # out. golang-migrate `up` is idempotent (no pending = exit 0).
+          docker compose -f docker-compose.prod.yml run --rm -T migrate
 
-            # Pin the immutable image refs for this commit into the on-droplet
-            # .env so `docker compose` interpolates them. Replace any prior lines.
-            sed -i "\#^API_IMAGE=#d;\#^WEB_IMAGE=#d;\#^MIGRATE_IMAGE=#d" .env
-            {
-              echo "API_IMAGE=${api_image}"
-              echo "WEB_IMAGE=${web_image}"
-              echo "MIGRATE_IMAGE=${migrate_image}"
-            } >> .env
+          # Roll out the app tiers + Caddy.
+          docker compose -f docker-compose.prod.yml up -d
 
-            # Pull the freshly-built images.
-            docker compose -f docker-compose.prod.yml pull api web migrate
-
-            # Schema first: apply migrations as the OWNER (one-shot), then roll
-            # out. golang-migrate `up` is idempotent (no pending = exit 0).
-            docker compose -f docker-compose.prod.yml run --rm migrate
-
-            # Roll out the app tiers + Caddy.
-            docker compose -f docker-compose.prod.yml up -d
-
-            # Reclaim disk from superseded image layers.
-            docker image prune -f
+          # Reclaim disk from superseded image layers and print the final state.
+          docker image prune -f
+          docker compose -f docker-compose.prod.yml ps
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
