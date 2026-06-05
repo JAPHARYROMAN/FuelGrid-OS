@@ -90,6 +90,11 @@ type harnessOpts struct {
 	// second approvers without MFA, keep working unchanged. The dedicated SR-M1
 	// test opts it on.
 	enforceMFA bool
+	// pwResetRateMax sets the per-IP password-reset rate limit (SR-L3). Zero (the
+	// default) disables the guard so existing tests are unaffected; the dedicated
+	// SR-L3 test sets a small value to prove the limiter trips with 429.
+	pwResetRateMax int64
+	pwResetRateWin time.Duration
 }
 
 // setupHarnessOpts is the shared harness builder behind setupHarness /
@@ -141,6 +146,10 @@ func setupHarnessOpts(t *testing.T, opts harnessOpts) (*harness, func()) {
 		CORSOrigins: []string{"http://localhost:3000"}, ShutdownTimeout: 5 * time.Second,
 		// SR-M1: off by default (harness), opt-in for the enforcement test.
 		AuthEnforceMfaForPrivilegedRoles: opts.enforceMFA,
+		// SR-L3: per-IP password-reset limit; 0 disables it (harness default),
+		// the dedicated SR-L3 test opts in with a small max.
+		AuthPasswordResetRateMax:    opts.pwResetRateMax,
+		AuthPasswordResetRateWindow: opts.pwResetRateWin,
 	}
 	var appDB *database.Pool
 	appClose := func() {}

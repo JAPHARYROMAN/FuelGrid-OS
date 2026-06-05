@@ -284,7 +284,14 @@ func (s *Server) handleGetBrandingLogo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "no logo set")
 		return
 	}
+	// The content type is validated at upload (PNG/JPEG only, via
+	// http.DetectContentType) and set explicitly here. nosniff stops the browser
+	// from re-interpreting the body, and an inline disposition serves the logo
+	// for rendering without allowing it to be re-typed — parity with the
+	// attachments handler's defense-in-depth on serving stored user bytes.
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", "inline")
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)

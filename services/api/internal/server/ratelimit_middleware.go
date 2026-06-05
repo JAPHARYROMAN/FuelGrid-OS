@@ -34,11 +34,19 @@ type rateLimiter struct {
 	tenantLimit int64
 	tenantWin   time.Duration
 
+	// SR-L3: per-IP guard for the public password-reset endpoints (request /
+	// confirm). It reuses the same Redis-backed limiter under its own key prefix.
+	// A nil limiter or non-positive limit disables it.
+	pwResetLimiter *ratelimit.Limiter
+	pwResetLimit   int64
+	pwResetWin     time.Duration
+
 	maxInflight int64         // 0 => unlimited
 	cur         atomic.Int64  // current in-flight count
 	retryAfter  time.Duration // advisory Retry-After for shed/limited responses
 
-	logOnce sync.Once // fail-open log is emitted at most once per process
+	logOnce   sync.Once // per-tenant fail-open log is emitted at most once per process
+	pwLogOnce sync.Once // password-reset fail-open log is emitted at most once per process
 }
 
 // newRateLimiter builds the throttling state from config. limiter may be nil
@@ -60,6 +68,32 @@ func newRateLimiter(limiter *ratelimit.Limiter, tenantLimit int64, tenantWin tim
 // perTenantEnabled reports whether the per-tenant quota is active.
 func (rl *rateLimiter) perTenantEnabled() bool {
 	return rl != nil && rl.limiter != nil && rl.tenantLimit > 0
+}
+
+// withPasswordReset wires the per-IP password-reset guard (SR-L3) onto an
+// already-built limiter. Kept separate from newRateLimiter so the password-reset
+// guard can be configured without disturbing the existing constructor signature
+// and the call sites/tests that depend on it.
+func (rl *rateLimiter) withPasswordReset(limiter *ratelimit.Limiter, limit int64, win time.Duration) *rateLimiter {
+	if win <= 0 {
+		win = 15 * time.Minute
+	}
+	rl.pwResetLimiter = limiter
+	rl.pwResetLimit = limit
+	rl.pwResetWin = win
+	return rl
+}
+
+// pwResetEnabled reports whether the per-IP password-reset guard is active.
+func (rl *rateLimiter) pwResetEnabled() bool {
+	return rl != nil && rl.pwResetLimiter != nil && rl.pwResetLimit > 0
+}
+
+// pwResetBucketKey derives the per-IP rate-limit bucket key for the
+// password-reset endpoints. Pure (no Redis) so the keying scheme is unit
+// testable.
+func pwResetBucketKey(ip string) string {
+	return "pwreset:ip:" + ip
 }
 
 // inflightEnabled reports whether the global in-flight cap is active.
@@ -131,6 +165,37 @@ func (s *Server) rateLimitPerTenant(next http.Handler) http.Handler {
 			// once so we don't flood logs on a sustained Redis outage.
 			rl.logOnce.Do(func() {
 				s.logger.Warn("rate limiter failing open (redis unavailable)", "error", err)
+			})
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+// rateLimitPasswordResetIP is the per-IP guard for the public password-reset
+// endpoints (SR-L3). These routes carry no actor (they run before auth) and are
+// not covered by the identity service's login buckets, so this is the only
+// HTTP-layer throttle on the reset-token confirm/replay surface. It is keyed by
+// client IP (clientIP honours X-Forwarded-For only behind a trusted proxy,
+// AUTH-09) and fails open on a Redis error so limiter infrastructure can never
+// hard-fail the reset flow.
+func (s *Server) rateLimitPasswordResetIP(next http.Handler) http.Handler {
+	rl := s.rateLimit
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !rl.pwResetEnabled() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		err := rl.pwResetLimiter.Allow(r.Context(), pwResetBucketKey(clientIP(r)), rl.pwResetLimit, rl.pwResetWin)
+		switch {
+		case err == nil:
+			next.ServeHTTP(w, r)
+		case errors.Is(err, ratelimit.ErrLimited):
+			w.Header().Set("Retry-After", strconv.Itoa(int(rl.pwResetWin.Seconds())))
+			writeError(w, http.StatusTooManyRequests, "too many password-reset attempts, retry later")
+		default:
+			// Redis unavailable / errored: FAIL OPEN, log once.
+			rl.pwLogOnce.Do(func() {
+				s.logger.Warn("password-reset rate limiter failing open (redis unavailable)", "error", err)
 			})
 			next.ServeHTTP(w, r)
 		}

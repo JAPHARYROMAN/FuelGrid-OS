@@ -174,11 +174,15 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 	// off while the in-flight cap can still apply. Both guards self-disable on a
 	// non-positive limit (the Go zero value), so a Config built without Load()
 	// — as the integration harness does — never throttles test traffic.
-	var tenantLimiter *ratelimit.Limiter
+	var tenantLimiter, pwResetLimiter *ratelimit.Limiter
 	if deps.Redis != nil {
 		tenantLimiter = ratelimit.New(deps.Redis, "ratelimit:tenant:")
+		// SR-L3: per-IP guard on the public password-reset endpoints. Own prefix
+		// so it shares no counter with the per-tenant or login buckets.
+		pwResetLimiter = ratelimit.New(deps.Redis, "ratelimit:pwreset:")
 	}
-	s.rateLimit = newRateLimiter(tenantLimiter, cfg.TenantRateLimit, cfg.TenantRateWindow, cfg.MaxInflight)
+	s.rateLimit = newRateLimiter(tenantLimiter, cfg.TenantRateLimit, cfg.TenantRateWindow, cfg.MaxInflight).
+		withPasswordReset(pwResetLimiter, cfg.AuthPasswordResetRateMax, cfg.AuthPasswordResetRateWindow)
 
 	// M-Pesa (Daraja) client. Built unconditionally (no DB dependency) so the
 	// payments handlers always have a client to call; when MPESA_CONSUMER_KEY/
