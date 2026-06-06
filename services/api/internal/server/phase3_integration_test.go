@@ -188,6 +188,28 @@ func (h *harness) openDayShiftWithAttendant(t *testing.T, ctx context.Context, a
 	return dayID, shiftID, attID, nozzleID
 }
 
+func (h *harness) capturePMSShiftReadings(t *testing.T, admin, attendant, shiftID string, nozzleID uuid.UUID) {
+	t.Helper()
+	if code, _ := h.uploadCSV(t, "/api/v1/tanks/"+h.ids.tankPMS.String()+"/calibration-charts", admin,
+		"Initial", "dip_mm,volume_litres\n0,0\n3000,30000\n"); code != http.StatusCreated {
+		t.Fatalf("upload chart: %d", code)
+	}
+
+	noz := nozzleID.String()
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/meter-readings", attendant,
+		fmt.Sprintf(`{"nozzle_id":%q,"reading_type":"opening","reading":1000}`, noz)); code != http.StatusCreated {
+		t.Fatalf("opening meter: %d %v", code, b)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/meter-readings", attendant,
+		fmt.Sprintf(`{"nozzle_id":%q,"reading_type":"closing","reading":1500}`, noz)); code != http.StatusCreated {
+		t.Fatalf("closing meter: %d %v", code, b)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/dip-readings", attendant,
+		fmt.Sprintf(`{"tank_id":%q,"reading_type":"closing","dip_mm":1240}`, h.ids.tankPMS.String())); code != http.StatusCreated {
+		t.Fatalf("closing dip: %d %v", code, b)
+	}
+}
+
 // --- Tests ---
 
 // TestPhase3_DayWorkflow drives the whole chain end to end with the assigned
@@ -203,26 +225,8 @@ func TestPhase3_DayWorkflow(t *testing.T) {
 	dayID, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, fmt.Sprintf("att-flow-%d@it.local", time.Now().UnixNano()))
 	att := h.login(t, tenantSlug, attEmailFromDB(t, ctx, h.pool, h.ids.tenantID))
 
-	// Active chart so the closing dip resolves.
-	if code, _ := h.uploadCSV(t, "/api/v1/tanks/"+h.ids.tankPMS.String()+"/calibration-charts", admin,
-		"Initial", "dip_mm,volume_litres\n0,0\n3000,30000\n"); code != http.StatusCreated {
-		t.Fatalf("upload chart: %d", code)
-	}
-
 	// Attendant captures opening + closing meter (500 L) and a closing dip.
-	noz := nozzleID.String()
-	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/meter-readings", att,
-		fmt.Sprintf(`{"nozzle_id":%q,"reading_type":"opening","reading":1000}`, noz)); code != http.StatusCreated {
-		t.Fatalf("opening meter: %d %v", code, b)
-	}
-	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/meter-readings", att,
-		fmt.Sprintf(`{"nozzle_id":%q,"reading_type":"closing","reading":1500}`, noz)); code != http.StatusCreated {
-		t.Fatalf("closing meter: %d %v", code, b)
-	}
-	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/dip-readings", att,
-		fmt.Sprintf(`{"tank_id":%q,"reading_type":"closing","dip_mm":1240}`, h.ids.tankPMS.String())); code != http.StatusCreated {
-		t.Fatalf("closing dip: %d %v", code, b)
-	}
+	h.capturePMSShiftReadings(t, admin, att, shiftID, nozzleID)
 
 	// Supervisor closes: expected cash = 500 * 2950 = 1,475,000.
 	code, closeBody := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/close", admin, ``)
@@ -240,13 +244,9 @@ func TestPhase3_DayWorkflow(t *testing.T) {
 		`{"cash_amount":"1475000"}`); code != http.StatusCreated {
 		t.Fatalf("cash: %d %v", code, b)
 	}
-	// Separation of duties (OPS-002): the closer (admin, who closed above) may
-	// not approve their own shift; a distinct approver can. Then close + lock.
-	if code, _ := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusForbidden {
-		t.Fatalf("self-approve should be 403, got %d", code)
-	}
-	approver := h.secondApprover(t, ctx, tenantSlug)
-	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", approver, `{"status":"approved"}`); code != http.StatusOK {
+	// System admins may override separation of duties during owner-operated
+	// backfill flows.
+	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {
 		t.Fatalf("approve: %d %v", code, b)
 	}
 	if code, b := h.patchJSON(t, "/api/v1/operating-days/"+dayID+"/status", admin, `{"status":"closed"}`); code != http.StatusOK {
@@ -254,6 +254,30 @@ func TestPhase3_DayWorkflow(t *testing.T) {
 	}
 	if code, b := h.patchJSON(t, "/api/v1/operating-days/"+dayID+"/lock", admin, `{}`); code != http.StatusOK {
 		t.Fatalf("lock day: %d %v", code, b)
+	}
+}
+
+func TestPhase3_NonAdminCannotSelfApproveShift(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	operator := h.login(t, tenantSlug, h.ids.opEmail)
+
+	_, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, fmt.Sprintf("att-nonadmin-%d@it.local", time.Now().UnixNano()))
+	att := h.login(t, tenantSlug, attEmailFromDB(t, ctx, h.pool, h.ids.tenantID))
+	h.capturePMSShiftReadings(t, admin, att, shiftID, nozzleID)
+
+	if code, closeBody := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/close", operator, ``); code != http.StatusOK {
+		t.Fatalf("close as operator: %d %v", code, closeBody)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission", operator,
+		`{"cash_amount":"1475000"}`); code != http.StatusCreated {
+		t.Fatalf("cash as operator: %d %v", code, b)
+	}
+	if code, _ := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", operator, `{"status":"approved"}`); code != http.StatusForbidden {
+		t.Fatalf("operator self-approve should be 403, got %d", code)
 	}
 }
 

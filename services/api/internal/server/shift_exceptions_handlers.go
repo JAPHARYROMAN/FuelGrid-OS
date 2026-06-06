@@ -71,7 +71,12 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 	}
 	// Separation of duties (OPS-002): the approver must not be whoever closed
 	// the shift, so cash collection and its sign-off are not the same person.
-	if before.ClosedBy != nil && *before.ClosedBy == actor.UserID {
+	// A system_admin may override this during owner-operated/backfill flows.
+	isSystemAdmin, ok := s.actorIsSystemAdmin(w, r, actor)
+	if !ok {
+		return
+	}
+	if before.ClosedBy != nil && *before.ClosedBy == actor.UserID && !isSystemAdmin {
 		writeError(w, http.StatusForbidden, "separation of duties: you cannot approve a shift you closed")
 		return
 	}

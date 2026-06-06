@@ -4,9 +4,9 @@ import { STATION, authedSession, json } from './helpers/journey';
 
 /**
  * Shift lifecycle write-journey (QA-7): a supervisor opens a shift for the
- * scheduled team, the attendant captures meter + dip readings, then the
- * supervisor closes and approves it — each step a mocked API call plus the
- * follow-up operations-overview GET that re-renders the new state.
+ * scheduled team, captures meter + dip readings from Operations, submits cash,
+ * then approves it — each step a mocked API call plus the follow-up
+ * operations-overview GET that re-renders the new state.
  *
  * The Operations page (open/close/approve) and the My Shift attendant console
  * (capture readings) are the two surfaces; we drive both.
@@ -153,44 +153,110 @@ test.describe('shift lifecycle', () => {
       await json(route, shift('open'));
     });
 
+    const assignment = {
+      id: 'assign-1',
+      shift_id: 'shift-1',
+      nozzle_id: 'noz-1',
+      attendant_id: 'u-2',
+      assigned_at: '2026-06-01T06:05:00Z',
+    };
     await page.route('**/api/bff/api/v1/shifts/*/nozzle-assignments', async (route) => {
       if (route.request().method() !== 'POST') return route.fallback();
-      const assignment = {
-        id: 'assign-1',
-        shift_id: 'shift-1',
-        nozzle_id: 'noz-1',
-        attendant_id: 'u-2',
-        assigned_at: '2026-06-01T06:05:00Z',
-      };
       state = overview([shift('open', { nozzle_assignments: [assignment] })]);
       await json(route, assignment, 201);
     });
 
-    // POST close -> overview shows the shift closed with a submitted cash split.
+    const meterReadings: Record<string, unknown>[] = [];
+    await page.route('**/api/bff/api/v1/shifts/*/meter-readings', async (route) => {
+      if (route.request().method() === 'GET') {
+        await json(route, { items: meterReadings, count: meterReadings.length, dispensed: [] });
+        return;
+      }
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = route.request().postDataJSON() as {
+        nozzle_id: string;
+        reading_type: 'opening' | 'closing';
+        reading: string;
+      };
+      const reading = {
+        id: `mr-${meterReadings.length + 1}`,
+        tenant_id: STATION.tenant_id,
+        shift_id: 'shift-1',
+        nozzle_id: body.nozzle_id,
+        reading_type: body.reading_type,
+        reading: body.reading,
+        recorded_by: 'u-1',
+        recorded_at: '2026-06-01T06:10:00Z',
+        status: 'active',
+      };
+      meterReadings.push(reading);
+      await json(route, reading, 201);
+    });
+
+    const dipReadings: Record<string, unknown>[] = [];
+    await page.route('**/api/bff/api/v1/shifts/*/dip-readings', async (route) => {
+      if (route.request().method() === 'GET') {
+        await json(route, {
+          items: dipReadings,
+          count: dipReadings.length,
+          limit: dipReadings.length,
+          offset: 0,
+          has_more: false,
+        });
+        return;
+      }
+      if (route.request().method() !== 'POST') return route.fallback();
+      const body = route.request().postDataJSON() as {
+        tank_id: string;
+        reading_type: 'opening' | 'closing';
+        dip_mm: string;
+      };
+      const reading = {
+        id: `dr-${dipReadings.length + 1}`,
+        tenant_id: STATION.tenant_id,
+        shift_id: 'shift-1',
+        tank_id: body.tank_id,
+        reading_type: body.reading_type,
+        dip_mm: body.dip_mm,
+        volume_litres: body.dip_mm,
+        chart_id: 'chart-1',
+        recorded_by: 'u-1',
+        recorded_at: '2026-06-01T06:12:00Z',
+        status: 'active',
+      };
+      dipReadings.push(reading);
+      await json(route, reading, 201);
+    });
+
+    const cashSubmission = {
+      id: 'cs-1',
+      shift_id: 'shift-1',
+      expected_cash: '1000.00',
+      cash_amount: '1000.00',
+      mobile_money_amount: '0.00',
+      card_amount: '0.00',
+      credit_amount: '0.00',
+      submitted_total: '1000.00',
+      variance: '0.00',
+      submitted_by: 'u-1',
+      submitted_at: '2026-06-01T14:00:00Z',
+    };
+
+    // POST close -> overview shows the shift closed and waiting for cash.
     await page.route('**/api/bff/api/v1/shifts/*/close', async (route) => {
-      state = overview([
-        shift('closed', {
-          cash_submission: {
-            id: 'cs-1',
-            shift_id: 'shift-1',
-            expected_cash: '1000.00',
-            cash_amount: '1000.00',
-            mobile_money_amount: '0.00',
-            card_amount: '0.00',
-            credit_amount: '0.00',
-            submitted_total: '1000.00',
-            variance: '0.00',
-            submitted_by: 'u-2',
-            submitted_at: '2026-06-01T14:00:00Z',
-          },
-        }),
-      ]);
+      state = overview([shift('closed')]);
       await json(route, {
         shift: shift('closed'),
         lines: [],
         expected_cash: '1000.00',
         cash_submission: null,
       });
+    });
+
+    await page.route('**/api/bff/api/v1/shifts/*/cash-submission', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      state = overview([shift('closed', { cash_submission: cashSubmission })]);
+      await json(route, cashSubmission, 201);
     });
 
     // PATCH status=approved -> overview shows it approved.
@@ -223,14 +289,40 @@ test.describe('shift lifecycle', () => {
     const assignBtn = page.getByRole('button', { name: 'Assign' });
     await expect(assignBtn).toBeEnabled();
     await assignBtn.click();
-    await expect(page.getByText('P1·N1 · PMS-T')).toBeVisible();
+    await expect(page.getByText('P1·N1 · PMS-T').first()).toBeVisible();
+
+    // --- READINGS + DIPS ---
+    await page
+      .getByRole('spinbutton', { name: 'opening meter reading for P1·N1 · PMS-T' })
+      .fill('1000');
+    await page
+      .getByRole('button', { name: 'Save opening meter reading for P1·N1 · PMS-T' })
+      .click();
+    await expect(page.getByText('1000')).toBeVisible();
+
+    await page
+      .getByRole('spinbutton', { name: 'closing meter reading for P1·N1 · PMS-T' })
+      .fill('1500');
+    await page
+      .getByRole('button', { name: 'Save closing meter reading for P1·N1 · PMS-T' })
+      .click();
+    await expect(page.getByText('1500')).toBeVisible();
+
+    await page.getByRole('spinbutton', { name: 'closing tank dip for PMS-T' }).fill('1240');
+    await page.getByRole('button', { name: 'Save closing tank dip for PMS-T' }).click();
+    await expect(page.getByText('1240 mm · 1,240 L')).toBeVisible();
 
     // --- CLOSE ---
     const closeBtn = page.getByRole('button', { name: 'Close shift' });
     await expect(closeBtn).toBeVisible();
     await closeBtn.click();
-    // Closed badge + the submitted cash now renders (variance 0.00).
+    // Closed badge renders, but approval waits for cash submission.
     await expect(page.getByText('closed', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Submit cash to approve' })).toBeDisabled();
+
+    await page.getByLabel('Cash').fill('1000');
+    await page.getByRole('button', { name: 'Submit cash', exact: true }).click();
+    await expect(page.getByText('Variance')).toBeVisible();
 
     // --- APPROVE --- enabled because open_exception_count === 0.
     const approveBtn = page.getByRole('button', { name: 'Approve shift' });

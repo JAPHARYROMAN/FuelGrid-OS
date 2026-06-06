@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { SdkError, type OperationsShift } from '@fuelgrid/sdk';
+import { SdkError, type DipReading, type MeterReading, type OperationsShift } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -49,6 +49,9 @@ function todayLocalDate() {
 interface NozzleChoice {
   id: string;
   label: string;
+  tankID: string;
+  tankLabel: string;
+  meterDecimalPlaces: number;
 }
 
 interface AssignmentDraft {
@@ -101,6 +104,9 @@ export default function OperationsPage() {
           return {
             id: nozzle.id,
             label: `P${pump.number}·N${nozzle.number} · ${tank?.code ?? 'tank'}`,
+            tankID: nozzle.tank_id,
+            tankLabel: tank?.code ?? 'tank',
+            meterDecimalPlaces: nozzle.meter_decimal_places,
           };
         }),
     );
@@ -438,6 +444,7 @@ export default function OperationsPage() {
                   onUnassignNozzle={(assignmentID) =>
                     unassignNozzle.mutate({ shiftID: shift.id, assignmentID })
                   }
+                  onRefresh={invalidateOperations}
                   onApprove={() => approve.mutate(shift.id)}
                   onResolve={(id) => resolve.mutate(id)}
                   onClose={() => closeShift.mutate(shift.id)}
@@ -469,6 +476,7 @@ function ShiftCard({
   onAssignmentDraftChange,
   onAssignNozzle,
   onUnassignNozzle,
+  onRefresh,
   onApprove,
   onResolve,
   onClose,
@@ -486,6 +494,7 @@ function ShiftCard({
   onAssignmentDraftChange: (draft: AssignmentDraft) => void;
   onAssignNozzle: (nozzleID: string, attendantID: string) => void;
   onUnassignNozzle: (assignmentID: string) => void;
+  onRefresh: () => void;
   onApprove: () => void;
   onResolve: (exceptionID: string) => void;
   onClose: () => void;
@@ -495,10 +504,27 @@ function ShiftCard({
   resolvingExceptionID: string | null;
   closing: boolean;
 }) {
+  const qc = useQueryClient();
   const cash = shift.cash_submission;
-  const canApprove = shift.status === 'closed' && shift.open_exception_count === 0;
+  const [readingInputs, setReadingInputs] = useState<Record<string, string>>({});
+  const [dipInputs, setDipInputs] = useState<Record<string, string>>({});
+  const [cashInputs, setCashInputs] = useState({
+    cash: '',
+    mobile: '',
+    card: '',
+    credit: '',
+  });
+  const canApprove = shift.status === 'closed' && shift.open_exception_count === 0 && !!cash;
+  const approveLabel = approving
+    ? 'Approving…'
+    : !cash
+      ? 'Submit cash to approve'
+      : canApprove
+        ? 'Approve shift'
+        : 'Resolve exceptions to approve';
   const assignedNozzleIDs = new Set(shift.nozzle_assignments.map((a) => a.nozzle_id));
   const availableNozzles = nozzles.filter((n) => !assignedNozzleIDs.has(n.id));
+  const assignedNozzles = nozzles.filter((n) => assignedNozzleIDs.has(n.id));
   const effectiveNozzleID =
     assignmentDraft.nozzleID || (availableNozzles.length === 1 ? availableNozzles[0]!.id : '');
   const effectiveAttendantID =
@@ -506,6 +532,87 @@ function ShiftCard({
     (shift.attendants.length === 1 ? shift.attendants[0]!.user_id : '');
   const attendantName = new Map(shift.attendants.map((a) => [a.user_id, a.full_name]));
   const nozzleName = new Map(nozzles.map((n) => [n.id, n.label]));
+  const assignedTanks = Array.from(
+    new Map(assignedNozzles.map((nozzle) => [nozzle.tankID, nozzle])).values(),
+  );
+
+  const meterReadings = useQuery({
+    queryKey: ['shift-meter-readings', shift.id],
+    queryFn: ({ signal }) => api.listMeterReadings(shift.id, signal),
+    enabled: shift.status === 'open' && shift.nozzle_assignments.length > 0,
+  });
+
+  const dipReadings = useQuery({
+    queryKey: ['shift-dip-readings', shift.id],
+    queryFn: ({ signal }) => api.listDipReadings(shift.id, signal),
+    enabled: shift.status === 'open' && shift.nozzle_assignments.length > 0,
+  });
+
+  function refreshShiftFacts() {
+    qc.invalidateQueries({ queryKey: ['shift-meter-readings', shift.id] });
+    qc.invalidateQueries({ queryKey: ['shift-dip-readings', shift.id] });
+    onRefresh();
+  }
+
+  const captureMeter = useMutation({
+    mutationFn: ({
+      nozzleID,
+      type,
+      reading,
+    }: {
+      nozzleID: string;
+      type: 'opening' | 'closing';
+      reading: string;
+    }) => api.captureMeterReading(shift.id, { nozzle_id: nozzleID, reading_type: type, reading }),
+    onSuccess: (_data, vars) => {
+      setReadingInputs((prev) => ({ ...prev, [`${vars.nozzleID}:${vars.type}`]: '' }));
+      refreshShiftFacts();
+    },
+  });
+
+  const captureDip = useMutation({
+    mutationFn: ({
+      tankID,
+      type,
+      dipMM,
+    }: {
+      tankID: string;
+      type: 'opening' | 'closing';
+      dipMM: string;
+    }) => api.captureDipReading(shift.id, { tank_id: tankID, reading_type: type, dip_mm: dipMM }),
+    onSuccess: (_data, vars) => {
+      setDipInputs((prev) => ({ ...prev, [`${vars.tankID}:${vars.type}`]: '' }));
+      refreshShiftFacts();
+    },
+  });
+
+  const submitCash = useMutation({
+    mutationFn: () =>
+      api.submitCash(shift.id, {
+        cash_amount: cashInputs.cash || '0',
+        mobile_money_amount: cashInputs.mobile || '0',
+        card_amount: cashInputs.card || '0',
+        credit_amount: cashInputs.credit || '0',
+      }),
+    onSuccess: () => {
+      setCashInputs({ cash: '', mobile: '', card: '', credit: '' });
+      onRefresh();
+    },
+  });
+
+  const meterByNozzle = new Map<string, Map<string, MeterReading>>();
+  for (const reading of meterReadings.data?.items ?? []) {
+    const byType = meterByNozzle.get(reading.nozzle_id) ?? new Map<string, MeterReading>();
+    byType.set(reading.reading_type, reading);
+    meterByNozzle.set(reading.nozzle_id, byType);
+  }
+
+  const dipByTank = new Map<string, Map<string, DipReading>>();
+  for (const reading of dipReadings.data?.items ?? []) {
+    const byType = dipByTank.get(reading.tank_id) ?? new Map<string, DipReading>();
+    byType.set(reading.reading_type, reading);
+    dipByTank.set(reading.tank_id, byType);
+  }
 
   return (
     <Card>
@@ -652,6 +759,144 @@ function ShiftCard({
           </div>
         ) : null}
 
+        {shift.status === 'open' && shift.nozzle_assignments.length > 0 ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Meter readings
+              </span>
+              {meterReadings.isPending ? (
+                <span className="text-xs text-muted-foreground">Loading readings…</span>
+              ) : null}
+            </div>
+            {assignedNozzles.map((nozzle) => (
+              <div key={nozzle.id} className="grid gap-2 rounded-md bg-background/60 p-2">
+                <span className="font-mono text-xs text-foreground">{nozzle.label}</span>
+                <MeterCaptureRow
+                  nozzle={nozzle}
+                  type="opening"
+                  current={meterByNozzle.get(nozzle.id)?.get('opening')}
+                  value={readingInputs[`${nozzle.id}:opening`] ?? ''}
+                  pending={
+                    captureMeter.isPending &&
+                    captureMeter.variables?.nozzleID === nozzle.id &&
+                    captureMeter.variables?.type === 'opening'
+                  }
+                  stationID={stationID}
+                  onChange={(value) =>
+                    setReadingInputs((prev) => ({ ...prev, [`${nozzle.id}:opening`]: value }))
+                  }
+                  onSave={() =>
+                    captureMeter.mutate({
+                      nozzleID: nozzle.id,
+                      type: 'opening',
+                      reading: readingInputs[`${nozzle.id}:opening`] ?? '',
+                    })
+                  }
+                />
+                <MeterCaptureRow
+                  nozzle={nozzle}
+                  type="closing"
+                  current={meterByNozzle.get(nozzle.id)?.get('closing')}
+                  value={readingInputs[`${nozzle.id}:closing`] ?? ''}
+                  pending={
+                    captureMeter.isPending &&
+                    captureMeter.variables?.nozzleID === nozzle.id &&
+                    captureMeter.variables?.type === 'closing'
+                  }
+                  stationID={stationID}
+                  onChange={(value) =>
+                    setReadingInputs((prev) => ({ ...prev, [`${nozzle.id}:closing`]: value }))
+                  }
+                  onSave={() =>
+                    captureMeter.mutate({
+                      nozzleID: nozzle.id,
+                      type: 'closing',
+                      reading: readingInputs[`${nozzle.id}:closing`] ?? '',
+                    })
+                  }
+                />
+              </div>
+            ))}
+            {captureMeter.isError ? (
+              <p className="text-xs text-danger">
+                {captureMeter.error instanceof SdkError
+                  ? captureMeter.error.message
+                  : 'Could not save meter reading'}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {shift.status === 'open' && assignedTanks.length > 0 ? (
+          <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Tank dips
+              </span>
+              {dipReadings.isPending ? (
+                <span className="text-xs text-muted-foreground">Loading dips…</span>
+              ) : null}
+            </div>
+            {assignedTanks.map((tank) => (
+              <div key={tank.tankID} className="grid gap-2 rounded-md bg-background/60 p-2">
+                <span className="font-mono text-xs text-foreground">{tank.tankLabel}</span>
+                <DipCaptureRow
+                  tankLabel={tank.tankLabel}
+                  type="opening"
+                  current={dipByTank.get(tank.tankID)?.get('opening')}
+                  value={dipInputs[`${tank.tankID}:opening`] ?? ''}
+                  pending={
+                    captureDip.isPending &&
+                    captureDip.variables?.tankID === tank.tankID &&
+                    captureDip.variables?.type === 'opening'
+                  }
+                  stationID={stationID}
+                  onChange={(value) =>
+                    setDipInputs((prev) => ({ ...prev, [`${tank.tankID}:opening`]: value }))
+                  }
+                  onSave={() =>
+                    captureDip.mutate({
+                      tankID: tank.tankID,
+                      type: 'opening',
+                      dipMM: dipInputs[`${tank.tankID}:opening`] ?? '',
+                    })
+                  }
+                />
+                <DipCaptureRow
+                  tankLabel={tank.tankLabel}
+                  type="closing"
+                  current={dipByTank.get(tank.tankID)?.get('closing')}
+                  value={dipInputs[`${tank.tankID}:closing`] ?? ''}
+                  pending={
+                    captureDip.isPending &&
+                    captureDip.variables?.tankID === tank.tankID &&
+                    captureDip.variables?.type === 'closing'
+                  }
+                  stationID={stationID}
+                  onChange={(value) =>
+                    setDipInputs((prev) => ({ ...prev, [`${tank.tankID}:closing`]: value }))
+                  }
+                  onSave={() =>
+                    captureDip.mutate({
+                      tankID: tank.tankID,
+                      type: 'closing',
+                      dipMM: dipInputs[`${tank.tankID}:closing`] ?? '',
+                    })
+                  }
+                />
+              </div>
+            ))}
+            {captureDip.isError ? (
+              <p className="text-xs text-danger">
+                {captureDip.error instanceof SdkError
+                  ? captureDip.error.message
+                  : 'Could not save tank dip'}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
         {/* Exceptions */}
         {shift.exceptions.length > 0 ? (
           <div className="flex flex-col gap-1.5">
@@ -699,16 +944,214 @@ function ShiftCard({
         {shift.status === 'closed' ? (
           <PermissionGate permission="shift.approve" stationId={stationID}>
             <Button className="h-10" disabled={!canApprove || approving} onClick={onApprove}>
-              {approving
-                ? 'Approving…'
-                : canApprove
-                  ? 'Approve shift'
-                  : 'Resolve exceptions to approve'}
+              {approveLabel}
             </Button>
           </PermissionGate>
         ) : null}
+        {shift.status === 'closed' && !cash ? (
+          <CashSubmissionPanel
+            stationID={stationID}
+            inputs={cashInputs}
+            pending={submitCash.isPending}
+            error={submitCash.error}
+            onChange={(field, value) => setCashInputs((prev) => ({ ...prev, [field]: value }))}
+            onSubmit={() => submitCash.mutate()}
+          />
+        ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+function MeterCaptureRow({
+  nozzle,
+  type,
+  current,
+  value,
+  pending,
+  stationID,
+  onChange,
+  onSave,
+}: {
+  nozzle: NozzleChoice;
+  type: 'opening' | 'closing';
+  current?: MeterReading;
+  value: string;
+  pending: boolean;
+  stationID: string;
+  onChange: (value: string) => void;
+  onSave: () => void;
+}) {
+  const step = 1 / Math.pow(10, nozzle.meterDecimalPlaces);
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-[6rem_1fr_auto] sm:items-center">
+      <span className="text-xs capitalize text-muted-foreground">{type}</span>
+      {current ? (
+        <span className="font-mono text-sm tabular-nums">{current.reading}</span>
+      ) : (
+        <>
+          <Input
+            className="h-8 text-right"
+            aria-label={`${type} meter reading for ${nozzle.label}`}
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step={step}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          <PermissionGate permission="reading.override" stationId={stationID}>
+            <Button
+              aria-label={`Save ${type} meter reading for ${nozzle.label}`}
+              size="sm"
+              variant="secondary"
+              disabled={!value || pending}
+              onClick={onSave}
+            >
+              {pending ? 'Saving…' : 'Save'}
+            </Button>
+          </PermissionGate>
+        </>
+      )}
+    </div>
+  );
+}
+
+function DipCaptureRow({
+  tankLabel,
+  type,
+  current,
+  value,
+  pending,
+  stationID,
+  onChange,
+  onSave,
+}: {
+  tankLabel: string;
+  type: 'opening' | 'closing';
+  current?: DipReading;
+  value: string;
+  pending: boolean;
+  stationID: string;
+  onChange: (value: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-[6rem_1fr_auto] sm:items-center">
+      <span className="text-xs capitalize text-muted-foreground">{type}</span>
+      {current ? (
+        <span className="font-mono text-sm tabular-nums">
+          {current.dip_mm} mm · {fmtLitres(current.volume_litres)} L
+        </span>
+      ) : (
+        <>
+          <Input
+            className="h-8 text-right"
+            aria-label={`${type} tank dip for ${tankLabel}`}
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="1"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+          <PermissionGate permission="reading.override" stationId={stationID}>
+            <Button
+              aria-label={`Save ${type} tank dip for ${tankLabel}`}
+              size="sm"
+              variant="secondary"
+              disabled={!value || pending}
+              onClick={onSave}
+            >
+              {pending ? 'Saving…' : 'Save'}
+            </Button>
+          </PermissionGate>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CashSubmissionPanel({
+  stationID,
+  inputs,
+  pending,
+  error,
+  onChange,
+  onSubmit,
+}: {
+  stationID: string;
+  inputs: { cash: string; mobile: string; card: string; credit: string };
+  pending: boolean;
+  error: unknown;
+  onChange: (field: 'cash' | 'mobile' | 'card' | 'credit', value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Submit cash
+      </span>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <MoneyInput
+          label="Cash"
+          value={inputs.cash}
+          onChange={(value) => onChange('cash', value)}
+        />
+        <MoneyInput
+          label="Mobile"
+          value={inputs.mobile}
+          onChange={(value) => onChange('mobile', value)}
+        />
+        <MoneyInput
+          label="Card"
+          value={inputs.card}
+          onChange={(value) => onChange('card', value)}
+        />
+        <MoneyInput
+          label="Credit"
+          value={inputs.credit}
+          onChange={(value) => onChange('credit', value)}
+        />
+      </div>
+      {error ? (
+        <p className="text-xs text-danger">
+          {error instanceof SdkError ? error.message : 'Could not submit cash'}
+        </p>
+      ) : null}
+      <PermissionGate permission="cash.override" stationId={stationID}>
+        <Button className="self-start" size="sm" disabled={pending} onClick={onSubmit}>
+          {pending ? 'Submitting…' : 'Submit cash'}
+        </Button>
+      </PermissionGate>
+    </div>
+  );
+}
+
+function MoneyInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+      {label}
+      <Input
+        className="h-8 text-right"
+        type="number"
+        inputMode="decimal"
+        min="0"
+        step="0.01"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="0.00"
+      />
+    </label>
   );
 }
 

@@ -76,6 +76,8 @@ export function permissionsBody() {
     'shift.close',
     'shift.approve',
     'shift.assign',
+    'reading.override',
+    'cash.override',
     'station.manage',
     'station.read',
     'period.close',
