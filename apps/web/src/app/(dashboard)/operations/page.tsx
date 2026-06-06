@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -10,6 +10,7 @@ import {
   Button,
   Card,
   CardContent,
+  CardDescription,
   CardHeader,
   CardTitle,
   EmptyState,
@@ -18,7 +19,7 @@ import {
   PageHeader,
   Skeleton,
 } from '@fuelgrid/ui';
-import { CalendarClock } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Lock, Plus, Trash2 } from 'lucide-react';
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
@@ -39,12 +40,30 @@ function shiftTone(status: string): 'success' | 'neutral' | 'warning' {
   return 'warning';
 }
 
+function todayLocalDate() {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 10);
+}
+
+interface NozzleChoice {
+  id: string;
+  label: string;
+}
+
+interface AssignmentDraft {
+  nozzleID: string;
+  attendantID: string;
+}
+
 export default function OperationsPage() {
   const qc = useQueryClient();
   const [stationID, setStationID] = useState<string>('');
   const [actionError, setActionError] = useState<string | null>(null);
+  const [openDayDate, setOpenDayDate] = useState(todayLocalDate);
   const [newShiftName, setNewShiftName] = useState('');
   const [slot, setSlot] = useState<'morning' | 'evening'>('morning');
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -66,11 +85,37 @@ export default function OperationsPage() {
     enabled: !!stationID,
   });
 
+  const stationOverview = useQuery({
+    queryKey: ['station-overview', stationID, 'operations'],
+    queryFn: ({ signal }) => api.getStationOverview(stationID, signal),
+    enabled: !!stationID && (overview.data?.shifts.some((s) => s.status === 'open') ?? false),
+  });
+
+  const nozzleChoices = useMemo<NozzleChoice[]>(() => {
+    const tanksByID = new Map((stationOverview.data?.tanks ?? []).map((t) => [t.id, t]));
+    return (stationOverview.data?.pumps ?? []).flatMap((pump) =>
+      pump.nozzles
+        .filter((nozzle) => nozzle.status === 'active')
+        .map((nozzle) => {
+          const tank = tanksByID.get(nozzle.tank_id);
+          return {
+            id: nozzle.id,
+            label: `P${pump.number}·N${nozzle.number} · ${tank?.code ?? 'tank'}`,
+          };
+        }),
+    );
+  }, [stationOverview.data]);
+
+  function invalidateOperations() {
+    qc.invalidateQueries({ queryKey: overviewKey });
+    qc.invalidateQueries({ queryKey: ['station-overview', stationID, 'operations'] });
+  }
+
   const approve = useMutation({
     mutationFn: (shiftID: string) => api.approveShift(shiftID),
     onSuccess: () => {
       setActionError(null);
-      qc.invalidateQueries({ queryKey: overviewKey });
+      invalidateOperations();
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not approve shift'),
   });
@@ -79,19 +124,49 @@ export default function OperationsPage() {
     mutationFn: (exceptionID: string) => api.resolveShiftException(exceptionID),
     onSuccess: () => {
       setActionError(null);
-      qc.invalidateQueries({ queryKey: overviewKey });
+      invalidateOperations();
     },
     onError: (e) =>
       setActionError(e instanceof SdkError ? e.message : 'Could not resolve exception'),
   });
 
   const openDay = useMutation({
-    mutationFn: () => api.openOperatingDay(stationID, {}),
+    mutationFn: (businessDate: string) =>
+      api.openOperatingDay(stationID, { business_date: businessDate }),
     onSuccess: () => {
       setActionError(null);
-      qc.invalidateQueries({ queryKey: overviewKey });
+      invalidateOperations();
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not open day'),
+  });
+
+  const closeDay = useMutation({
+    mutationFn: (dayID: string) =>
+      api.updateOperatingDayStatus(dayID, 'closed', 'Closed from operations console'),
+    onSuccess: () => {
+      setActionError(null);
+      invalidateOperations();
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not close day'),
+  });
+
+  const reopenDay = useMutation({
+    mutationFn: (dayID: string) =>
+      api.updateOperatingDayStatus(dayID, 'open', 'Reopened from operations console'),
+    onSuccess: () => {
+      setActionError(null);
+      invalidateOperations();
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not reopen day'),
+  });
+
+  const lockDay = useMutation({
+    mutationFn: (dayID: string) => api.lockOperatingDay(dayID, 'Locked from operations console'),
+    onSuccess: () => {
+      setActionError(null);
+      invalidateOperations();
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not lock day'),
   });
 
   // The team scheduled for the selected slot on the active operating day's
@@ -109,16 +184,47 @@ export default function OperationsPage() {
     onSuccess: () => {
       setActionError(null);
       setNewShiftName('');
-      qc.invalidateQueries({ queryKey: overviewKey });
+      invalidateOperations();
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not open shift'),
+  });
+
+  const assignNozzle = useMutation({
+    mutationFn: ({
+      shiftID,
+      nozzleID,
+      attendantID,
+    }: {
+      shiftID: string;
+      nozzleID: string;
+      attendantID: string;
+    }) => api.assignNozzle(shiftID, { nozzle_id: nozzleID, attendant_id: attendantID }),
+    onSuccess: (_data, vars) => {
+      setActionError(null);
+      setAssignmentDrafts((prev) => ({
+        ...prev,
+        [vars.shiftID]: { nozzleID: '', attendantID: '' },
+      }));
+      invalidateOperations();
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not assign nozzle'),
+  });
+
+  const unassignNozzle = useMutation({
+    mutationFn: ({ shiftID, assignmentID }: { shiftID: string; assignmentID: string }) =>
+      api.unassignNozzle(shiftID, assignmentID),
+    onSuccess: () => {
+      setActionError(null);
+      invalidateOperations();
+    },
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not unassign nozzle'),
   });
 
   const closeShift = useMutation({
     mutationFn: (shiftID: string) => api.closeShift(shiftID),
     onSuccess: () => {
       setActionError(null);
-      qc.invalidateQueries({ queryKey: overviewKey });
+      invalidateOperations();
     },
     onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not close shift'),
   });
@@ -202,9 +308,22 @@ export default function OperationsPage() {
           description="Open a day for this station to start running shifts."
           action={
             <PermissionGate permission="operations.manage_day" stationId={stationID}>
-              <Button disabled={openDay.isPending} onClick={() => openDay.mutate()}>
-                {openDay.isPending ? 'Opening…' : 'Open operating day'}
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <Input
+                  aria-label="Operating day date"
+                  className="w-40"
+                  type="date"
+                  value={openDayDate}
+                  onChange={(e) => setOpenDayDate(e.target.value)}
+                />
+                <Button
+                  disabled={!openDayDate || openDay.isPending}
+                  onClick={() => openDay.mutate(openDayDate)}
+                >
+                  <CalendarClock className="size-4" />
+                  {openDay.isPending ? 'Opening…' : 'Open operating day'}
+                </Button>
+              </div>
             </PermissionGate>
           }
         />
@@ -212,22 +331,37 @@ export default function OperationsPage() {
         <>
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
-              <CardTitle className="flex items-center gap-2.5 text-base">
-                <span className="flex size-9 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
-                  <CalendarClock className="size-4" />
-                </span>
-                Operating day · {overview.data.day.business_date}
-              </CardTitle>
-              <Badge tone={overview.data.day.status === 'open' ? 'success' : 'warning'}>
-                {overview.data.day.status}
-              </Badge>
+              <div className="flex flex-col gap-1">
+                <CardTitle className="flex items-center gap-2.5 text-base">
+                  <span className="flex size-9 items-center justify-center rounded-lg bg-accent-muted/60 text-accent">
+                    <CalendarClock className="size-4" />
+                  </span>
+                  Operating day · {overview.data.day.business_date}
+                </CardTitle>
+                <CardDescription>
+                  {overview.data.shifts.length} shift
+                  {overview.data.shifts.length === 1 ? '' : 's'} · opened{' '}
+                  {new Date(overview.data.day.opened_at).toLocaleString()}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Badge tone={overview.data.day.status === 'open' ? 'success' : 'warning'}>
+                  {overview.data.day.status}
+                </Badge>
+                <DayActions
+                  status={overview.data.day.status}
+                  shifts={overview.data.shifts}
+                  stationID={stationID}
+                  closing={closeDay.isPending}
+                  reopening={reopenDay.isPending}
+                  locking={lockDay.isPending}
+                  onClose={() => closeDay.mutate(overview.data.day!.id)}
+                  onReopen={() => reopenDay.mutate(overview.data.day!.id)}
+                  onLock={() => lockDay.mutate(overview.data.day!.id)}
+                />
+              </div>
             </CardHeader>
             <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
-              <span>
-                {overview.data.shifts.length} shift
-                {overview.data.shifts.length === 1 ? '' : 's'} · opened{' '}
-                {new Date(overview.data.day.opened_at).toLocaleString()}
-              </span>
               {overview.data.day.status === 'open' ? (
                 <div className="flex flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-2">
@@ -253,6 +387,7 @@ export default function OperationsPage() {
                         }
                         onClick={() => openShift.mutate(overview.data.day!.id)}
                       >
+                        <Plus className="size-4" />
                         {openShift.isPending ? 'Opening…' : 'Open shift'}
                       </Button>
                     </PermissionGate>
@@ -291,9 +426,27 @@ export default function OperationsPage() {
                   key={shift.id}
                   shift={shift}
                   stationID={stationID}
+                  nozzles={nozzleChoices}
+                  nozzleLookupPending={stationOverview.isPending}
+                  assignmentDraft={assignmentDrafts[shift.id] ?? { nozzleID: '', attendantID: '' }}
+                  onAssignmentDraftChange={(draft) =>
+                    setAssignmentDrafts((prev) => ({ ...prev, [shift.id]: draft }))
+                  }
+                  onAssignNozzle={(nozzleID, attendantID) =>
+                    assignNozzle.mutate({ shiftID: shift.id, nozzleID, attendantID })
+                  }
+                  onUnassignNozzle={(assignmentID) =>
+                    unassignNozzle.mutate({ shiftID: shift.id, assignmentID })
+                  }
                   onApprove={() => approve.mutate(shift.id)}
                   onResolve={(id) => resolve.mutate(id)}
                   onClose={() => closeShift.mutate(shift.id)}
+                  assigning={assignNozzle.isPending && assignNozzle.variables?.shiftID === shift.id}
+                  unassigningAssignmentID={
+                    unassignNozzle.isPending && unassignNozzle.variables?.shiftID === shift.id
+                      ? unassignNozzle.variables.assignmentID
+                      : null
+                  }
                   approving={approve.isPending && approve.variables === shift.id}
                   resolvingExceptionID={resolve.isPending ? (resolve.variables ?? null) : null}
                   closing={closeShift.isPending && closeShift.variables === shift.id}
@@ -310,24 +463,49 @@ export default function OperationsPage() {
 function ShiftCard({
   shift,
   stationID,
+  nozzles,
+  nozzleLookupPending,
+  assignmentDraft,
+  onAssignmentDraftChange,
+  onAssignNozzle,
+  onUnassignNozzle,
   onApprove,
   onResolve,
   onClose,
+  assigning,
+  unassigningAssignmentID,
   approving,
   resolvingExceptionID,
   closing,
 }: {
   shift: OperationsShift;
   stationID: string;
+  nozzles: NozzleChoice[];
+  nozzleLookupPending: boolean;
+  assignmentDraft: AssignmentDraft;
+  onAssignmentDraftChange: (draft: AssignmentDraft) => void;
+  onAssignNozzle: (nozzleID: string, attendantID: string) => void;
+  onUnassignNozzle: (assignmentID: string) => void;
   onApprove: () => void;
   onResolve: (exceptionID: string) => void;
   onClose: () => void;
+  assigning: boolean;
+  unassigningAssignmentID: string | null;
   approving: boolean;
   resolvingExceptionID: string | null;
   closing: boolean;
 }) {
   const cash = shift.cash_submission;
   const canApprove = shift.status === 'closed' && shift.open_exception_count === 0;
+  const assignedNozzleIDs = new Set(shift.nozzle_assignments.map((a) => a.nozzle_id));
+  const availableNozzles = nozzles.filter((n) => !assignedNozzleIDs.has(n.id));
+  const effectiveNozzleID =
+    assignmentDraft.nozzleID || (availableNozzles.length === 1 ? availableNozzles[0]!.id : '');
+  const effectiveAttendantID =
+    assignmentDraft.attendantID ||
+    (shift.attendants.length === 1 ? shift.attendants[0]!.user_id : '');
+  const attendantName = new Map(shift.attendants.map((a) => [a.user_id, a.full_name]));
+  const nozzleName = new Map(nozzles.map((n) => [n.id, n.label]));
 
   return (
     <Card>
@@ -384,6 +562,95 @@ function ShiftCard({
             <Row label="Cash" value={shift.status === 'open' ? 'shift open' : 'not submitted'} />
           )}
         </div>
+
+        {shift.status === 'open' ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Nozzle assignment
+              </span>
+              {nozzleLookupPending ? (
+                <span className="text-xs text-muted-foreground">Loading nozzles…</span>
+              ) : null}
+            </div>
+            {shift.nozzle_assignments.length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                {shift.nozzle_assignments.map((assignment) => (
+                  <div
+                    key={assignment.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-background/60 px-2 py-1.5"
+                  >
+                    <span className="text-[12px] text-muted-foreground">
+                      <span className="font-mono text-foreground">
+                        {nozzleName.get(assignment.nozzle_id) ?? assignment.nozzle_id.slice(0, 8)}
+                      </span>{' '}
+                      · {attendantName.get(assignment.attendant_id) ?? 'attendant'}
+                    </span>
+                    <PermissionGate permission="shift.assign" stationId={stationID}>
+                      <Button
+                        aria-label="Remove nozzle assignment"
+                        size="icon"
+                        variant="ghost"
+                        disabled={unassigningAssignmentID === assignment.id}
+                        onClick={() => onUnassignNozzle(assignment.id)}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </PermissionGate>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            <PermissionGate permission="shift.assign" stationId={stationID}>
+              <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                <select
+                  aria-label="Nozzle"
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  value={effectiveNozzleID}
+                  onChange={(e) =>
+                    onAssignmentDraftChange({ ...assignmentDraft, nozzleID: e.target.value })
+                  }
+                  disabled={availableNozzles.length === 0}
+                >
+                  <option value="">
+                    {availableNozzles.length === 0 ? 'No unassigned nozzles' : 'Nozzle'}
+                  </option>
+                  {availableNozzles.map((nozzle) => (
+                    <option key={nozzle.id} value={nozzle.id}>
+                      {nozzle.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Attendant"
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  value={effectiveAttendantID}
+                  onChange={(e) =>
+                    onAssignmentDraftChange({ ...assignmentDraft, attendantID: e.target.value })
+                  }
+                  disabled={shift.attendants.length === 0}
+                >
+                  <option value="">
+                    {shift.attendants.length === 0 ? 'No attendants' : 'Attendant'}
+                  </option>
+                  {shift.attendants.map((attendant) => (
+                    <option key={attendant.user_id} value={attendant.user_id}>
+                      {attendant.full_name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  disabled={!effectiveNozzleID || !effectiveAttendantID || assigning}
+                  onClick={() => onAssignNozzle(effectiveNozzleID, effectiveAttendantID)}
+                >
+                  <Plus className="size-4" />
+                  {assigning ? 'Assigning…' : 'Assign'}
+                </Button>
+              </div>
+            </PermissionGate>
+          </div>
+        ) : null}
 
         {/* Exceptions */}
         {shift.exceptions.length > 0 ? (
@@ -443,6 +710,71 @@ function ShiftCard({
       </CardContent>
     </Card>
   );
+}
+
+function DayActions({
+  status,
+  shifts,
+  stationID,
+  closing,
+  reopening,
+  locking,
+  onClose,
+  onReopen,
+  onLock,
+}: {
+  status: string;
+  shifts: OperationsShift[];
+  stationID: string;
+  closing: boolean;
+  reopening: boolean;
+  locking: boolean;
+  onClose: () => void;
+  onReopen: () => void;
+  onLock: () => void;
+}) {
+  const openShifts = shifts.filter((shift) => shift.status === 'open').length;
+  const unapprovedShifts = shifts.filter((shift) => shift.status !== 'approved').length;
+
+  if (status === 'open') {
+    return (
+      <PermissionGate permission="operations.manage_day" stationId={stationID}>
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={openShifts > 0 || closing}
+          title={openShifts > 0 ? 'Close open shifts first' : undefined}
+          onClick={onClose}
+        >
+          <CheckCircle2 className="size-4" />
+          {closing ? 'Closing…' : 'Close day'}
+        </Button>
+      </PermissionGate>
+    );
+  }
+
+  if (status === 'closed') {
+    return (
+      <PermissionGate permission="operations.manage_day" stationId={stationID}>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button size="sm" variant="ghost" disabled={reopening} onClick={onReopen}>
+            {reopening ? 'Reopening…' : 'Reopen'}
+          </Button>
+          <Button
+            size="sm"
+            disabled={unapprovedShifts > 0 || locking}
+            title={unapprovedShifts > 0 ? 'Approve shifts first' : undefined}
+            onClick={onLock}
+          >
+            <Lock className="size-4" />
+            {locking ? 'Locking…' : 'Lock day'}
+          </Button>
+        </div>
+      </PermissionGate>
+    );
+  }
+
+  return null;
 }
 
 function Row({

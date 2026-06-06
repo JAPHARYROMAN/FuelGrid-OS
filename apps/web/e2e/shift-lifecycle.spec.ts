@@ -31,6 +31,49 @@ const TEAM = {
   member_count: 1,
 };
 
+const STATION_OVERVIEW = {
+  station: STATION,
+  tanks: [
+    {
+      id: 'tank-1',
+      tenant_id: STATION.tenant_id,
+      station_id: STATION.id,
+      product_id: 'prod-1',
+      name: 'PMS Tank',
+      code: 'PMS-T',
+      capacity_litres: '30000.000',
+      safe_min_litres: '5000.000',
+      safe_max_litres: '28000.000',
+      status: 'active',
+    },
+  ],
+  pumps: [
+    {
+      id: 'pump-1',
+      tenant_id: STATION.tenant_id,
+      station_id: STATION.id,
+      number: 1,
+      status: 'active',
+      nozzles: [
+        {
+          id: 'noz-1',
+          tenant_id: STATION.tenant_id,
+          station_id: STATION.id,
+          pump_id: 'pump-1',
+          tank_id: 'tank-1',
+          product_id: 'prod-1',
+          number: 1,
+          default_price: '4256.00',
+          meter_decimal_places: 2,
+          status: 'active',
+        },
+      ],
+    },
+  ],
+  open_shifts: [],
+  open_incidents: [],
+};
+
 const SCHEDULED_TEAM = {
   date: DAY.business_date,
   slot: 'morning',
@@ -97,6 +140,9 @@ test.describe('shift lifecycle', () => {
     await page.route('**/api/bff/api/v1/stations/*/scheduled-team**', (route) =>
       json(route, SCHEDULED_TEAM),
     );
+    await page.route(`**/api/bff/api/v1/stations/${STATION.id}/overview`, (route) =>
+      json(route, STATION_OVERVIEW),
+    );
 
     // POST open shift -> next overview shows one open shift.
     let openShiftCalls = 0;
@@ -105,6 +151,19 @@ test.describe('shift lifecycle', () => {
       openShiftCalls += 1;
       state = overview([shift('open')]);
       await json(route, shift('open'));
+    });
+
+    await page.route('**/api/bff/api/v1/shifts/*/nozzle-assignments', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      const assignment = {
+        id: 'assign-1',
+        shift_id: 'shift-1',
+        nozzle_id: 'noz-1',
+        attendant_id: 'u-2',
+        assigned_at: '2026-06-01T06:05:00Z',
+      };
+      state = overview([shift('open', { nozzle_assignments: [assignment] })]);
+      await json(route, assignment, 201);
     });
 
     // POST close -> overview shows the shift closed with a submitted cash split.
@@ -159,6 +218,12 @@ test.describe('shift lifecycle', () => {
     // being present (only rendered when status === 'open').
     await expect(page.getByRole('heading', { name: 'Morning' })).toBeVisible();
     await expect.poll(() => openShiftCalls).toBe(1);
+
+    // --- ASSIGN NOZZLE ---
+    const assignBtn = page.getByRole('button', { name: 'Assign' });
+    await expect(assignBtn).toBeEnabled();
+    await assignBtn.click();
+    await expect(page.getByText('P1·N1 · PMS-T')).toBeVisible();
 
     // --- CLOSE ---
     const closeBtn = page.getByRole('button', { name: 'Close shift' });

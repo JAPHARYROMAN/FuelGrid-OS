@@ -75,6 +75,7 @@ export function permissionsBody() {
     'shift.open',
     'shift.close',
     'shift.approve',
+    'shift.assign',
     'station.manage',
     'station.read',
     'period.close',
