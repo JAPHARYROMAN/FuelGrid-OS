@@ -127,6 +127,7 @@ import type {
   Shift,
   ShiftAttendance,
   ShiftAttendanceList,
+  AttendantCurrentShift,
   CollectionReceipt,
   ConfirmCashSubmissionRequest,
   ExpectedOpeningReadingList,
@@ -468,6 +469,16 @@ export class Client {
   /** The actor's own current shift + assigned nozzles (attendant console). */
   myActiveShift(signal?: AbortSignal): Promise<MyShift> {
     return this.request<MyShift>('/api/v1/me/active-shift', { signal });
+  }
+
+  /**
+   * The attendant workflow snapshot (Mobile Attendant Phase 1, self-scoped):
+   * the actor's current shift — or their rotation duty for today — plus a
+   * computed next_action and a plain-English user_message the mobile home
+   * screen renders directly.
+   */
+  attendantCurrentShift(signal?: AbortSignal): Promise<AttendantCurrentShift> {
+    return this.request<AttendantCurrentShift>('/api/v1/attendant/current-shift', { signal });
   }
 
   // ----------- Me (session management + password) -----------
