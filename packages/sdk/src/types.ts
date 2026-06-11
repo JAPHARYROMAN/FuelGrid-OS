@@ -950,6 +950,8 @@ export interface AttendantAssignment {
   nozzle_number: number;
   product_name: string;
   product_color: string;
+  /** The nozzle's meter precision (0..4); capture screens validate input scale against it client-side, mirroring the server's 422. */
+  meter_decimal_places: number;
   assigned_at: string;
   confirmed_at?: string;
 }

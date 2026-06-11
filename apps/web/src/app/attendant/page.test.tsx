@@ -55,6 +55,7 @@ const baseSnapshot: AttendantCurrentShift = {
       nozzle_number: 1,
       product_name: 'Premium',
       product_color: '#f97316',
+      meter_decimal_places: 2,
       assigned_at: '2026-06-11T05:05:00Z',
     },
   ],
@@ -150,6 +151,34 @@ describe('AttendantHomePage', () => {
     expect(await screen.findByText('Awaiting your confirmation')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /confirm my nozzles/i }));
     expect(confirmNozzleAssignment).toHaveBeenCalledWith('shift-1', 'as-1');
+  });
+
+  it('drives verify_opening_readings to the NATIVE opening-readings screen (no deep-link)', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      next_action: 'verify_opening_readings',
+      user_message: 'Verify the opening reading on each of your nozzles.',
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+      assignments: [
+        { ...baseSnapshot.assignments[0]! },
+        {
+          ...baseSnapshot.assignments[0]!,
+          assignment_id: 'as-2',
+          nozzle_id: 'noz-2',
+          nozzle_number: 2,
+          product_name: 'Diesel',
+        },
+      ],
+      readings: [{ nozzle_id: 'noz-1', opening_reading: '1000.000' }],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: /verify opening readings/i });
+    expect(link).toHaveAttribute('href', '/attendant/opening-readings');
+    // The honest "opens the full site" stub is gone for this stage.
+    expect(screen.queryByText(/opens the full site/i)).not.toBeInTheDocument();
+    // The checklist stage shows per-nozzle progress: one of two openings done.
+    expect(screen.getByText('1 of 2 nozzles verified')).toBeInTheDocument();
   });
 
   it('deep-links submit_collections to the existing my-shift page', async () => {

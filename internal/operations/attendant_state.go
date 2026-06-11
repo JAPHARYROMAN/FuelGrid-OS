@@ -22,8 +22,12 @@ type AttendantAssignment struct {
 	NozzleNumber int
 	ProductName  string
 	ProductColor string
-	AssignedAt   time.Time
-	ConfirmedAt  *time.Time
+	// MeterDecimalPlaces is the nozzle's meter precision (0..4). The mobile
+	// opening/closing capture screens validate input scale against it client
+	// side, mirroring readings.ValidateScale on the server (Phase 2).
+	MeterDecimalPlaces int
+	AssignedAt         time.Time
+	ConfirmedAt        *time.Time
 }
 
 // AttendantAssignments returns the attendant's own labelled nozzle
@@ -31,7 +35,7 @@ type AttendantAssignment struct {
 func (r *Repo) AttendantAssignments(ctx context.Context, tenantID, shiftID, attendantID uuid.UUID) ([]AttendantAssignment, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT sna.id, n.id, p.number, n.number, pr.name, pr.color,
-		       sna.assigned_at, sna.confirmed_at
+		       n.meter_decimal_places, sna.assigned_at, sna.confirmed_at
 		FROM shift_nozzle_assignments sna
 		JOIN nozzles n   ON n.id  = sna.nozzle_id
 		JOIN pumps p     ON p.id  = n.pump_id
@@ -47,7 +51,8 @@ func (r *Repo) AttendantAssignments(ctx context.Context, tenantID, shiftID, atte
 	for rows.Next() {
 		var a AttendantAssignment
 		if err := rows.Scan(&a.ID, &a.NozzleID, &a.PumpNumber, &a.NozzleNumber,
-			&a.ProductName, &a.ProductColor, &a.AssignedAt, &a.ConfirmedAt); err != nil {
+			&a.ProductName, &a.ProductColor, &a.MeterDecimalPlaces,
+			&a.AssignedAt, &a.ConfirmedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
