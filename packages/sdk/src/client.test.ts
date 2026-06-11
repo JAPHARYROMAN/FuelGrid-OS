@@ -399,3 +399,151 @@ describe('Client audit log endpoints', () => {
     expect(res.row_count).toBe(3);
   });
 });
+
+describe('Client mobile attendant phase-0 methods', () => {
+  it('checkInToShift POSTs the check-in path with optional device info', async () => {
+    const f = jsonFetch(201, { id: 'a1', status: 'checked_in' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+
+    await client.checkInToShift('shift-1', { device_info: { model: 'TestPhone' } });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/check-in');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ device_info: { model: 'TestPhone' } }));
+
+    await client.checkInToShift('shift-1');
+    expect(callArgs(f, 1).init.body).toBe(JSON.stringify({}));
+  });
+
+  it('checkOutOfShift POSTs the check-out path', async () => {
+    const f = jsonFetch(200, { id: 'a1', status: 'checked_out' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.checkOutOfShift('shift-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/check-out');
+    expect(init.method).toBe('POST');
+    expect(res.status).toBe('checked_out');
+  });
+
+  it('listShiftAttendance GETs the attendance list', async () => {
+    const f = jsonFetch(200, { items: [], count: 0 });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await client.listShiftAttendance('shift-1');
+    expect(callArgs(f).url).toBe('http://api.test/api/v1/shifts/shift-1/attendance');
+  });
+
+  it('confirmNozzleAssignment POSTs the confirm path', async () => {
+    const f = jsonFetch(200, { id: 'as1', confirmed_at: '2026-06-11T08:00:00Z' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.confirmNozzleAssignment('shift-1', 'as1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/nozzle-assignments/as1/confirm');
+    expect(init.method).toBe('POST');
+    expect(res.confirmed_at).toBe('2026-06-11T08:00:00Z');
+  });
+
+  it('verifyShiftReadings POSTs the batch-verify path', async () => {
+    const f = jsonFetch(200, { items: [], count: 0, newly_verified: 0 });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.verifyShiftReadings('shift-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/readings/verify');
+    expect(init.method).toBe('POST');
+    expect(res.newly_verified).toBe(0);
+  });
+
+  it('verifyCorrectReading POSTs both decimal-string values and the reason', async () => {
+    const f = jsonFetch(201, {
+      id: 'v1',
+      attendant_submitted_reading: '1500.000',
+      supervisor_verified_reading: '1490.000',
+      final_approved_reading: '1490.000',
+      status: 'corrected',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.verifyCorrectReading('shift-1', 'r1', {
+      verified_reading: '1490.000',
+      reason: 'pump display misread',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/readings/r1/verify-correct');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(
+      JSON.stringify({ verified_reading: '1490.000', reason: 'pump display misread' }),
+    );
+    expect(res.final_approved_reading).toBe('1490.000');
+    expect(res.attendant_submitted_reading).toBe('1500.000');
+  });
+});
+
+describe('Client mobile attendant phase-0 handover methods', () => {
+  it('confirmCashSubmission POSTs the confirm path with decimal-string money', async () => {
+    const f = jsonFetch(201, {
+      id: 'cr1',
+      expected_amount: '1475000.00',
+      attendant_submitted_total: '1475000.00',
+      supervisor_received_total: '1470000.00',
+      difference: '-5000.00',
+      status: 'approved_with_difference',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.confirmCashSubmission('shift-1', {
+      received_total: '1470000.00',
+      reason: 'short by 5,000',
+      supervisor_comment: 'counted twice',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/cash-submission/confirm');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(
+      JSON.stringify({
+        received_total: '1470000.00',
+        reason: 'short by 5,000',
+        supervisor_comment: 'counted twice',
+      }),
+    );
+    expect(res.difference).toBe('-5000.00');
+    expect(res.status).toBe('approved_with_difference');
+  });
+
+  it('listExpectedOpeningReadings GETs the expected-opening path', async () => {
+    const f = jsonFetch(200, {
+      items: [
+        {
+          assignment_id: 'as1',
+          nozzle_id: 'noz-1',
+          attendant_id: 'u-2',
+          expected_opening_reading: '1490.000',
+          source: 'verified',
+        },
+      ],
+      count: 1,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listExpectedOpeningReadings('shift-1');
+    expect(callArgs(f).url).toBe('http://api.test/api/v1/shifts/shift-1/expected-opening-readings');
+    expect(res.items[0]?.expected_opening_reading).toBe('1490.000');
+    expect(res.items[0]?.source).toBe('verified');
+  });
+
+  it('openShift forwards the handover override reason', async () => {
+    const f = jsonFetch(201, { id: 'shift-2', status: 'open' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await client.openShift('st-1', {
+      operating_day_id: 'day-1',
+      name: 'Evening',
+      slot: 'evening',
+      handover_override_reason: 'outgoing supervisor unreachable',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/stations/st-1/shifts');
+    expect(init.body).toBe(
+      JSON.stringify({
+        operating_day_id: 'day-1',
+        name: 'Evening',
+        slot: 'evening',
+        handover_override_reason: 'outgoing supervisor unreachable',
+      }),
+    );
+  });
+});

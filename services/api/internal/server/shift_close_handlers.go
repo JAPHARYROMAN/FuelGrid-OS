@@ -110,6 +110,15 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Closings verified BEFORE the close (dual-value model, Mobile Attendant
+	// Phase 0) freeze the supervisor's final approved figure, not the raw
+	// submission — the original stays untouched in meter_readings.
+	finalClosing, err := s.readings.FinalClosingOverridesForShift(ctx, actor.TenantID, shift.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	// Index meter readings (nozzle -> opening/closing) as exact decimal strings;
 	// all close-line litres/value arithmetic happens in SQL numeric, never Go
 	// float (MD-5/OPS-001).
@@ -125,6 +134,9 @@ func (s *Server) handleCloseShift(w http.ResponseWriter, r *http.Request) {
 		if meterRows[i].ReadingType == "opening" {
 			e.opening = &v
 		} else {
+			if final, ok := finalClosing[meterRows[i].ID]; ok {
+				v = final
+			}
 			e.closing = &v
 		}
 	}

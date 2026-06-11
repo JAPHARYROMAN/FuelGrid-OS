@@ -244,6 +244,17 @@ func TestPhase3_DayWorkflow(t *testing.T) {
 		`{"cash_amount":"1475000"}`); code != http.StatusCreated {
 		t.Fatalf("cash: %d %v", code, b)
 	}
+	// Mobile Attendant Phase 0: approval is gated on every closing reading
+	// carrying a supervisor verification (dual-value model).
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/readings/verify", admin, ``); code != http.StatusOK {
+		t.Fatalf("verify readings: %d %v", code, b)
+	}
+	// ...and on a collection receipt confirming the cash handover (a
+	// system_admin may receive their own submission in owner-operated flows).
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission/confirm", admin,
+		`{"received_total":"1475000"}`); code != http.StatusCreated {
+		t.Fatalf("confirm cash: %d %v", code, b)
+	}
 	// System admins may override separation of duties during owner-operated
 	// backfill flows.
 	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {

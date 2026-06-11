@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -129,6 +130,10 @@ type openShiftRequest struct {
 	Name           string    `json:"name"`
 	Slot           string    `json:"slot"`
 	Notes          *string   `json:"notes,omitempty"`
+	// HandoverOverrideReason lets a shift.approve holder open a new shift
+	// while a prior shift at the station is still closed-but-not-approved
+	// (Mobile Attendant Phase 0 handover chain). The override is audited.
+	HandoverOverrideReason string `json:"handover_override_reason,omitempty"`
 }
 
 func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
@@ -250,6 +255,36 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Handover chain (Mobile Attendant Phase 0): a new shift must not open
+	// while a prior shift at this station is closed-but-not-approved — the
+	// incoming attendants' expected openings derive from the outgoing shift's
+	// APPROVED closings. The backdated catch-up flow is unaffected: it
+	// approves each shift before opening the next. A shift.approve holder may
+	// override with a mandatory, audited reason.
+	overrideReason := strings.TrimSpace(req.HandoverOverrideReason)
+	unapproved, err := s.operations.ClosedUnapprovedShiftIDsForStation(ctx, tx, actor.TenantID, stationID)
+	if err != nil {
+		s.logger.Error("open shift: handover gate", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	handoverOverridden := false
+	if len(unapproved) > 0 {
+		if overrideReason == "" {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":                "approve the station's closed shifts before opening a new one (or override with a reason)",
+				"code":                 "prior_shift_unapproved",
+				"status":               http.StatusConflict,
+				"unapproved_shift_ids": unapproved,
+			})
+			return
+		}
+		if !s.authorizeStation(w, r, actor, "shift.approve", stationID) {
+			return
+		}
+		handoverOverridden = true
+	}
+
 	slotStr := string(slot)
 	teamID := sched.Team.ID
 	shift, err := s.operations.OpenShift(ctx, tx, actor.TenantID, operations.OpenShiftInput{
@@ -281,6 +316,26 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("open shift: audit", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+	// The handover override is separately audited with its mandatory reason
+	// and the shifts it bypassed, in the same tx as the open itself.
+	if handoverOverridden {
+		if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+			TenantID: actor.TenantID, ActorID: actor.UserID,
+			Action: "shift.handover_overridden", EventType: "ShiftHandoverOverridden",
+			EntityType: "shift", EntityID: shift.ID.String(),
+			NewValue: map[string]any{
+				"shift_id":             shift.ID,
+				"reason":               overrideReason,
+				"unapproved_shift_ids": unapproved,
+			},
+			IP: clientIP(r), UserAgent: r.UserAgent(),
+			RequestID: chimiddleware.GetReqID(ctx),
+		}); err != nil {
+			s.logger.Error("open shift: override audit", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

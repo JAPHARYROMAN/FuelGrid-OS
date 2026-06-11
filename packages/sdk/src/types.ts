@@ -794,6 +794,108 @@ export interface NozzleAssignment {
   nozzle_id: string;
   attendant_id: string;
   assigned_at: string;
+  /** Set once the assigned attendant confirms the assignment (Mobile Attendant Phase 0). */
+  confirmed_at?: string;
+}
+
+/** One attendant's check-in/out record for a shift (Mobile Attendant Phase 0). */
+export interface ShiftAttendance {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  shift_id: string;
+  attendant_id: string;
+  status: 'checked_in' | 'checked_out';
+  check_in_at: string;
+  check_out_at?: string;
+  device_info?: Record<string, unknown>;
+}
+
+export interface ShiftAttendanceList {
+  items: ShiftAttendance[];
+  count: number;
+}
+
+/**
+ * Dual-value supervisor verification of one closing meter reading (Mobile
+ * Attendant Phase 0). All reading figures are exact decimal STRINGS
+ * (numeric(14,3) -> text); the underlying meter reading is never mutated.
+ */
+export interface ReadingVerification {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  shift_id: string;
+  nozzle_id: string;
+  reading_id: string;
+  attendant_submitted_reading: string;
+  supervisor_verified_reading?: string;
+  final_approved_reading: string;
+  status: 'approved' | 'corrected' | 'rejected';
+  reason?: string;
+  verified_by: string;
+  verified_at: string;
+}
+
+export interface ReadingVerificationList {
+  items: ReadingVerification[];
+  count: number;
+  /** Verifications created by THIS batch call (0 on an idempotent rerun). */
+  newly_verified: number;
+}
+
+/**
+ * Supervisor confirmation of a shift's cash submission (Mobile Attendant
+ * Phase 0, handover chain). Every money figure is an exact decimal STRING
+ * (numeric(14,2) -> text); difference = received − expected.
+ */
+export interface CollectionReceipt {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  shift_id: string;
+  cash_submission_id: string;
+  expected_amount: string;
+  attendant_submitted_total: string;
+  supervisor_received_total: string;
+  difference: string;
+  status: 'received' | 'approved_with_difference' | 'rejected';
+  reason?: string;
+  supervisor_comment?: string;
+  received_by: string;
+  received_at: string;
+}
+
+export interface ConfirmCashSubmissionRequest {
+  /** Exact decimal string of the cash physically received. */
+  received_total: string;
+  /** "received" (default) or "rejected"; a non-zero difference upgrades to approved_with_difference server-side. */
+  status?: 'received' | 'rejected';
+  /** Required when the received total differs from expected or the handover is rejected. */
+  reason?: string;
+  supervisor_comment?: string;
+}
+
+/**
+ * One assigned nozzle's expected opening meter for a shift — the previous
+ * shift's final approved closing (Mobile Attendant Phase 0, handover chain).
+ * expected_opening_reading is an exact decimal STRING, absent when the nozzle
+ * has no prior closing at the station.
+ */
+export interface ExpectedOpeningReading {
+  assignment_id: string;
+  nozzle_id: string;
+  attendant_id: string;
+  expected_opening_reading?: string;
+  /** "verified" when derived from a reading verification, "raw" when from the unverified closing. */
+  source?: 'verified' | 'raw';
+  source_shift_id?: string;
+  source_reading_id?: string;
+}
+
+export interface ExpectedOpeningReadingList {
+  items: ExpectedOpeningReading[];
+  count: number;
 }
 
 export interface ShiftDetail extends Shift {

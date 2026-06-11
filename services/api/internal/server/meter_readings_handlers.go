@@ -178,6 +178,34 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusUnprocessableEntity, "reading has more decimals than the nozzle's meter precision")
 		return
 	}
+	// Handover chain (Mobile Attendant Phase 0): an opening reading must not
+	// be LOWER than the previous shift's final approved closing for this
+	// nozzle — meters only move forward. The compare is SQL numeric on the
+	// exact decimal strings.
+	if req.ReadingType == "opening" {
+		expected, err := s.operations.ExpectedOpeningForNozzle(ctx, actor.TenantID, shift, req.NozzleID)
+		if err != nil {
+			s.logger.Error("capture meter reading: expected opening", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if expected != nil {
+			below, err := s.operations.DecimalLess(ctx, req.Reading.String(), *expected)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if below {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+					"error":                    "opening reading is below the previous shift's approved closing",
+					"code":                     "opening_below_expected",
+					"status":                   http.StatusUnprocessableEntity,
+					"expected_opening_reading": *expected,
+				})
+				return
+			}
+		}
+	}
 
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
