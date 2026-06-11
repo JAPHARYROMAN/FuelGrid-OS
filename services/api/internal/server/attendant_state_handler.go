@@ -28,6 +28,7 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/operations"
+	"github.com/japharyroman/fuelgrid-os/internal/readings"
 )
 
 // Attendance statuses surfaced on the snapshot.
@@ -94,12 +95,18 @@ type attendantAssignmentDTO struct {
 // Reading figures are exact decimal STRINGS (numeric(14,3) -> text).
 // VerificationStatus is set once a closing reading exists: "pending" until a
 // reading_verifications row lands, then that row's status
-// (approved|corrected|rejected).
+// (approved|corrected|rejected). Once verified, FinalReading carries the
+// verification's final_approved_reading (== ClosingReading when approved
+// as-is, the supervisor's figure when corrected) and VerificationReason the
+// supervisor's reason where one was required — the dual-value model surfaced
+// to the attendant review-status screen (Phase 3, PRD §6.9).
 type attendantReadingDTO struct {
 	NozzleID           uuid.UUID `json:"nozzle_id"`
 	OpeningReading     *string   `json:"opening_reading,omitempty"`
 	ClosingReading     *string   `json:"closing_reading,omitempty"`
 	VerificationStatus *string   `json:"verification_status,omitempty"`
+	FinalReading       *string   `json:"final_reading,omitempty"`
+	VerificationReason *string   `json:"verification_reason,omitempty"`
 }
 
 type attendantCurrentShiftDTO struct {
@@ -258,9 +265,9 @@ func (s *Server) attendantShiftSnapshot(r *http.Request, actor identity.Actor, s
 	if err != nil {
 		return nil, err
 	}
-	verifByReading := map[uuid.UUID]string{}
+	verifByReading := map[uuid.UUID]*readings.Verification{}
 	for i := range verifications {
-		verifByReading[verifications[i].ReadingID] = verifications[i].Status
+		verifByReading[verifications[i].ReadingID] = &verifications[i]
 	}
 	readingByNozzle := map[uuid.UUID]*attendantReadingDTO{}
 	for i := range meterRows {
@@ -279,8 +286,11 @@ func (s *Server) attendantShiftSnapshot(r *http.Request, actor identity.Actor, s
 		} else {
 			d.ClosingReading = &v
 			status := "pending"
-			if st, ok := verifByReading[m.ID]; ok {
-				status = st
+			if ver, ok := verifByReading[m.ID]; ok {
+				status = ver.Status
+				final := ver.FinalApprovedReading
+				d.FinalReading = &final
+				d.VerificationReason = ver.Reason
 			}
 			d.VerificationStatus = &status
 		}

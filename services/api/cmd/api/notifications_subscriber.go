@@ -90,6 +90,7 @@ var subscribedEventTypes = []string{
 	"RiskDetectionRun",
 	"IncidentOpened",
 	"ApprovalRequested",
+	"ReadingVerificationCorrected",
 }
 
 // notifSpecFor maps a domain event to the notification it should raise. It is a
@@ -144,6 +145,17 @@ func notifSpecFor(e events.Event) (notifSpec, bool) {
 			notifType: "approval.requested",
 			title:     "Approval requested",
 			body:      "An approval request is awaiting your decision.",
+			severity:  notifications.SeverityWarning,
+		}, true
+	case "ReadingVerificationCorrected":
+		// A supervisor corrected an attendant's closing meter reading (Mobile
+		// Attendant Phase 3, PRD §7.8 "notify attendant of supervisor
+		// decision"). Tenant-wide like every feed entry today; per-attendant
+		// targeting arrives with the Phase 7 notification publishers.
+		return notifSpec{
+			notifType: "reading.corrected",
+			title:     "Closing reading corrected",
+			body:      "A supervisor corrected a submitted closing meter reading — check the review status of your shift readings.",
 			severity:  notifications.SeverityWarning,
 		}, true
 	default:

@@ -219,6 +219,18 @@ func (s *Server) handleCaptureMeterReading(w http.ResponseWriter, r *http.Reques
 		Reading: req.Reading.String(), RecordedBy: actor.UserID,
 	})
 	if isUniqueViolation(err) {
+		if req.ReadingType == "closing" {
+			// Submission lock (PRD §7.7, Mobile Attendant Phase 3): once a
+			// closing is submitted it is pending supervisor review — a second
+			// capture carries the machine-readable code so the mobile screen
+			// can explain the lock instead of offering a retry.
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":  "a closing reading was already submitted for this nozzle; supervisor verification handles corrections",
+				"code":   "closing_already_submitted",
+				"status": http.StatusConflict,
+			})
+			return
+		}
 		writeError(w, http.StatusConflict, "a "+req.ReadingType+" reading already exists for this nozzle; correct it instead")
 		return
 	}
@@ -296,6 +308,21 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 	}
 	if old.Status != "active" {
 		writeError(w, http.StatusConflict, "reading is already superseded")
+		return
+	}
+	// Submission lock (PRD §7.7, Mobile Attendant Phase 3): an attendant's
+	// closing reading is locked the moment it is submitted — corrections go
+	// through the supervisor (verify-correct, or this endpoint under
+	// reading.override). Without this guard the attendant could supersede
+	// their own closing while the shift is open, silently replacing the
+	// submission (and resetting any verification already recorded on it).
+	// Openings stay attendant-correctable while the shift is open (Phase 2).
+	if !override && old.ReadingType == "closing" {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":  "your closing reading is locked after submission; ask your supervisor to review and correct it",
+			"code":   "closing_already_submitted",
+			"status": http.StatusConflict,
+		})
 		return
 	}
 	if !s.requireNozzleAssigned(w, ctx, actor, shift.ID, old.NozzleID, override) {

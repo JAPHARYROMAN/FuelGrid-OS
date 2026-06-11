@@ -66,3 +66,35 @@ export function subtractMeterDecimals(a: string, b: string): string {
   const frac = scale > 0 ? digits.slice(digits.length - scale).replace(/0+$/, '') : '';
   return `${negative ? '-' : ''}${int}${frac ? `.${frac}` : ''}`;
 }
+
+/** Render a non-negative scaled BigInt back to a trimmed decimal string. */
+function fromScaled(value: bigint, scale: number): string {
+  const digits = value.toString().padStart(scale + 1, '0');
+  const int = digits.slice(0, digits.length - scale) || '0';
+  const frac = scale > 0 ? digits.slice(digits.length - scale).replace(/0+$/, '') : '';
+  return `${int}${frac ? `.${frac}` : ''}`;
+}
+
+/**
+ * Exact a + b as a decimal string (trailing fraction zeros trimmed). Both
+ * inputs must satisfy isMeterDecimal — used to total litres across nozzles
+ * on the closing confirmation step (Phase 3) without binary-float drift.
+ */
+export function addMeterDecimals(a: string, b: string): string {
+  const { ia, ib, scale } = scaled(a, b);
+  return fromScaled(ia + ib, scale);
+}
+
+/**
+ * Exact value × factor (a small non-negative INTEGER factor) as a decimal
+ * string. Used by the closing screen's high-delta heuristic ("more than 10×
+ * the median of the other nozzles") — the multiply happens on the scaled
+ * BigInt, never a JS number.
+ */
+export function multiplyMeterDecimal(value: string, factor: number): string {
+  if (!Number.isInteger(factor) || factor < 0) {
+    throw new Error('multiplyMeterDecimal: factor must be a non-negative integer');
+  }
+  const { int, frac } = parts(value);
+  return fromScaled(BigInt(int + frac) * BigInt(factor), frac.length);
+}

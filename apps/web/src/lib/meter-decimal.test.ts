@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  addMeterDecimals,
   compareMeterDecimals,
   isMeterDecimal,
   meterFractionDigits,
+  multiplyMeterDecimal,
   subtractMeterDecimals,
 } from './meter-decimal';
 
@@ -58,5 +60,25 @@ describe('subtractMeterDecimals', () => {
 
   it('marks negative differences', () => {
     expect(subtractMeterDecimals('1499', '1500')).toBe('-1');
+  });
+});
+
+describe('addMeterDecimals', () => {
+  it('adds exactly across different scales and trims trailing zeros', () => {
+    expect(addMeterDecimals('1500.250', '99.75')).toBe('1600');
+    expect(addMeterDecimals('0.1', '0.2')).toBe('0.3'); // no binary-float 0.30000000000000004
+    expect(addMeterDecimals('120.25', '0')).toBe('120.25');
+  });
+});
+
+describe('multiplyMeterDecimal', () => {
+  it('multiplies exactly by a small integer factor', () => {
+    expect(multiplyMeterDecimal('120.25', 10)).toBe('1202.5');
+    expect(multiplyMeterDecimal('0.1', 3)).toBe('0.3');
+    expect(multiplyMeterDecimal('500', 0)).toBe('0');
+  });
+
+  it('rejects non-integer factors', () => {
+    expect(() => multiplyMeterDecimal('1', 1.5)).toThrow();
   });
 });

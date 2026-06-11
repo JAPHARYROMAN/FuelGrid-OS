@@ -1,0 +1,163 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as React from 'react';
+
+import type { AttendantCurrentShift } from '@fuelgrid/sdk';
+
+const attendantCurrentShift = vi.fn();
+vi.mock('@/lib/api', () => ({
+  api: {
+    attendantCurrentShift: (...args: unknown[]) => attendantCurrentShift(...args),
+  },
+}));
+
+import ReviewStatusPage from './page';
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ReviewStatusPage />
+    </QueryClientProvider>,
+  );
+}
+
+function assignment(n: number, product: string) {
+  return {
+    assignment_id: `as-${n}`,
+    nozzle_id: `noz-${n}`,
+    pump_number: 1,
+    nozzle_number: n,
+    product_name: product,
+    product_color: '#f97316',
+    meter_decimal_places: 2,
+    assigned_at: '2026-06-11T05:05:00Z',
+    confirmed_at: '2026-06-11T05:06:00Z',
+  };
+}
+
+const snapshot: AttendantCurrentShift = {
+  status: 'on_shift',
+  next_action: 'await_reading_verification',
+  user_message: 'Closing readings submitted. Wait for your supervisor to verify them.',
+  station: { id: 'st-1', name: 'Mikocheni' },
+  shift: {
+    id: 'shift-1',
+    tenant_id: 't-1',
+    station_id: 'st-1',
+    operating_day_id: 'day-1',
+    name: 'Morning',
+    status: 'open',
+    opened_by: 'u-1',
+    opened_at: '2026-06-11T05:00:00Z',
+    slot: 'morning',
+  },
+  attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+  assignments: [
+    assignment(1, 'Premium'),
+    assignment(2, 'Diesel'),
+    assignment(3, 'Kerosene'),
+    assignment(4, 'V-Power'),
+  ],
+  readings: [
+    {
+      nozzle_id: 'noz-1',
+      opening_reading: '1000.000',
+      closing_reading: '1500.000',
+      verification_status: 'pending',
+    },
+    {
+      nozzle_id: 'noz-2',
+      opening_reading: '2000.000',
+      closing_reading: '2300.000',
+      verification_status: 'approved',
+      final_reading: '2300.000',
+    },
+    {
+      nozzle_id: 'noz-3',
+      opening_reading: '3000.000',
+      closing_reading: '3500.000',
+      verification_status: 'corrected',
+      final_reading: '3490.000',
+      verification_reason: 'Meter glass misread',
+    },
+    {
+      nozzle_id: 'noz-4',
+      opening_reading: '4000.000',
+      closing_reading: '4100.000',
+      verification_status: 'rejected',
+      final_reading: '4100.000',
+      verification_reason: 'Photo does not match the meter',
+    },
+  ],
+  expected_openings_available: true,
+};
+
+describe('ReviewStatusPage', () => {
+  beforeEach(() => {
+    attendantCurrentShift.mockReset();
+    attendantCurrentShift.mockResolvedValue(snapshot);
+  });
+
+  it('renders every review state: pending, approved, corrected, and rejected', async () => {
+    renderPage();
+
+    expect(await screen.findByText('Pending supervisor review')).toBeInTheDocument();
+    expect(screen.getByText('Approved')).toBeInTheDocument();
+    expect(screen.getByText('Corrected by supervisor')).toBeInTheDocument();
+    expect(screen.getByText('Rejected')).toBeInTheDocument();
+    // Header progress: 3 of the 4 submitted readings carry a decision.
+    expect(screen.getByText('3 of 4 readings verified by your supervisor.')).toBeInTheDocument();
+  });
+
+  it('shows BOTH values, the exact difference, and the reason for a corrected reading', async () => {
+    renderPage();
+
+    await screen.findByText('Corrected by supervisor');
+    // The dual-value model: submitted preserved, final approved shown next
+    // to it, with the exact decimal difference (3490 - 3500 = -10).
+    expect(screen.getByText('3500.000')).toBeInTheDocument();
+    expect(screen.getByText('3490.000')).toBeInTheDocument();
+    expect(screen.getByText('-10')).toBeInTheDocument();
+    expect(screen.getByText(/meter glass misread/i)).toBeInTheDocument();
+    expect(screen.getAllByText('Supervisor approved')).toHaveLength(1);
+    expect(screen.getAllByText('You submitted')).toHaveLength(4);
+  });
+
+  it('shows the rejection reason on a rejected reading', async () => {
+    renderPage();
+
+    await screen.findByText('Rejected');
+    expect(screen.getByText(/photo does not match the meter/i)).toBeInTheDocument();
+  });
+
+  it('marks an unsubmitted nozzle and offers the native path back to closing readings', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...snapshot,
+      readings: snapshot.readings.slice(0, 3),
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    expect(await screen.findByText('Not submitted yet')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /finish closing readings/i })).toHaveAttribute(
+      'href',
+      '/attendant/closing-readings',
+    );
+  });
+
+  it('explains when there is nothing to review', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      status: 'off_duty',
+      next_action: 'off_duty',
+      user_message: 'You are not on a shift today.',
+      attendance: { status: 'not_checked_in' },
+      assignments: [],
+      readings: [],
+      expected_openings_available: false,
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    expect(await screen.findByText('No readings to review')).toBeInTheDocument();
+  });
+});

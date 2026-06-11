@@ -192,6 +192,18 @@ export default function AttendantHomePage() {
     data.readings.some((r) => r.nozzle_id === a.nozzle_id && r.opening_reading != null),
   ).length;
 
+  // Per-nozzle supervisor review progress (Phase 3): closings the supervisor
+  // has decided on (approved / corrected / rejected — anything past pending).
+  const readingsVerified = data.assignments.filter((a) =>
+    data.readings.some(
+      (r) =>
+        r.nozzle_id === a.nozzle_id &&
+        r.closing_reading != null &&
+        r.verification_status != null &&
+        r.verification_status !== 'pending',
+    ),
+  ).length;
+
   return (
     <div className="flex flex-col gap-4">
       {/* Shift header */}
@@ -311,6 +323,14 @@ export default function AttendantHomePage() {
                       {openingsVerified} of {data.assignments.length} nozzles verified
                     </span>
                   ) : null}
+                  {stage.key === 'await_reading_verification' && data.assignments.length > 0 ? (
+                    <Link
+                      href="/attendant/review-status"
+                      className="ml-auto whitespace-nowrap text-sm tabular-nums text-muted-foreground underline-offset-2 hover:underline"
+                    >
+                      {readingsVerified} of {data.assignments.length} verified
+                    </Link>
+                  ) : null}
                 </li>
               );
             })}
@@ -424,9 +444,10 @@ export default function AttendantHomePage() {
 }
 
 /**
- * The single primary CTA the snapshot's next_action drives. Stages whose
- * dedicated mobile screen ships in Phases 2–4 deep-link to the existing
- * /my-shift page (honest stub — clearly labelled as the full site).
+ * The single primary CTA the snapshot's next_action drives. Opening (Phase 2)
+ * and closing/review (Phase 3) stages go to their native mobile screens; the
+ * collections stage still deep-links to the existing /my-shift page until its
+ * Phase 4 screen ships (honest stub — clearly labelled as the full site).
  */
 function NextActionButton({
   data,
@@ -469,9 +490,36 @@ function NextActionButton({
         </Button>
       );
     case 'working':
-      return <DeepLink label="Enter closing readings" subtle />;
+      // Native Phase 3 screen — available early but visually subdued: the
+      // shift is still running.
+      return (
+        <Button asChild className="h-14 text-lg" variant="outline">
+          <Link href="/attendant/closing-readings">
+            Enter closing readings
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
     case 'submit_closing_readings':
-      return <DeepLink label="Finish closing readings" />;
+      return (
+        <Button asChild className="h-14 text-lg">
+          <Link href="/attendant/closing-readings">
+            Finish closing readings
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
+    case 'await_reading_verification':
+      // A wait state, but with a native place to watch it: the per-nozzle
+      // review status (Phase 3).
+      return (
+        <Button asChild className="h-14 text-lg" variant="outline">
+          <Link href="/attendant/review-status">
+            View review status
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
     case 'submit_collections':
       return <DeepLink label="Submit collections" />;
     case 'complete':
@@ -490,7 +538,8 @@ function NextActionButton({
 
 /**
  * Honest deep-link stub: this stage's dedicated mobile screen arrives in
- * Phases 2–4; until then the action opens the existing My Shift page.
+ * Phase 4 (collections); until then the action opens the existing My Shift
+ * page.
  */
 function DeepLink({ label, subtle }: { label: string; subtle?: boolean }) {
   return (
