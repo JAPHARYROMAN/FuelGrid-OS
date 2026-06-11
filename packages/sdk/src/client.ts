@@ -125,9 +125,13 @@ import type {
   Session,
   SetTankOpeningBalanceRequest,
   Shift,
+  ShiftAttendance,
+  ShiftAttendanceList,
   ShiftCloseSummary,
   ShiftDetail,
   ShiftException,
+  ReadingVerification,
+  ReadingVerificationList,
   SetupChecklist,
   Station,
   StationOverview,
@@ -1750,6 +1754,86 @@ export class Client {
   ): Promise<DipReading> {
     return this.request<DipReading>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/dip-readings/${encodeURIComponent(readingID)}/correct`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  // ----------- Attendance & assignment confirmation (Mobile Attendant Phase 0) -----------
+
+  /**
+   * Check in to a shift you are rostered on (self-scoped). Idempotent: a
+   * repeat check-in returns the existing record.
+   */
+  checkInToShift(
+    shiftID: string,
+    req?: { device_info?: Record<string, unknown> },
+    signal?: AbortSignal,
+  ): Promise<ShiftAttendance> {
+    return this.request<ShiftAttendance>(`/api/v1/shifts/${encodeURIComponent(shiftID)}/check-in`, {
+      method: 'POST',
+      body: req ?? {},
+      signal,
+    });
+  }
+
+  /** Check out of a shift you checked in to (self-scoped, idempotent). */
+  checkOutOfShift(shiftID: string, signal?: AbortSignal): Promise<ShiftAttendance> {
+    return this.request<ShiftAttendance>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/check-out`,
+      { method: 'POST', signal },
+    );
+  }
+
+  /** Supervisor view of a shift's check-in/out records (station.read). */
+  listShiftAttendance(shiftID: string, signal?: AbortSignal): Promise<ShiftAttendanceList> {
+    return this.request<ShiftAttendanceList>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/attendance`,
+      { signal },
+    );
+  }
+
+  /**
+   * Confirm your own nozzle assignment (self-scoped to the assigned
+   * attendant; idempotent).
+   */
+  confirmNozzleAssignment(
+    shiftID: string,
+    assignmentID: string,
+    signal?: AbortSignal,
+  ): Promise<NozzleAssignment> {
+    return this.request<NozzleAssignment>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/nozzle-assignments/${encodeURIComponent(assignmentID)}/confirm`,
+      { method: 'POST', signal },
+    );
+  }
+
+  // ----------- Reading verification — dual-value model (Mobile Attendant Phase 0) -----------
+
+  /**
+   * Batch-approve every ACTIVE closing reading of the shift as-is
+   * (reading.override; idempotent; separation of duties — you cannot verify
+   * readings you recorded).
+   */
+  verifyShiftReadings(shiftID: string, signal?: AbortSignal): Promise<ReadingVerificationList> {
+    return this.request<ReadingVerificationList>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/readings/verify`,
+      { method: 'POST', signal },
+    );
+  }
+
+  /**
+   * Verify one closing reading with a corrected figure (reading.override).
+   * The verified reading is an exact decimal STRING; the original meter
+   * reading is never mutated and the reason is mandatory.
+   */
+  verifyCorrectReading(
+    shiftID: string,
+    readingID: string,
+    req: { verified_reading: string; reason: string },
+    signal?: AbortSignal,
+  ): Promise<ReadingVerification> {
+    return this.request<ReadingVerification>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/readings/${encodeURIComponent(readingID)}/verify-correct`,
       { method: 'POST', body: req, signal },
     );
   }

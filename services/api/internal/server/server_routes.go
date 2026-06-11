@@ -971,6 +971,26 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("shift.approve")).Patch("/shifts/{id}/status", s.handleApproveShift)
 	r.Get("/shifts/{id}/exceptions", s.handleListShiftExceptions)
 	r.With(s.requirePermissionHeld("shift.approve")).Patch("/shift-exceptions/{id}/status", s.handleResolveShiftException)
+
+	// Attendance + assignment confirmation (Mobile Attendant App,
+	// Phase 0). Check-in/out and confirm are SELF-scoped attendant
+	// actions (shift membership / assignee enforced in-handler, the
+	// /me/shift style), so they carry no permission gate beyond the
+	// session; the attendance list is a station-scoped read.
+	r.Post("/shifts/{id}/check-in", s.handleCheckIn)
+	r.Post("/shifts/{id}/check-out", s.handleCheckOut)
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/shifts/{id}/attendance", s.handleListShiftAttendance)
+	r.Post("/shifts/{id}/nozzle-assignments/{assignmentID}/confirm", s.handleConfirmNozzleAssignment)
+
+	// Supervisor verification of closing readings — the dual-value
+	// model (Mobile Attendant App, Phase 0). Station-scoped via
+	// reading.override, authorized in-handler; separation of duties
+	// (verifier != recorder) also in-handler.
+	r.With(s.requirePermissionHeld("reading.override")).
+		Post("/shifts/{id}/readings/verify", s.handleVerifyShiftReadings)
+	r.With(s.requirePermissionHeld("reading.override")).
+		Post("/shifts/{id}/readings/{readingID}/verify-correct", s.handleVerifyCorrectReading)
 }
 
 // registerUserAdminRoutes: user & role administration.

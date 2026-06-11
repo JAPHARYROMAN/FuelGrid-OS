@@ -794,6 +794,54 @@ export interface NozzleAssignment {
   nozzle_id: string;
   attendant_id: string;
   assigned_at: string;
+  /** Set once the assigned attendant confirms the assignment (Mobile Attendant Phase 0). */
+  confirmed_at?: string;
+}
+
+/** One attendant's check-in/out record for a shift (Mobile Attendant Phase 0). */
+export interface ShiftAttendance {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  shift_id: string;
+  attendant_id: string;
+  status: 'checked_in' | 'checked_out';
+  check_in_at: string;
+  check_out_at?: string;
+  device_info?: Record<string, unknown>;
+}
+
+export interface ShiftAttendanceList {
+  items: ShiftAttendance[];
+  count: number;
+}
+
+/**
+ * Dual-value supervisor verification of one closing meter reading (Mobile
+ * Attendant Phase 0). All reading figures are exact decimal STRINGS
+ * (numeric(14,3) -> text); the underlying meter reading is never mutated.
+ */
+export interface ReadingVerification {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  shift_id: string;
+  nozzle_id: string;
+  reading_id: string;
+  attendant_submitted_reading: string;
+  supervisor_verified_reading?: string;
+  final_approved_reading: string;
+  status: 'approved' | 'corrected' | 'rejected';
+  reason?: string;
+  verified_by: string;
+  verified_at: string;
+}
+
+export interface ReadingVerificationList {
+  items: ReadingVerification[];
+  count: number;
+  /** Verifications created by THIS batch call (0 on an idempotent rerun). */
+  newly_verified: number;
 }
 
 export interface ShiftDetail extends Shift {

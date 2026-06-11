@@ -1742,6 +1742,100 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/shifts/{id}/check-in:
+    post:
+      tags: [Shifts]
+      summary: Check in to a shift you are rostered on (self-scoped)
+      description: The actor must be on the shift's attendant roster (403 otherwise). Idempotent — a repeat check-in returns the existing record with 200.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                device_info: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Already checked in (idempotent), content: { application/json: { schema: { $ref: '#/components/schemas/ShiftAttendance' } } } }
+        '201': { description: Checked in, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftAttendance' } } } }
+        '403': { description: Not assigned to this shift }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Shift is not open }
+
+  /api/v1/shifts/{id}/check-out:
+    post:
+      tags: [Shifts]
+      summary: Check out of a shift you checked in to (self-scoped)
+      description: Idempotent — a repeat check-out returns the existing record. Checking out without a prior check-in is a 409.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Checked out, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftAttendance' } } } }
+        '403': { description: Not assigned to this shift }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Never checked in }
+
+  /api/v1/shifts/{id}/attendance:
+    get:
+      tags: [Shifts]
+      summary: List a shift's check-in/out records (station.read)
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ShiftAttendanceList' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shifts/{id}/nozzle-assignments/{assignmentID}/confirm:
+    post:
+      tags: [Shifts]
+      summary: Confirm your own nozzle assignment (self-scoped)
+      description: Only the assigned attendant may confirm (403 otherwise). Idempotent — confirming again returns the original confirmation timestamp. A reassignment recreates the row, clearing the confirmation.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: assignmentID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Confirmed, content: { application/json: { schema: { $ref: '#/components/schemas/ConfirmedNozzleAssignment' } } } }
+        '403': { description: Not the assigned attendant }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Shift is not open }
+
+  /api/v1/shifts/{id}/readings/verify:
+    post:
+      tags: [Shifts]
+      summary: Batch-approve every closing reading as-is (reading.override)
+      description: Inserts an approved verification (final = submitted) for every ACTIVE closing reading that has none, preserving the attendant's original submission forever. Idempotent. Separation of duties — refused when the batch contains a reading the actor recorded.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingVerificationList' } } } }
+        '403': { description: Missing reading.override, or self-verification }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/shifts/{id}/readings/{readingID}/verify-correct:
+    post:
+      tags: [Shifts]
+      summary: Verify a closing reading with a corrected figure (reading.override)
+      description: Dual-value model — the meter reading is never mutated; the verification stores the attendant's submission AND the supervisor's figure (final = supervisor's). Reason mandatory. On a closed shift the frozen close line is recomputed in the same transaction.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: readingID, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verified_reading, reason]
+              properties:
+                verified_reading: { type: string, description: Exact decimal string (numeric 14,3) }
+                reason: { type: string }
+      responses:
+        '201': { description: Corrected, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingVerification' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Missing reading.override, or self-verification }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Reading already verified, superseded, or shift approved }
+        '422': { description: Not a closing reading, precision exceeded, or below opening }
+
   /api/v1/shift-exceptions/{id}/status:
     patch:
       tags: [Shifts]
@@ -6294,6 +6388,53 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ShiftException' } }
         count: { type: integer }
+
+    ShiftAttendance:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        station_id: { type: string, format: uuid }
+        shift_id: { type: string, format: uuid }
+        attendant_id: { type: string, format: uuid }
+        status: { type: string, enum: [checked_in, checked_out] }
+        check_in_at: { type: string, format: date-time }
+        check_out_at: { type: string, format: date-time }
+        device_info: { type: object, additionalProperties: true }
+    ShiftAttendanceList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ShiftAttendance' } }
+        count: { type: integer }
+    ConfirmedNozzleAssignment:
+      allOf:
+        - $ref: '#/components/schemas/NozzleAssignment'
+        - type: object
+          properties:
+            confirmed_at: { type: string, format: date-time }
+    ReadingVerification:
+      type: object
+      description: Dual-value supervisor verification of one closing meter reading. All reading figures are exact decimal strings (numeric 14,3); the underlying meter reading is never mutated.
+      properties:
+        id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        station_id: { type: string, format: uuid }
+        shift_id: { type: string, format: uuid }
+        nozzle_id: { type: string, format: uuid }
+        reading_id: { type: string, format: uuid }
+        attendant_submitted_reading: { type: string }
+        supervisor_verified_reading: { type: string }
+        final_approved_reading: { type: string }
+        status: { type: string, enum: [approved, corrected, rejected] }
+        reason: { type: string }
+        verified_by: { type: string, format: uuid }
+        verified_at: { type: string, format: date-time }
+    ReadingVerificationList:
+      type: object
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ReadingVerification' } }
+        count: { type: integer }
+        newly_verified: { type: integer }
 
     MyShiftNozzle:
       type: object

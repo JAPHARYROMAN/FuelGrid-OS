@@ -91,6 +91,12 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "resolve the shift's open exceptions before approving")
 		return
 	}
+	// Mobile Attendant Phase 0 gate: every ACTIVE closing reading must carry a
+	// supervisor verification (dual-value model) before the shift can be
+	// approved — expected collection must derive from verified figures.
+	if !s.requireClosingReadingsVerified(w, ctx, s.deps.DB, actor.TenantID, before.ID) {
+		return
+	}
 
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
@@ -123,6 +129,12 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 	}
 	if openInTx > 0 {
 		writeError(w, http.StatusConflict, "resolve the shift's open exceptions before approving")
+		return
+	}
+	// Re-check the verification gate under the shift's FOR UPDATE lock, so a
+	// reading captured/corrected concurrently cannot slip past approval
+	// unverified.
+	if !s.requireClosingReadingsVerified(w, ctx, tx, actor.TenantID, before.ID) {
 		return
 	}
 
