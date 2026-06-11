@@ -991,6 +991,15 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 		Post("/shifts/{id}/readings/verify", s.handleVerifyShiftReadings)
 	r.With(s.requirePermissionHeld("reading.override")).
 		Post("/shifts/{id}/readings/{readingID}/verify-correct", s.handleVerifyCorrectReading)
+
+	// Collection receipts + the handover chain (Mobile Attendant
+	// App, Phase 0). Confirm is station-scoped via cash.confirm,
+	// authorized in-handler; SoD (receiver != submitter) in-handler.
+	// Expected openings are readable by the shift's attendants
+	// (self-scoped) or station.read holders, resolved in-handler.
+	r.With(s.requirePermissionHeld("cash.confirm")).
+		Post("/shifts/{id}/cash-submission/confirm", s.handleConfirmCashSubmission)
+	r.Get("/shifts/{id}/expected-opening-readings", s.handleExpectedOpeningReadings)
 }
 
 // registerUserAdminRoutes: user & role administration.

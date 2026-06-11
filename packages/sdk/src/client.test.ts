@@ -475,3 +475,75 @@ describe('Client mobile attendant phase-0 methods', () => {
     expect(res.attendant_submitted_reading).toBe('1500.000');
   });
 });
+
+describe('Client mobile attendant phase-0 handover methods', () => {
+  it('confirmCashSubmission POSTs the confirm path with decimal-string money', async () => {
+    const f = jsonFetch(201, {
+      id: 'cr1',
+      expected_amount: '1475000.00',
+      attendant_submitted_total: '1475000.00',
+      supervisor_received_total: '1470000.00',
+      difference: '-5000.00',
+      status: 'approved_with_difference',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.confirmCashSubmission('shift-1', {
+      received_total: '1470000.00',
+      reason: 'short by 5,000',
+      supervisor_comment: 'counted twice',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/cash-submission/confirm');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(
+      JSON.stringify({
+        received_total: '1470000.00',
+        reason: 'short by 5,000',
+        supervisor_comment: 'counted twice',
+      }),
+    );
+    expect(res.difference).toBe('-5000.00');
+    expect(res.status).toBe('approved_with_difference');
+  });
+
+  it('listExpectedOpeningReadings GETs the expected-opening path', async () => {
+    const f = jsonFetch(200, {
+      items: [
+        {
+          assignment_id: 'as1',
+          nozzle_id: 'noz-1',
+          attendant_id: 'u-2',
+          expected_opening_reading: '1490.000',
+          source: 'verified',
+        },
+      ],
+      count: 1,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listExpectedOpeningReadings('shift-1');
+    expect(callArgs(f).url).toBe('http://api.test/api/v1/shifts/shift-1/expected-opening-readings');
+    expect(res.items[0]?.expected_opening_reading).toBe('1490.000');
+    expect(res.items[0]?.source).toBe('verified');
+  });
+
+  it('openShift forwards the handover override reason', async () => {
+    const f = jsonFetch(201, { id: 'shift-2', status: 'open' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await client.openShift('st-1', {
+      operating_day_id: 'day-1',
+      name: 'Evening',
+      slot: 'evening',
+      handover_override_reason: 'outgoing supervisor unreachable',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/stations/st-1/shifts');
+    expect(init.body).toBe(
+      JSON.stringify({
+        operating_day_id: 'day-1',
+        name: 'Evening',
+        slot: 'evening',
+        handover_override_reason: 'outgoing supervisor unreachable',
+      }),
+    );
+  });
+});

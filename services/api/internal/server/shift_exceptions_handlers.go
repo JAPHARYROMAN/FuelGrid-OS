@@ -97,6 +97,11 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 	if !s.requireClosingReadingsVerified(w, ctx, s.deps.DB, actor.TenantID, before.ID) {
 		return
 	}
+	// Handover-chain gate: a cash submission must carry a non-rejected
+	// collection receipt before its shift can be approved.
+	if !s.requireCollectionReceiptConfirmed(w, ctx, s.deps.DB, actor.TenantID, before.ID) {
+		return
+	}
 
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
@@ -135,6 +140,12 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 	// reading captured/corrected concurrently cannot slip past approval
 	// unverified.
 	if !s.requireClosingReadingsVerified(w, ctx, tx, actor.TenantID, before.ID) {
+		return
+	}
+	// Re-check the receipt gate under the same lock: cash submission takes
+	// FOR SHARE on the shift row, so a submission landing concurrently cannot
+	// slip past approval unconfirmed.
+	if !s.requireCollectionReceiptConfirmed(w, ctx, tx, actor.TenantID, before.ID) {
 		return
 	}
 

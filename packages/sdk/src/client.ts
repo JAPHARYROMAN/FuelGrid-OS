@@ -127,6 +127,9 @@ import type {
   Shift,
   ShiftAttendance,
   ShiftAttendanceList,
+  CollectionReceipt,
+  ConfirmCashSubmissionRequest,
+  ExpectedOpeningReadingList,
   ShiftCloseSummary,
   ShiftDetail,
   ShiftException,
@@ -1490,7 +1493,18 @@ export class Client {
 
   openShift(
     stationID: string,
-    req: { operating_day_id: string; name: string; slot: 'morning' | 'evening'; notes?: string },
+    req: {
+      operating_day_id: string;
+      name: string;
+      slot: 'morning' | 'evening';
+      notes?: string;
+      /**
+       * Lets a shift.approve holder open while a prior shift at the station is
+       * closed-but-not-approved (409 prior_shift_unapproved otherwise); the
+       * override is audited (Mobile Attendant Phase 0 handover chain).
+       */
+      handover_override_reason?: string;
+    },
     signal?: AbortSignal,
   ): Promise<Shift> {
     return this.request<Shift>(`/api/v1/stations/${encodeURIComponent(stationID)}/shifts`, {
@@ -1868,6 +1882,39 @@ export class Client {
     return this.request<CashSubmission>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/cash-submission`,
       { method: 'POST', body: req, signal },
+    );
+  }
+
+  /**
+   * Confirm receipt of a closed shift's cash submission (cash.confirm;
+   * Mobile Attendant Phase 0 handover chain). All money figures are exact
+   * decimal STRINGS; the receiver must not be the submitter (SoD), and a
+   * reason is required when the received total differs from expected or the
+   * handover is rejected.
+   */
+  confirmCashSubmission(
+    shiftID: string,
+    req: ConfirmCashSubmissionRequest,
+    signal?: AbortSignal,
+  ): Promise<CollectionReceipt> {
+    return this.request<CollectionReceipt>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/cash-submission/confirm`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /**
+   * Per assigned nozzle, the expected opening meter for the shift — the
+   * previous shift's final approved closing (Mobile Attendant Phase 0
+   * handover chain). Readable by the shift's attendants or station.read.
+   */
+  listExpectedOpeningReadings(
+    shiftID: string,
+    signal?: AbortSignal,
+  ): Promise<ExpectedOpeningReadingList> {
+    return this.request<ExpectedOpeningReadingList>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/expected-opening-readings`,
+      { signal },
     );
   }
 

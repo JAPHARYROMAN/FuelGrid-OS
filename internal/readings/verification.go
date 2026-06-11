@@ -154,6 +154,38 @@ func (r *Repo) UnverifiedClosingForShift(ctx context.Context, tenantID, shiftID 
 	return out, rows.Err()
 }
 
+// FinalClosingOverridesForShift maps the shift's ACTIVE closing reading ids
+// to their verification's final_approved_reading (exact decimal strings).
+// The close snapshot consults this map so a closing corrected BEFORE the
+// shift closed still freezes the supervisor's approved figure, not the raw
+// submission (the dual-value model's "downstream money math uses the final").
+func (r *Repo) FinalClosingOverridesForShift(ctx context.Context, tenantID, shiftID uuid.UUID) (map[uuid.UUID]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT v.reading_id, v.final_approved_reading::text
+		FROM reading_verifications v
+		JOIN meter_readings m
+		  ON m.tenant_id = v.tenant_id AND m.id = v.reading_id
+		WHERE v.tenant_id = $1 AND v.shift_id = $2
+		  AND m.reading_type = 'closing' AND m.status = 'active'
+	`, tenantID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]string{}
+	for rows.Next() {
+		var (
+			id    uuid.UUID
+			final string
+		)
+		if err := rows.Scan(&id, &final); err != nil {
+			return nil, err
+		}
+		out[id] = final
+	}
+	return out, rows.Err()
+}
+
 // UnverifiedClosingCountForShift counts the shift's ACTIVE closing readings
 // without a verification row — the shift-approval gate. It runs through any
 // Querier so the approval handler can re-check inside the tx that holds the

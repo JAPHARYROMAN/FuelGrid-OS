@@ -293,6 +293,25 @@ func (s *Server) handleVerifyCorrectReading(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusUnprocessableEntity, "verified_reading has more decimals than the nozzle's meter precision")
 		return
 	}
+	// A corrected closing below the nozzle's opening would drive litres
+	// negative — reject it whether or not the shift has closed yet (the
+	// closed path's recompute re-checks on the frozen line). The compare is
+	// SQL numeric on the exact decimal strings.
+	if opening, err := s.readings.ActiveForShiftNozzle(ctx, actor.TenantID, shift.ID, reading.NozzleID, "opening"); err == nil {
+		below, lerr := s.operations.DecimalLess(ctx, req.VerifiedReading.String(), opening.Reading)
+		if lerr != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if below {
+			writeError(w, http.StatusUnprocessableEntity,
+				"verified_reading is below the shift's opening reading")
+			return
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {

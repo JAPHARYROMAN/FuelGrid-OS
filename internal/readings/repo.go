@@ -201,6 +201,21 @@ func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*MeterReading, 
 	return &m, nil
 }
 
+// ActiveForShiftNozzle returns the shift's single ACTIVE reading of the given
+// type for one nozzle, or pgx.ErrNoRows when none was captured yet.
+func (r *Repo) ActiveForShiftNozzle(ctx context.Context, tenantID, shiftID, nozzleID uuid.UUID, readingType string) (*MeterReading, error) {
+	var m MeterReading
+	if err := scanMeter(r.pool.QueryRow(ctx, `
+		SELECT `+meterColumns+`
+		FROM meter_readings
+		WHERE tenant_id = $1 AND shift_id = $2 AND nozzle_id = $3
+		  AND reading_type = $4 AND status = 'active'
+	`, tenantID, shiftID, nozzleID, readingType), &m); err != nil {
+		return nil, err
+	}
+	return &m, nil
+}
+
 // Capture inserts a new active reading. A second active reading for the same
 // (shift, nozzle, reading_type) trips the partial unique index, which the
 // handler maps to 409.

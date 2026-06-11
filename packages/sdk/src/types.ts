@@ -844,6 +844,60 @@ export interface ReadingVerificationList {
   newly_verified: number;
 }
 
+/**
+ * Supervisor confirmation of a shift's cash submission (Mobile Attendant
+ * Phase 0, handover chain). Every money figure is an exact decimal STRING
+ * (numeric(14,2) -> text); difference = received − expected.
+ */
+export interface CollectionReceipt {
+  id: string;
+  tenant_id: string;
+  station_id: string;
+  shift_id: string;
+  cash_submission_id: string;
+  expected_amount: string;
+  attendant_submitted_total: string;
+  supervisor_received_total: string;
+  difference: string;
+  status: 'received' | 'approved_with_difference' | 'rejected';
+  reason?: string;
+  supervisor_comment?: string;
+  received_by: string;
+  received_at: string;
+}
+
+export interface ConfirmCashSubmissionRequest {
+  /** Exact decimal string of the cash physically received. */
+  received_total: string;
+  /** "received" (default) or "rejected"; a non-zero difference upgrades to approved_with_difference server-side. */
+  status?: 'received' | 'rejected';
+  /** Required when the received total differs from expected or the handover is rejected. */
+  reason?: string;
+  supervisor_comment?: string;
+}
+
+/**
+ * One assigned nozzle's expected opening meter for a shift — the previous
+ * shift's final approved closing (Mobile Attendant Phase 0, handover chain).
+ * expected_opening_reading is an exact decimal STRING, absent when the nozzle
+ * has no prior closing at the station.
+ */
+export interface ExpectedOpeningReading {
+  assignment_id: string;
+  nozzle_id: string;
+  attendant_id: string;
+  expected_opening_reading?: string;
+  /** "verified" when derived from a reading verification, "raw" when from the unverified closing. */
+  source?: 'verified' | 'raw';
+  source_shift_id?: string;
+  source_reading_id?: string;
+}
+
+export interface ExpectedOpeningReadingList {
+  items: ExpectedOpeningReading[];
+  count: number;
+}
+
 export interface ShiftDetail extends Shift {
   attendants: ShiftAttendant[];
   nozzle_assignments: NozzleAssignment[];
