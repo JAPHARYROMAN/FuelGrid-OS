@@ -82,8 +82,12 @@ type attendantAssignmentDTO struct {
 	NozzleNumber int       `json:"nozzle_number"`
 	ProductName  string    `json:"product_name"`
 	ProductColor string    `json:"product_color"`
-	AssignedAt   string    `json:"assigned_at"`
-	ConfirmedAt  *string   `json:"confirmed_at,omitempty"`
+	// MeterDecimalPlaces is the nozzle's meter precision (0..4); the mobile
+	// capture screens validate input scale against it before submitting,
+	// mirroring the server's readings.ValidateScale 422 (Phase 2).
+	MeterDecimalPlaces int     `json:"meter_decimal_places"`
+	AssignedAt         string  `json:"assigned_at"`
+	ConfirmedAt        *string `json:"confirmed_at,omitempty"`
 }
 
 // attendantReadingDTO is the attendant's own meter progress on one nozzle.
@@ -239,7 +243,8 @@ func (s *Server) attendantShiftSnapshot(r *http.Request, actor identity.Actor, s
 			AssignmentID: a.ID, NozzleID: a.NozzleID,
 			PumpNumber: a.PumpNumber, NozzleNumber: a.NozzleNumber,
 			ProductName: a.ProductName, ProductColor: a.ProductColor,
-			AssignedAt: a.AssignedAt.Format(time.RFC3339), ConfirmedAt: fmtTime(a.ConfirmedAt),
+			MeterDecimalPlaces: a.MeterDecimalPlaces,
+			AssignedAt:         a.AssignedAt.Format(time.RFC3339), ConfirmedAt: fmtTime(a.ConfirmedAt),
 		})
 	}
 

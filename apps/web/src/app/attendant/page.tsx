@@ -186,6 +186,12 @@ export default function AttendantHomePage() {
   const currentStage = stageIndex(data);
   const slotLabel = s.slot ? `${s.slot.charAt(0).toUpperCase()}${s.slot.slice(1)} shift` : s.name;
 
+  // Per-nozzle opening verification progress (Phase 2): how many of the
+  // actor's assigned nozzles already have an opening reading captured.
+  const openingsVerified = data.assignments.filter((a) =>
+    data.readings.some((r) => r.nozzle_id === a.nozzle_id && r.opening_reading != null),
+  ).length;
+
   return (
     <div className="flex flex-col gap-4">
       {/* Shift header */}
@@ -300,6 +306,11 @@ export default function AttendantHomePage() {
                     {state === 'done' ? <span className="sr-only"> — done</span> : null}
                     {state === 'current' ? <span className="sr-only"> — current step</span> : null}
                   </span>
+                  {stage.key === 'verify_opening_readings' && data.assignments.length > 0 ? (
+                    <span className="ml-auto whitespace-nowrap text-sm tabular-nums text-muted-foreground">
+                      {openingsVerified} of {data.assignments.length} nozzles verified
+                    </span>
+                  ) : null}
                 </li>
               );
             })}
@@ -448,7 +459,15 @@ function NextActionButton({
         </Button>
       );
     case 'verify_opening_readings':
-      return <DeepLink label="Enter opening readings" />;
+      // Native Phase 2 screen — no longer a deep-link to the full site.
+      return (
+        <Button asChild className="h-14 text-lg">
+          <Link href="/attendant/opening-readings">
+            Verify opening readings
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
     case 'working':
       return <DeepLink label="Enter closing readings" subtle />;
     case 'submit_closing_readings':

@@ -206,6 +206,15 @@ func TestAttendantState_NextActionProgression(t *testing.T) {
 	if len(assignments) != 2 {
 		t.Fatalf("assignments = %d, want 2", len(assignments))
 	}
+	// Phase 2: each assignment carries the nozzle's meter precision so the
+	// mobile capture screens can validate input scale client-side. The seeded
+	// nozzles use the column default (2).
+	for _, raw := range assignments {
+		a := raw.(map[string]any)
+		if dp, okDP := a["meter_decimal_places"].(float64); !okDP || dp != 2 {
+			t.Fatalf("meter_decimal_places = %v, want 2: %v", a["meter_decimal_places"], a)
+		}
+	}
 
 	// 2) Checked in, assignments unconfirmed -> confirm_assignment.
 	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/check-in", att,

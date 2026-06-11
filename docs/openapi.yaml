@@ -6545,6 +6545,9 @@ components:
         nozzle_number: { type: integer }
         product_name: { type: string }
         product_color: { type: string }
+        meter_decimal_places:
+          type: integer
+          description: The nozzle's meter precision (0..4); capture screens validate input scale against it client-side, mirroring the server's 422.
         assigned_at: { type: string, format: date-time }
         confirmed_at: { type: string, format: date-time }
     AttendantReading:
