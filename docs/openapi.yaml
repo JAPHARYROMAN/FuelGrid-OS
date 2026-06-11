@@ -1391,6 +1391,15 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MyShift' } } } }
 
+  /api/v1/attendant/current-shift:
+    get:
+      tags: [Operations]
+      summary: The attendant's workflow snapshot with a computed next_action (self-scoped)
+      description: Mobile Attendant App home feed (Phase 1). Resolves the actor's current non-approved shift via roster membership (falling back to a shift approved today, then to their 3-team rotation duty for today) and returns one snapshot — station, shift or expected-today info, attendance, the actor's own nozzle assignments with confirmation state, meter readings with per-closing verification status (exact decimal strings), cash submission + collection receipt, and a computed next_action with a plain-English user_message. blocked carries a machine-readable blocking_code. open_shift is reserved (supervisors open shifts; an expected-but-unopened duty day reports await_shift_open). Authentication alone, no station permission.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AttendantCurrentShift' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /api/v1/stations/{stationID}/operating-days:
     parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
     get:
@@ -6507,6 +6516,83 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ExpectedOpeningReading' } }
         count: { type: integer }
+
+    AttendantStation:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+    AttendantExpectedToday:
+      type: object
+      description: Present when the actor has no shift yet but their rotation team is on duty today.
+      properties:
+        slot: { type: string, enum: [morning, evening] }
+        team_id: { type: string, format: uuid }
+        team_name: { type: string }
+    AttendantAttendance:
+      type: object
+      properties:
+        status: { type: string, enum: [not_checked_in, checked_in, checked_out] }
+        check_in_at: { type: string, format: date-time }
+        check_out_at: { type: string, format: date-time }
+    AttendantAssignment:
+      type: object
+      description: One of the actor's own nozzle assignments on the shift, with its confirmation state.
+      properties:
+        assignment_id: { type: string, format: uuid }
+        nozzle_id: { type: string, format: uuid }
+        pump_number: { type: integer }
+        nozzle_number: { type: integer }
+        product_name: { type: string }
+        product_color: { type: string }
+        assigned_at: { type: string, format: date-time }
+        confirmed_at: { type: string, format: date-time }
+    AttendantReading:
+      type: object
+      description: The actor's own meter progress on one nozzle. Reading figures are exact decimal strings (numeric 14,3). verification_status is set once a closing exists — pending until a reading verification lands, then that row's status.
+      properties:
+        nozzle_id: { type: string, format: uuid }
+        opening_reading: { type: string }
+        closing_reading: { type: string }
+        verification_status: { type: string, enum: [pending, approved, corrected, rejected] }
+    AttendantCurrentShift:
+      type: object
+      description: The Mobile Attendant App workflow snapshot — one self-scoped payload the home screen renders directly.
+      properties:
+        status: { type: string, enum: [off_duty, expected_today, on_shift, complete] }
+        next_action:
+          type: string
+          enum:
+            [
+              off_duty,
+              await_shift_open,
+              check_in,
+              confirm_assignment,
+              verify_opening_readings,
+              open_shift,
+              working,
+              submit_closing_readings,
+              await_reading_verification,
+              submit_collections,
+              await_collection_receipt,
+              complete,
+              blocked,
+            ]
+        user_message: { type: string }
+        blocking_code:
+          type: string
+          description: Machine-readable code present when next_action is blocked.
+          enum: [awaiting_nozzle_assignment, awaiting_shift_close, collection_rejected]
+        station: { $ref: '#/components/schemas/AttendantStation' }
+        shift: { $ref: '#/components/schemas/Shift' }
+        expected_today: { $ref: '#/components/schemas/AttendantExpectedToday' }
+        attendance: { $ref: '#/components/schemas/AttendantAttendance' }
+        assignments: { type: array, items: { $ref: '#/components/schemas/AttendantAssignment' } }
+        readings: { type: array, items: { $ref: '#/components/schemas/AttendantReading' } }
+        expected_openings_available: { type: boolean }
+        expected_cash: { type: string, description: Exact decimal string (numeric 14,2), present once the shift is closed }
+        cash_submission: { $ref: '#/components/schemas/CashSubmission' }
+        collection_receipt: { $ref: '#/components/schemas/CollectionReceipt' }
 
     MyShiftNozzle:
       type: object

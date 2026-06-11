@@ -898,6 +898,97 @@ export interface ExpectedOpeningReadingList {
   count: number;
 }
 
+/**
+ * The attendant workflow state machine (Mobile Attendant Phase 1).
+ * `open_shift` is reserved: in the current backend a supervisor opens the
+ * shift, so an expected-but-unopened duty day reports `await_shift_open`.
+ */
+export type AttendantNextAction =
+  | 'off_duty'
+  | 'await_shift_open'
+  | 'check_in'
+  | 'confirm_assignment'
+  | 'verify_opening_readings'
+  | 'open_shift'
+  | 'working'
+  | 'submit_closing_readings'
+  | 'await_reading_verification'
+  | 'submit_collections'
+  | 'await_collection_receipt'
+  | 'complete'
+  | 'blocked';
+
+/** Machine-readable code carried when next_action is `blocked`. */
+export type AttendantBlockingCode =
+  | 'awaiting_nozzle_assignment'
+  | 'awaiting_shift_close'
+  | 'collection_rejected';
+
+export interface AttendantStation {
+  id: string;
+  name: string;
+}
+
+/** Present when the actor has no shift yet but their rotation team is on duty today. */
+export interface AttendantExpectedToday {
+  slot: 'morning' | 'evening';
+  team_id: string;
+  team_name: string;
+}
+
+export interface AttendantAttendance {
+  status: 'not_checked_in' | 'checked_in' | 'checked_out';
+  check_in_at?: string;
+  check_out_at?: string;
+}
+
+/** One of the actor's own nozzle assignments on the shift, with its confirmation state. */
+export interface AttendantAssignment {
+  assignment_id: string;
+  nozzle_id: string;
+  pump_number: number;
+  nozzle_number: number;
+  product_name: string;
+  product_color: string;
+  assigned_at: string;
+  confirmed_at?: string;
+}
+
+/**
+ * The actor's own meter progress on one nozzle. Reading figures are exact
+ * decimal STRINGS (numeric 14,3). verification_status appears once a closing
+ * exists: "pending" until a reading verification lands, then that row's status.
+ */
+export interface AttendantReading {
+  nozzle_id: string;
+  opening_reading?: string;
+  closing_reading?: string;
+  verification_status?: 'pending' | 'approved' | 'corrected' | 'rejected';
+}
+
+/**
+ * The Mobile Attendant App workflow snapshot (self-scoped) — one payload the
+ * mobile home screen renders directly, with a computed next_action and a
+ * plain-English user_message.
+ */
+export interface AttendantCurrentShift {
+  status: 'off_duty' | 'expected_today' | 'on_shift' | 'complete';
+  next_action: AttendantNextAction;
+  user_message: string;
+  blocking_code?: AttendantBlockingCode;
+  station?: AttendantStation;
+  shift?: Shift;
+  expected_today?: AttendantExpectedToday;
+  attendance: AttendantAttendance;
+  assignments: AttendantAssignment[];
+  readings: AttendantReading[];
+  expected_openings_available: boolean;
+  /** Exact decimal string (numeric 14,2), present once the shift is closed. */
+  expected_cash?: string;
+  cash_submission?: CashSubmission;
+  collection_receipt?: CollectionReceipt;
+}
+
 export interface ShiftDetail extends Shift {
   attendants: ShiftAttendant[];
   nozzle_assignments: NozzleAssignment[];

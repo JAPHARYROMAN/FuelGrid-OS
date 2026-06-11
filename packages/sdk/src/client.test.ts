@@ -547,3 +547,44 @@ describe('Client mobile attendant phase-0 handover methods', () => {
     );
   });
 });
+
+describe('Client mobile attendant phase-1 methods', () => {
+  it('attendantCurrentShift GETs the workflow snapshot', async () => {
+    const f = jsonFetch(200, {
+      status: 'on_shift',
+      next_action: 'check_in',
+      user_message: 'Your shift is open. Check in to start working.',
+      station: { id: 'st-1', name: 'Mikocheni' },
+      shift: { id: 'shift-1', status: 'open' },
+      attendance: { status: 'not_checked_in' },
+      assignments: [],
+      readings: [],
+      expected_openings_available: false,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.attendantCurrentShift();
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/attendant/current-shift');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(res.next_action).toBe('check_in');
+    expect(res.station?.name).toBe('Mikocheni');
+    expect(res.attendance.status).toBe('not_checked_in');
+  });
+
+  it('attendantCurrentShift surfaces the blocked state with its blocking code', async () => {
+    const f = jsonFetch(200, {
+      status: 'on_shift',
+      next_action: 'blocked',
+      blocking_code: 'awaiting_nozzle_assignment',
+      user_message: 'You are checked in. Wait for your nozzle assignment.',
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:00:00Z' },
+      assignments: [],
+      readings: [],
+      expected_openings_available: false,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.attendantCurrentShift();
+    expect(res.next_action).toBe('blocked');
+    expect(res.blocking_code).toBe('awaiting_nozzle_assignment');
+  });
+});

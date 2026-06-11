@@ -187,6 +187,10 @@ func (s *Server) registerSelfServiceRoutes(r chi.Router) {
 		if s.operations != nil {
 			// Self-scoped: returns only the actor's own shift + assignments.
 			r.Get("/me/active-shift", s.handleMyActiveShift)
+			// Self-scoped attendant workflow snapshot (Mobile Attendant
+			// App, Phase 1): the actor's current shift + computed
+			// next_action, or their rotation duty for today.
+			r.Get("/attendant/current-shift", s.handleAttendantCurrentShift)
 		}
 		if s.policy != nil {
 			r.Get("/me/permissions", s.handleMePermissions)
