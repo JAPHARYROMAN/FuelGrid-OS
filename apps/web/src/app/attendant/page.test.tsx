@@ -181,6 +181,77 @@ describe('AttendantHomePage', () => {
     expect(screen.getByText('1 of 2 nozzles verified')).toBeInTheDocument();
   });
 
+  it('drives submit_closing_readings to the NATIVE closing-readings screen (no deep-link)', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      next_action: 'submit_closing_readings',
+      user_message: 'Enter the remaining closing readings for your nozzles.',
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+      readings: [{ nozzle_id: 'noz-1', opening_reading: '1000.000' }],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: /finish closing readings/i });
+    expect(link).toHaveAttribute('href', '/attendant/closing-readings');
+    expect(screen.queryByText(/opens the full site/i)).not.toBeInTheDocument();
+  });
+
+  it('drives the working state to the native closing-readings screen too', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      next_action: 'working',
+      user_message: 'You are set for this shift.',
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+      readings: [{ nozzle_id: 'noz-1', opening_reading: '1000.000' }],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: /enter closing readings/i });
+    expect(link).toHaveAttribute('href', '/attendant/closing-readings');
+    expect(screen.queryByText(/opens the full site/i)).not.toBeInTheDocument();
+  });
+
+  it('links await_reading_verification to the native review-status screen with n-of-m progress', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      next_action: 'await_reading_verification',
+      user_message: 'Closing readings submitted. Wait for your supervisor to verify them.',
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+      assignments: [
+        { ...baseSnapshot.assignments[0]! },
+        {
+          ...baseSnapshot.assignments[0]!,
+          assignment_id: 'as-2',
+          nozzle_id: 'noz-2',
+          nozzle_number: 2,
+          product_name: 'Diesel',
+        },
+      ],
+      readings: [
+        {
+          nozzle_id: 'noz-1',
+          opening_reading: '1000.000',
+          closing_reading: '1500.000',
+          verification_status: 'approved',
+          final_reading: '1500.000',
+        },
+        {
+          nozzle_id: 'noz-2',
+          opening_reading: '2000.000',
+          closing_reading: '2300.000',
+          verification_status: 'pending',
+        },
+      ],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const cta = await screen.findByRole('link', { name: /view review status/i });
+    expect(cta).toHaveAttribute('href', '/attendant/review-status');
+    // The checklist stage shows supervisor progress and links there natively.
+    const progress = screen.getByRole('link', { name: '1 of 2 verified' });
+    expect(progress).toHaveAttribute('href', '/attendant/review-status');
+  });
+
   it('deep-links submit_collections to the existing my-shift page', async () => {
     attendantCurrentShift.mockResolvedValue({
       ...baseSnapshot,

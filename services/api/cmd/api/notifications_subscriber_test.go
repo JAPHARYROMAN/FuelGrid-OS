@@ -26,6 +26,7 @@ func TestNotifSpecFor(t *testing.T) {
 		{"RiskDetectionRun", "", "risk.alert_raised", notifications.SeverityCritical},
 		{"IncidentOpened", "", "incident.opened", notifications.SeverityCritical},
 		{"ApprovalRequested", "", "approval.requested", notifications.SeverityWarning},
+		{"ReadingVerificationCorrected", "", "reading.corrected", notifications.SeverityWarning},
 	}
 	for _, tc := range cases {
 		tc := tc

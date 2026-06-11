@@ -1602,7 +1602,7 @@ paths:
         '201': { description: Captured, content: { application/json: { schema: { $ref: '#/components/schemas/MeterReading' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { description: Not assigned to this shift/nozzle }
-        '409': { description: A reading of that type already exists; correct it instead }
+        '409': { description: A reading of that type already exists. For an opening, correct it instead; a duplicate closing carries code closing_already_submitted — the submission lock, corrections go through supervisor verification }
         '422': { description: Decimal scale exceeds the nozzle's meter precision, nozzle not assigned on the shift, or an opening below the previous shift's approved closing (code opening_below_expected + expected_opening_reading) }
 
   /api/v1/shifts/{id}/meter-readings/{readingID}/correct:
@@ -1621,7 +1621,7 @@ paths:
         '200': { description: Corrected, content: { application/json: { schema: { $ref: '#/components/schemas/MeterReading' } } } }
         '403': { description: Not assigned to this shift/nozzle }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Shift is not open (corrections lock at close), or reading already superseded }
+        '409': { description: Shift is not open (corrections lock at close), reading already superseded, or an attendant correcting their own submitted closing (code closing_already_submitted — supervisor verification handles corrections) }
 
   /api/v1/shifts/{id}/dip-readings:
     parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
@@ -6552,12 +6552,14 @@ components:
         confirmed_at: { type: string, format: date-time }
     AttendantReading:
       type: object
-      description: The actor's own meter progress on one nozzle. Reading figures are exact decimal strings (numeric 14,3). verification_status is set once a closing exists — pending until a reading verification lands, then that row's status.
+      description: The actor's own meter progress on one nozzle. Reading figures are exact decimal strings (numeric 14,3). verification_status is set once a closing exists — pending until a reading verification lands, then that row's status. Once verified, final_reading carries the final approved figure (the supervisor's value when corrected) and verification_reason the supervisor's reason where one was required (Phase 3 review-status screen).
       properties:
         nozzle_id: { type: string, format: uuid }
         opening_reading: { type: string }
         closing_reading: { type: string }
         verification_status: { type: string, enum: [pending, approved, corrected, rejected] }
+        final_reading: { type: string, description: The verification's final approved reading (exact decimal string), present once verified }
+        verification_reason: { type: string, description: The supervisor's reason, present when the verification required one (corrected/rejected) }
     AttendantCurrentShift:
       type: object
       description: The Mobile Attendant App workflow snapshot — one self-scoped payload the home screen renders directly.
