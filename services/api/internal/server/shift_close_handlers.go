@@ -382,7 +382,7 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 
 	// Self-scoped: an attendant (cash.submit) may submit only for a shift
 	// they're on; a supervisor (cash.override) may submit for any shift.
-	shift, _, ok := s.shiftForScopedWrite(w, r, actor, "cash.submit", "cash.override", false)
+	shift, override, ok := s.shiftForScopedWrite(w, r, actor, "cash.submit", "cash.override", false)
 	if !ok {
 		return
 	}
@@ -437,6 +437,26 @@ func (s *Server) handleSubmitCash(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("submit cash", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// Attendant path only (PRD §12.4): a non-zero variance requires a reason.
+	// The submission's notes field carries it; the zero-check runs in SQL
+	// numeric on the exact figures the insert computed (no Go float). Failing
+	// here returns 422 and the deferred rollback discards the insert. The
+	// supervisor override path is exempt — its reason policy lives on the
+	// collection receipt (cash.confirm).
+	if !override && (req.Notes == nil || strings.TrimSpace(*req.Notes) == "") {
+		_, zero, verr := s.operations.DecimalDifference(ctx, sub.SubmittedTotal, sub.ExpectedCash)
+		if verr != nil {
+			s.logger.Error("submit cash: variance reason check", "error", verr)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !zero {
+			writeErrorCode(w, http.StatusUnprocessableEntity, "variance_reason_required",
+				"your submitted total does not match the expected amount — add a reason explaining the difference")
+			return
+		}
 	}
 
 	reqID := chimiddleware.GetReqID(ctx)

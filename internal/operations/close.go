@@ -122,6 +122,50 @@ func (r *Repo) ListCloseLines(ctx context.Context, tenantID, shiftID uuid.UUID) 
 	return out, rows.Err()
 }
 
+// CloseLineDetail is a close line enriched with its nozzle's pump/product
+// display labels — the per-nozzle calculation basis (litres_sold × unit_price
+// = expected_value) the attendant collections screen renders (Mobile
+// Attendant Phase 4, PRD §7.9/§12.3). Figures stay exact decimal strings.
+type CloseLineDetail struct {
+	CloseLine
+	PumpNumber   int
+	NozzleNumber int
+	ProductName  string
+	ProductColor string
+}
+
+// ListCloseLineDetails returns the shift's close lines with their nozzle's
+// pump/product labels, ordered for display (pump then nozzle number).
+func (r *Repo) ListCloseLineDetails(ctx context.Context, tenantID, shiftID uuid.UUID) ([]CloseLineDetail, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT l.id, l.tenant_id, l.shift_id, l.nozzle_id,
+		       l.opening_reading::text, l.closing_reading::text,
+		       l.litres_sold::text, l.unit_price::text, l.expected_value::text,
+		       p.number, n.number, pr.name, pr.color
+		FROM shift_close_lines l
+		JOIN nozzles n   ON n.id  = l.nozzle_id
+		JOIN pumps p     ON p.id  = n.pump_id
+		JOIN products pr ON pr.id = n.product_id
+		WHERE l.tenant_id = $1 AND l.shift_id = $2
+		ORDER BY p.number, n.number
+	`, tenantID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CloseLineDetail
+	for rows.Next() {
+		var l CloseLineDetail
+		if err := rows.Scan(&l.ID, &l.TenantID, &l.ShiftID, &l.NozzleID,
+			&l.OpeningReading, &l.ClosingReading, &l.LitresSold, &l.UnitPrice, &l.ExpectedValue,
+			&l.PumpNumber, &l.NozzleNumber, &l.ProductName, &l.ProductColor); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // rowQuerier is satisfied by both *database.Pool and pgx.Tx, so the expected-
 // cash SUM can run either against committed data (dashboards) or inside the
 // close tx (which must see its own just-inserted, uncommitted lines).

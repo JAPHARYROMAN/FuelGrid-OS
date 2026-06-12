@@ -97,14 +97,6 @@ export default function AttendantHomePage() {
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
-  const checkOut = useMutation({
-    mutationFn: () => api.checkOutOfShift(shiftID),
-    onError: (e) =>
-      setActionError(e instanceof SdkError ? e.message : 'Could not check out. Try again.'),
-    onSuccess: () => setActionError(null),
-    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
-  });
-
   // Confirms every still-unconfirmed assignment (idempotent server-side).
   const confirmAssignments = useMutation({
     mutationFn: async () => {
@@ -142,8 +134,7 @@ export default function AttendantHomePage() {
 
   const data = snapshot.data;
   const s = data.shift;
-  const checkedIn = data.attendance.status === 'checked_in';
-  const busy = checkIn.isPending || checkOut.isPending || confirmAssignments.isPending;
+  const busy = checkIn.isPending || confirmAssignments.isPending;
 
   // ----- No shift yet: off duty / expected today -----
   if (!s) {
@@ -277,8 +268,6 @@ export default function AttendantHomePage() {
         busy={busy}
         onCheckIn={() => checkIn.mutate()}
         onConfirm={() => confirmAssignments.mutate()}
-        onCheckOut={() => checkOut.mutate()}
-        checkedIn={checkedIn}
       />
 
       {/* Workflow checklist */}

@@ -109,6 +109,24 @@ type attendantReadingDTO struct {
 	VerificationReason *string   `json:"verification_reason,omitempty"`
 }
 
+// attendantCloseLineDTO is one frozen close line with its nozzle's display
+// labels — the calculation basis (litres_sold × unit_price = expected_value)
+// behind the shift's expected collection (Phase 4, PRD §7.9/§12.3). Litres,
+// price, and value are exact decimal STRINGS from the DB; the attendant never
+// sees an editable price.
+type attendantCloseLineDTO struct {
+	NozzleID       uuid.UUID `json:"nozzle_id"`
+	PumpNumber     int       `json:"pump_number"`
+	NozzleNumber   int       `json:"nozzle_number"`
+	ProductName    string    `json:"product_name"`
+	ProductColor   string    `json:"product_color"`
+	OpeningReading string    `json:"opening_reading"`
+	ClosingReading string    `json:"closing_reading"`
+	LitresSold     string    `json:"litres_sold"`
+	UnitPrice      string    `json:"unit_price"`
+	ExpectedValue  string    `json:"expected_value"`
+}
+
 type attendantCurrentShiftDTO struct {
 	Status       string  `json:"status"` // off_duty | expected_today | on_shift | complete
 	NextAction   string  `json:"next_action"`
@@ -127,11 +145,14 @@ type attendantCurrentShiftDTO struct {
 	// nozzles has a derivable expected opening (the handover chain figure).
 	ExpectedOpeningsAvailable bool `json:"expected_openings_available"`
 
-	// ExpectedCash (exact decimal string) and the cash/receipt records appear
-	// once the shift is closed.
-	ExpectedCash      *string               `json:"expected_cash,omitempty"`
-	CashSubmission    *cashSubmissionDTO    `json:"cash_submission,omitempty"`
-	CollectionReceipt *collectionReceiptDTO `json:"collection_receipt,omitempty"`
+	// ExpectedCash (exact decimal string), its per-nozzle calculation basis,
+	// and the cash/receipt records appear once the shift is closed. The whole
+	// shift's lines are included (the cash submission covers the whole shift,
+	// one per shift), still scoped by the actor's own shift membership.
+	ExpectedCash      *string                 `json:"expected_cash,omitempty"`
+	CloseLines        []attendantCloseLineDTO `json:"close_lines,omitempty"`
+	CashSubmission    *cashSubmissionDTO      `json:"cash_submission,omitempty"`
+	CollectionReceipt *collectionReceiptDTO   `json:"collection_receipt,omitempty"`
 }
 
 // handleAttendantCurrentShift assembles the actor's workflow snapshot.
@@ -351,6 +372,20 @@ func (s *Server) attendantShiftSnapshot(r *http.Request, actor identity.Actor, s
 			return nil, cerr
 		}
 		out.ExpectedCash = &expectedCash
+		lines, cerr := s.operations.ListCloseLineDetails(ctx, actor.TenantID, shift.ID)
+		if cerr != nil {
+			return nil, cerr
+		}
+		out.CloseLines = make([]attendantCloseLineDTO, 0, len(lines))
+		for i := range lines {
+			l := &lines[i]
+			out.CloseLines = append(out.CloseLines, attendantCloseLineDTO{
+				NozzleID: l.NozzleID, PumpNumber: l.PumpNumber, NozzleNumber: l.NozzleNumber,
+				ProductName: l.ProductName, ProductColor: l.ProductColor,
+				OpeningReading: l.OpeningReading, ClosingReading: l.ClosingReading,
+				LitresSold: l.LitresSold, UnitPrice: l.UnitPrice, ExpectedValue: l.ExpectedValue,
+			})
+		}
 		cash, cerr = s.operations.GetCashSubmission(ctx, actor.TenantID, shift.ID)
 		if cerr != nil && !errors.Is(cerr, pgx.ErrNoRows) {
 			return nil, cerr

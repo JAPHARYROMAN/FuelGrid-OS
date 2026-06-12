@@ -1705,7 +1705,7 @@ paths:
     post:
       tags: [Shifts]
       summary: Submit the cash tender breakdown for a closed shift
-      description: Attendants (cash.submit) submit only for shifts they're on; supervisors (cash.override) for any. Variance over threshold auto-raises a blocking exception.
+      description: Attendants (cash.submit) submit only for shifts they're on; supervisors (cash.override) for any. On the attendant path a non-zero variance requires a reason in notes (422 variance_reason_required). Variance over threshold auto-raises a blocking exception.
       parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1725,6 +1725,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { description: Not assigned to this shift }
         '409': { description: Shift not closed, or cash already submitted }
+        '422': { description: Attendant path — submitted total differs from expected without a reason in notes (code variance_reason_required) }
 
   /api/v1/shifts/{id}/status:
     patch:
@@ -6596,8 +6597,27 @@ components:
         readings: { type: array, items: { $ref: '#/components/schemas/AttendantReading' } }
         expected_openings_available: { type: boolean }
         expected_cash: { type: string, description: Exact decimal string (numeric 14,2), present once the shift is closed }
+        close_lines:
+          type: array
+          description: The expected collection's per-nozzle calculation basis (litres_sold × unit_price = expected_value), present once the shift is closed.
+          items: { $ref: '#/components/schemas/AttendantCloseLine' }
         cash_submission: { $ref: '#/components/schemas/CashSubmission' }
         collection_receipt: { $ref: '#/components/schemas/CollectionReceipt' }
+
+    AttendantCloseLine:
+      type: object
+      description: One frozen shift close line with its nozzle's display labels — the calculation basis behind the expected collection. Litres/price/value are exact decimal strings; prices are never attendant-editable.
+      properties:
+        nozzle_id:       { type: string, format: uuid }
+        pump_number:     { type: integer }
+        nozzle_number:   { type: integer }
+        product_name:    { type: string }
+        product_color:   { type: string }
+        opening_reading: { type: string, description: Exact decimal string (numeric 14,3) }
+        closing_reading: { type: string, description: Exact decimal string (numeric 14,3) }
+        litres_sold:     { type: string, description: Exact decimal string (numeric 14,3) }
+        unit_price:      { type: string, description: Exact decimal string (numeric 14,2) }
+        expected_value:  { type: string, description: Exact decimal string (numeric 14,2) }
 
     MyShiftNozzle:
       type: object
