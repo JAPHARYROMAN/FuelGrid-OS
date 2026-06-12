@@ -6,7 +6,12 @@ import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, Check, Loader2, Megaphone } from 'lucide-react';
 
-import { SdkError, type AttendantAssignment, type ExpectedOpeningReadingList } from '@fuelgrid/sdk';
+import {
+  SdkError,
+  type AttendantAssignment,
+  type AttendantCurrentShift,
+  type ExpectedOpeningReadingList,
+} from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -29,6 +34,12 @@ import {
   meterFractionDigits,
   subtractMeterDecimals,
 } from '@/lib/meter-decimal';
+import {
+  getSyncEngine,
+  isOfflineError,
+  useAttendantSnapshot,
+  useSyncEngineState,
+} from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
 
@@ -43,6 +54,7 @@ const LOWER_BLOCKED_MESSAGE =
 /** Per-nozzle live verification status, always conveyed as text + colour. */
 type RowStatus =
   | { kind: 'recorded' } // an opening already exists server-side
+  | { kind: 'queued' } // saved on this phone, waiting to sync (Phase 6a)
   | { kind: 'empty' }
   | { kind: 'invalid' }
   | { kind: 'scale'; places: number }
@@ -55,15 +67,19 @@ type RowStatus =
 interface RowResult {
   ok: boolean;
   message?: string;
+  /** Saved to the offline queue rather than the server. */
+  queued?: boolean;
 }
 
 function rowStatus(
   assignment: AttendantAssignment,
   expected: string | undefined,
   recorded: string | undefined,
+  queued: string | undefined,
   value: string,
 ): RowStatus {
   if (recorded) return { kind: 'recorded' };
+  if (queued) return { kind: 'queued' };
   const v = value.trim();
   if (v === '') return { kind: 'empty' };
   if (!isMeterDecimal(v)) return { kind: 'invalid' };
@@ -94,10 +110,8 @@ export default function OpeningReadingsPage() {
   const [submitSummary, setSubmitSummary] = useState<string | null>(null);
   const [reported, setReported] = useState(false);
 
-  const snapshot = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => api.attendantCurrentShift(signal),
-  });
+  const snapshot = useAttendantSnapshot();
+  const engineState = useSyncEngineState();
   const shiftID = snapshot.data?.shift?.id ?? '';
   const stationID = snapshot.data?.station?.id;
 
@@ -106,6 +120,22 @@ export default function OpeningReadingsPage() {
     queryFn: ({ signal }) => api.listExpectedOpeningReadings(shiftID, signal),
     enabled: shiftID !== '',
   });
+
+  // Openings already saved on this phone for this shift (Phase 6a queue):
+  // rendered as captured-but-unsynced, excluded from the submit set.
+  const queuedByNozzle = new Map(
+    engineState.items
+      .filter(
+        (i) =>
+          i.action_type === 'opening_reading' &&
+          i.shift_id === shiftID &&
+          (i.sync_status === 'pending' || i.sync_status === 'syncing'),
+      )
+      .map((i) => [
+        (i.payload as { nozzle_id: string }).nozzle_id,
+        (i.payload as { reading: string }).reading,
+      ]),
+  );
 
   // Whether THIS user may open an incident (incidents.manage is a
   // supervisor-tier permission today; attendants normally fall back to the
@@ -126,6 +156,23 @@ export default function OpeningReadingsPage() {
           });
           outcome[assignment.nozzle_id] = { ok: true };
         } catch (e) {
+          // Connectivity failure → save the reading on this phone (decimal
+          // string preserved verbatim) and replay it in order when online.
+          if (isOfflineError(e)) {
+            await getSyncEngine().enqueue({
+              action_type: 'opening_reading',
+              shift_id: shiftID,
+              payload: {
+                nozzle_id: assignment.nozzle_id,
+                reading,
+                pump_number: assignment.pump_number,
+                nozzle_number: assignment.nozzle_number,
+              },
+              label: `Opening reading ${reading} — pump ${assignment.pump_number} · nozzle ${assignment.nozzle_number}`,
+            });
+            outcome[assignment.nozzle_id] = { ok: true, queued: true };
+            continue;
+          }
           outcome[assignment.nozzle_id] = { ok: false, message: captureErrorMessage(e) };
         }
       }
@@ -133,9 +180,18 @@ export default function OpeningReadingsPage() {
     },
     onSuccess: async (outcome, rows) => {
       setResults(outcome);
-      const saved = Object.values(outcome).filter((r) => r.ok).length;
+      const results = Object.values(outcome);
+      const saved = results.filter((r) => r.ok).length;
+      const queued = results.filter((r) => r.queued).length;
       if (saved === rows.length) {
-        toast.success('Opening readings saved', 'All your nozzles are verified.');
+        if (queued > 0) {
+          toast.success(
+            'Opening readings saved on this phone',
+            'They will sync when you are back online.',
+          );
+        } else {
+          toast.success('Opening readings saved', 'All your nozzles are verified.');
+        }
         await qc.invalidateQueries({ queryKey: QUERY_KEY });
         router.push('/attendant');
         return;
@@ -175,7 +231,7 @@ export default function OpeningReadingsPage() {
       </div>
     );
   }
-  if (snapshot.isError) {
+  if (snapshot.showError) {
     return (
       <ErrorState
         title="Couldn't load your shift"
@@ -184,7 +240,10 @@ export default function OpeningReadingsPage() {
       />
     );
   }
-  if (expected.isError) {
+  // Offline, the expected figures may be unreachable — degrade honestly (the
+  // rows say "expected unavailable"; the server re-validates every reading at
+  // sync). A failure while ONLINE is a real problem and keeps the error state.
+  if (expected.isError && engineState.online) {
     return (
       <ErrorState
         title="Couldn't load the expected readings"
@@ -194,7 +253,7 @@ export default function OpeningReadingsPage() {
     );
   }
 
-  const data = snapshot.data;
+  const data = snapshot.data as AttendantCurrentShift;
   if (!data.shift || data.shift.status !== 'open' || data.assignments.length === 0) {
     return (
       <div className="flex flex-col gap-4">
@@ -225,17 +284,19 @@ export default function OpeningReadingsPage() {
   const rows = data.assignments.map((a) => {
     const exp = expectedByAssignment.get(a.assignment_id)?.expected_opening_reading;
     const recorded = recordedByNozzle.get(a.nozzle_id);
+    const queued = queuedByNozzle.get(a.nozzle_id);
     const value = inputs[a.nozzle_id] ?? exp ?? '';
     return {
       assignment: a,
       expected: exp,
       recorded,
+      queued,
       value,
-      status: rowStatus(a, exp, recorded, value),
+      status: rowStatus(a, exp, recorded, queued, value),
     };
   });
 
-  const pending = rows.filter((r) => !r.recorded);
+  const pending = rows.filter((r) => !r.recorded && !r.queued);
   const verifiedCount = rows.length - pending.length;
   const lowerRows = pending.filter((r) => r.status.kind === 'lower');
   const allSubmittable = pending.length > 0 && pending.every((r) => submittable(r.status));
@@ -256,6 +317,13 @@ export default function OpeningReadingsPage() {
             <p className="text-base text-muted-foreground">
               {rows.length} of {rows.length} nozzles verified. You are set for this shift.
             </p>
+            {rows.some((r) => r.queued) ? (
+              <p className="text-sm font-medium text-warning" role="status">
+                {rows.filter((r) => r.queued).length} reading
+                {rows.filter((r) => r.queued).length === 1 ? ' is' : 's are'} saved on this phone
+                and will sync when you are back online.
+              </p>
+            ) : null}
             <Button asChild className="h-14 w-full text-lg">
               <Link href="/attendant">Back to my shift</Link>
             </Button>
@@ -286,7 +354,7 @@ export default function OpeningReadingsPage() {
       ) : null}
 
       {/* Per-nozzle capture cards */}
-      {rows.map(({ assignment: a, expected: exp, recorded, value, status }) => {
+      {rows.map(({ assignment: a, expected: exp, recorded, queued, value, status }) => {
         const result = results[a.nozzle_id];
         const inputID = `opening-${a.nozzle_id}`;
         return (
@@ -318,6 +386,11 @@ export default function OpeningReadingsPage() {
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-lg font-semibold tabular-nums">{recorded}</span>
                   <Badge tone="success">Recorded</Badge>
+                </div>
+              ) : queued ? (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-lg font-semibold tabular-nums">{queued}</span>
+                  <Badge tone="info">Saved on this phone — will sync</Badge>
                 </div>
               ) : (
                 <>

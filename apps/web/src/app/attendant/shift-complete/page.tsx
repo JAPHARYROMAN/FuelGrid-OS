@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check, Loader2, PartyPopper } from 'lucide-react';
 
-import { SdkError } from '@fuelgrid/sdk';
+import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -21,6 +21,12 @@ import {
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import { formatMoney } from '@/lib/money';
+import {
+  getSyncEngine,
+  isOfflineError,
+  useAttendantSnapshot,
+  useSyncEngineState,
+} from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
 
@@ -34,18 +40,43 @@ export default function ShiftCompletePage() {
   const qc = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const snapshot = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => api.attendantCurrentShift(signal),
-    refetchInterval: 30_000,
-  });
+  const snapshot = useAttendantSnapshot({ refetchInterval: 30_000 });
+  const engineState = useSyncEngineState();
   const shiftID = snapshot.data?.shift?.id ?? '';
 
+  // A check-out already saved on this phone for this shift (Phase 6a queue).
+  const queuedCheckOut = engineState.items.some(
+    (i) =>
+      i.action_type === 'check_out' &&
+      i.shift_id === shiftID &&
+      (i.sync_status === 'pending' || i.sync_status === 'syncing'),
+  );
+
   const checkOut = useMutation({
-    mutationFn: () => api.checkOutOfShift(shiftID),
-    onSuccess: () => {
+    mutationFn: async () => {
+      try {
+        await api.checkOutOfShift(shiftID);
+        return 'submitted' as const;
+      } catch (e) {
+        if (isOfflineError(e)) {
+          await getSyncEngine().enqueue({
+            action_type: 'check_out',
+            shift_id: shiftID,
+            payload: {},
+            label: 'Check out',
+          });
+          return 'queued' as const;
+        }
+        throw e;
+      }
+    },
+    onSuccess: (result) => {
       setActionError(null);
-      toast.success('Checked out', 'Thanks for your shift — see you next time.');
+      if (result === 'queued') {
+        toast.success('Check-out saved on this phone', 'It will sync when you are back online.');
+      } else {
+        toast.success('Checked out', 'Thanks for your shift — see you next time.');
+      }
     },
     onError: (e) =>
       setActionError(e instanceof SdkError ? e.message : 'Could not check out. Try again.'),
@@ -61,7 +92,7 @@ export default function ShiftCompletePage() {
       </div>
     );
   }
-  if (snapshot.isError) {
+  if (snapshot.showError) {
     return (
       <ErrorState
         title="Couldn't load your shift"
@@ -71,7 +102,7 @@ export default function ShiftCompletePage() {
     );
   }
 
-  const data = snapshot.data;
+  const data = snapshot.data as AttendantCurrentShift;
   if (!data.shift) {
     return (
       <div className="flex flex-col gap-4">
@@ -215,7 +246,14 @@ export default function ShiftCompletePage() {
       ) : null}
 
       {/* Check-out (Phase 0 endpoint) — only while still checked in */}
-      {checkedIn ? (
+      {checkedIn && queuedCheckOut ? (
+        <p
+          className="rounded-md bg-warning/10 px-3 py-3 text-center text-base font-medium text-warning"
+          role="status"
+        >
+          Checked out — saved on this phone, will sync when you are back online.
+        </p>
+      ) : checkedIn ? (
         <Button
           className="h-14 text-lg"
           disabled={checkOut.isPending}

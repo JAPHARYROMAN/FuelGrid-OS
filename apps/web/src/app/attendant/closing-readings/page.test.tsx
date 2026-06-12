@@ -18,6 +18,8 @@ vi.mock('@/lib/api', () => ({
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
+import { resetSyncEngineForTests } from '@/lib/offline';
+
 import ClosingReadingsPage from './page';
 
 function renderPage() {
@@ -86,6 +88,9 @@ async function dieselInput() {
 
 describe('ClosingReadingsPage', () => {
   beforeEach(() => {
+    // Offline state (snapshot cache + action queue) is per-test.
+    localStorage.clear();
+    resetSyncEngineForTests();
     attendantCurrentShift.mockReset();
     captureMeterReading.mockReset();
     push.mockReset();
@@ -220,6 +225,40 @@ describe('ClosingReadingsPage', () => {
       screen.getAllByText(/already submitted for this nozzle — it is pending supervisor review/i)
         .length,
     ).toBeGreaterThan(0);
+  });
+
+  it('queues readings on this phone when the network is down and shows the queued state', async () => {
+    // The SDK signals a transport failure with status 0 — both the direct
+    // capture AND the immediate replay attempt fail the same way (Phase 6a).
+    captureMeterReading.mockRejectedValue(
+      new SdkError('network request failed: fetch failed', 0, null),
+    );
+    const firstOpen = renderPage();
+
+    await userEvent.type(await premiumInput(), '1620.50');
+    await userEvent.type(await dieselInput(), '2300');
+    await userEvent.click(screen.getByRole('button', { name: /submit closing readings/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /confirm and submit/i }));
+
+    // Saved-on-phone, not failed: the toast confirms and the page goes home.
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/attendant'));
+    expect(screen.queryByText(/not saved/i)).not.toBeInTheDocument();
+
+    // The queue preserves both decimal strings verbatim.
+    const stored = localStorage.getItem('fg.attendant.offline-queue') ?? '';
+    expect(stored).toContain('"reading":"1620.50"');
+    expect(stored).toContain('"reading":"2300"');
+
+    // Re-opening the screen: every nozzle is captured (queued), so the
+    // done-state shows — honestly marked as waiting to sync.
+    firstOpen.unmount();
+    renderPage();
+    expect(await screen.findByText('All closing readings are submitted')).toBeInTheDocument();
+    expect(
+      await screen.findByText(/2 readings are saved on this phone and will sync/i),
+    ).toBeInTheDocument();
+    expect(document.querySelector('#closing-noz-1')).toBeNull();
+    expect(document.querySelector('#closing-noz-2')).toBeNull();
   });
 
   it('locks an already-submitted nozzle read-only with NO edit path', async () => {
