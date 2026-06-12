@@ -3,10 +3,15 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check, Loader2 } from 'lucide-react';
 
-import { SdkError, type AttendantAssignment, type AttendantReading } from '@fuelgrid/sdk';
+import {
+  SdkError,
+  type AttendantAssignment,
+  type AttendantCurrentShift,
+  type AttendantReading,
+} from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -30,6 +35,12 @@ import {
   multiplyMeterDecimal,
   subtractMeterDecimals,
 } from '@/lib/meter-decimal';
+import {
+  getSyncEngine,
+  isOfflineError,
+  useAttendantSnapshot,
+  useSyncEngineState,
+} from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
 
@@ -60,6 +71,7 @@ const HIGH_DELTA_MEDIAN_FACTOR = 10;
 /** Per-nozzle live status, always conveyed as text + colour (PRD §15.1). */
 type RowStatus =
   | { kind: 'submitted' } // a closing already exists server-side — locked
+  | { kind: 'queued' } // saved on this phone, waiting to sync (Phase 6a)
   | { kind: 'no_opening' } // opening missing; closing cannot be validated
   | { kind: 'empty' }
   | { kind: 'invalid' }
@@ -72,6 +84,8 @@ type RowStatus =
 interface RowResult {
   ok: boolean;
   message?: string;
+  /** Saved to the offline queue rather than the server. */
+  queued?: boolean;
 }
 
 /** The litres a row would sell, or null while the input isn't a valid figure >= opening. */
@@ -107,10 +121,12 @@ function isHighDelta(litres: string, otherDeltas: string[]): boolean {
 function rowStatus(
   assignment: AttendantAssignment,
   reading: AttendantReading | undefined,
+  queued: string | undefined,
   value: string,
   otherDeltas: string[],
 ): RowStatus {
   if (reading?.closing_reading != null) return { kind: 'submitted' };
+  if (queued) return { kind: 'queued' };
   if (reading?.opening_reading == null) return { kind: 'no_opening' };
   const v = value.trim();
   if (v === '') return { kind: 'empty' };
@@ -138,11 +154,25 @@ export default function ClosingReadingsPage() {
   const [confirming, setConfirming] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<string | null>(null);
 
-  const snapshot = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => api.attendantCurrentShift(signal),
-  });
+  const snapshot = useAttendantSnapshot();
+  const engineState = useSyncEngineState();
   const shiftID = snapshot.data?.shift?.id ?? '';
+
+  // Closings already saved on this phone for this shift (Phase 6a queue):
+  // rendered as submitted-but-unsynced, excluded from the submit set.
+  const queuedByNozzle = new Map(
+    engineState.items
+      .filter(
+        (i) =>
+          i.action_type === 'closing_reading' &&
+          i.shift_id === shiftID &&
+          (i.sync_status === 'pending' || i.sync_status === 'syncing'),
+      )
+      .map((i) => [
+        (i.payload as { nozzle_id: string }).nozzle_id,
+        (i.payload as { reading: string }).reading,
+      ]),
+  );
 
   const submit = useMutation({
     mutationFn: async (rows: Array<{ assignment: AttendantAssignment; reading: string }>) => {
@@ -158,6 +188,23 @@ export default function ClosingReadingsPage() {
           });
           outcome[assignment.nozzle_id] = { ok: true };
         } catch (e) {
+          // Connectivity failure → save the reading on this phone (decimal
+          // string preserved verbatim) and replay it in order when online.
+          if (isOfflineError(e)) {
+            await getSyncEngine().enqueue({
+              action_type: 'closing_reading',
+              shift_id: shiftID,
+              payload: {
+                nozzle_id: assignment.nozzle_id,
+                reading,
+                pump_number: assignment.pump_number,
+                nozzle_number: assignment.nozzle_number,
+              },
+              label: `Closing reading ${reading} — pump ${assignment.pump_number} · nozzle ${assignment.nozzle_number}`,
+            });
+            outcome[assignment.nozzle_id] = { ok: true, queued: true };
+            continue;
+          }
           outcome[assignment.nozzle_id] = { ok: false, message: captureErrorMessage(e) };
         }
       }
@@ -165,12 +212,21 @@ export default function ClosingReadingsPage() {
     },
     onSuccess: async (outcome, rows) => {
       setResults(outcome);
-      const saved = Object.values(outcome).filter((r) => r.ok).length;
+      const allResults = Object.values(outcome);
+      const saved = allResults.filter((r) => r.ok).length;
+      const queued = allResults.filter((r) => r.queued).length;
       if (saved === rows.length) {
-        toast.success(
-          'Closing readings submitted',
-          'Your supervisor will now review and verify them.',
-        );
+        if (queued > 0) {
+          toast.success(
+            'Closing readings saved on this phone',
+            'They will sync when you are back online.',
+          );
+        } else {
+          toast.success(
+            'Closing readings submitted',
+            'Your supervisor will now review and verify them.',
+          );
+        }
         await qc.invalidateQueries({ queryKey: QUERY_KEY });
         router.push('/attendant');
         return;
@@ -192,7 +248,7 @@ export default function ClosingReadingsPage() {
       </div>
     );
   }
-  if (snapshot.isError) {
+  if (snapshot.showError) {
     return (
       <ErrorState
         title="Couldn't load your shift"
@@ -202,7 +258,7 @@ export default function ClosingReadingsPage() {
     );
   }
 
-  const data = snapshot.data;
+  const data = snapshot.data as AttendantCurrentShift;
   if (!data.shift || data.assignments.length === 0) {
     return (
       <div className="flex flex-col gap-4">
@@ -231,31 +287,42 @@ export default function ClosingReadingsPage() {
       if (!litres.startsWith('-')) deltaByNozzle.set(a.nozzle_id, litres);
       continue;
     }
-    const litres = litresFor(a, reading?.opening_reading, inputs[a.nozzle_id] ?? '');
+    // A closing queued on this phone counts as that nozzle's figure too.
+    const queued = queuedByNozzle.get(a.nozzle_id);
+    const litres = litresFor(a, reading?.opening_reading, queued ?? inputs[a.nozzle_id] ?? '');
     if (litres != null) deltaByNozzle.set(a.nozzle_id, litres);
   }
 
   const rows = data.assignments.map((a) => {
     const reading = readingByNozzle.get(a.nozzle_id);
+    const queued = queuedByNozzle.get(a.nozzle_id);
     const value = inputs[a.nozzle_id] ?? '';
     const otherDeltas = [...deltaByNozzle.entries()]
       .filter(([nozzleID]) => nozzleID !== a.nozzle_id)
       .map(([, litres]) => litres);
-    return { assignment: a, reading, value, status: rowStatus(a, reading, value, otherDeltas) };
+    return {
+      assignment: a,
+      reading,
+      queued,
+      value,
+      status: rowStatus(a, reading, queued, value, otherDeltas),
+    };
   });
 
-  const pending = rows.filter((r) => r.status.kind !== 'submitted');
+  const pending = rows.filter((r) => r.status.kind !== 'submitted' && r.status.kind !== 'queued');
   const submittedCount = rows.length - pending.length;
   // PRD §7.7: ALL assigned nozzles must be completed — every pending nozzle
   // needs a submittable figure before anything can be sent.
   const allSubmittable = pending.length > 0 && pending.every((r) => submittable(r.status));
 
+  const queuedCount = rows.filter((r) => r.status.kind === 'queued').length;
+
   // Done state: every assigned nozzle already has a closing reading.
   if (pending.length === 0 && data.shift.status !== 'open') {
-    return <AllSubmitted total={rows.length} closed />;
+    return <AllSubmitted total={rows.length} queued={queuedCount} closed />;
   }
   if (pending.length === 0) {
-    return <AllSubmitted total={rows.length} />;
+    return <AllSubmitted total={rows.length} queued={queuedCount} />;
   }
   if (data.shift.status !== 'open') {
     return (
@@ -294,7 +361,7 @@ export default function ClosingReadingsPage() {
       ) : null}
 
       {/* Per-nozzle capture cards */}
-      {rows.map(({ assignment: a, reading, value, status }) => {
+      {rows.map(({ assignment: a, reading, queued, value, status }) => {
         const result = results[a.nozzle_id];
         const inputID = `closing-${a.nozzle_id}`;
         return (
@@ -340,6 +407,24 @@ export default function ClosingReadingsPage() {
                   ) : null}
                   <div>
                     <SubmittedBadge status={reading.verification_status} />
+                  </div>
+                </>
+              ) : status.kind === 'queued' && queued ? (
+                <>
+                  <p className="flex items-center justify-between text-base">
+                    <span className="text-muted-foreground">Closing reading</span>
+                    <span className="font-mono text-lg font-semibold tabular-nums">{queued}</span>
+                  </p>
+                  {reading?.opening_reading ? (
+                    <p className="flex items-center justify-between text-base">
+                      <span className="text-muted-foreground">Litres sold</span>
+                      <span className="font-mono font-medium tabular-nums">
+                        {subtractMeterDecimals(queued, reading.opening_reading)} L
+                      </span>
+                    </p>
+                  ) : null}
+                  <div>
+                    <Badge tone="info">Saved on this phone — will sync</Badge>
                   </div>
                 </>
               ) : status.kind === 'no_opening' ? (
@@ -543,7 +628,15 @@ function RowStatusLine({ id, status }: { id: string; status: RowStatus }) {
 }
 
 /** Every nozzle submitted: confirmation + the path onward to review status. */
-function AllSubmitted({ total, closed }: { total: number; closed?: boolean }) {
+function AllSubmitted({
+  total,
+  queued = 0,
+  closed,
+}: {
+  total: number;
+  queued?: number;
+  closed?: boolean;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <BackHome />
@@ -559,6 +652,12 @@ function AllSubmitted({ total, closed }: { total: number; closed?: boolean }) {
             {total} of {total} nozzles submitted{closed ? ' and the shift is closed' : ''}. Your
             supervisor reviews them next.
           </p>
+          {queued > 0 ? (
+            <p className="text-sm font-medium text-warning" role="status">
+              {queued} reading{queued === 1 ? ' is' : 's are'} saved on this phone and will sync
+              when you are back online.
+            </p>
+          ) : null}
           <Button asChild className="h-14 w-full text-lg">
             <Link href="/attendant/review-status">
               View review status

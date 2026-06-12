@@ -1,10 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 
-import type { AttendantReading } from '@fuelgrid/sdk';
+import type { AttendantCurrentShift, AttendantReading } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -17,10 +16,8 @@ import {
   Skeleton,
 } from '@fuelgrid/ui';
 
-import { api } from '@/lib/api';
 import { subtractMeterDecimals } from '@/lib/meter-decimal';
-
-const QUERY_KEY = ['attendant-current-shift'];
+import { useAttendantSnapshot } from '@/lib/offline';
 
 /**
  * Supervisor review status per nozzle (Mobile Attendant Phase 3, PRD §6.9 /
@@ -30,9 +27,7 @@ const QUERY_KEY = ['attendant-current-shift'];
  * approved applied) with the supervisor's reason.
  */
 export default function ReviewStatusPage() {
-  const snapshot = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => api.attendantCurrentShift(signal),
+  const snapshot = useAttendantSnapshot({
     // Supervisor decisions land outside this screen — keep it live.
     refetchInterval: 30_000,
   });
@@ -46,7 +41,7 @@ export default function ReviewStatusPage() {
       </div>
     );
   }
-  if (snapshot.isError) {
+  if (snapshot.showError) {
     return (
       <ErrorState
         title="Couldn't load your shift"
@@ -56,7 +51,7 @@ export default function ReviewStatusPage() {
     );
   }
 
-  const data = snapshot.data;
+  const data = snapshot.data as AttendantCurrentShift;
   if (!data.shift || data.assignments.length === 0) {
     return (
       <div className="flex flex-col gap-4">

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 
+import { SdkError } from '@fuelgrid/sdk';
 import type { AttendantCurrentShift, CashSubmission, CollectionReceipt } from '@fuelgrid/sdk';
 
 const attendantCurrentShift = vi.fn();
@@ -14,6 +15,8 @@ vi.mock('@/lib/api', () => ({
     submitCash: (...args: unknown[]) => submitCash(...args),
   },
 }));
+
+import { resetSyncEngineForTests } from '@/lib/offline';
 
 import CollectionsPage from './page';
 
@@ -108,6 +111,9 @@ const receiptBase: CollectionReceipt = {
 
 describe('CollectionsPage', () => {
   beforeEach(() => {
+    // Offline state (snapshot cache + action queue) is per-test.
+    localStorage.clear();
+    resetSyncEngineForTests();
     attendantCurrentShift.mockReset();
     submitCash.mockReset();
   });
@@ -259,6 +265,34 @@ describe('CollectionsPage', () => {
       credit_amount: '0',
       notes: 'A customer drove off without paying',
     });
+  });
+
+  it('queues the submission on this phone when the network is down (Phase 6a)', async () => {
+    attendantCurrentShift.mockResolvedValue(closedSnapshot);
+    // The SDK signals a transport failure (offline) with status 0 — both the
+    // direct submit AND the immediate replay attempt fail the same way.
+    submitCash.mockRejectedValue(new SdkError('network request failed: fetch failed', 0, null));
+    renderPage();
+
+    await userEvent.type(await screen.findByLabelText('Cash'), '2000000');
+    await userEvent.type(screen.getByLabelText('Mobile money'), '321000');
+    await userEvent.click(screen.getByRole('button', { name: /submit collections/i }));
+    await userEvent.click(screen.getByRole('button', { name: /confirm and submit/i }));
+
+    // The optimistic queued state replaces the form: marked unsynced, with the
+    // exact tender breakdown preserved.
+    expect(
+      await screen.findByText(/saved on this phone — will sync when you are back online/i),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('Your submission')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Cash')).not.toBeInTheDocument();
+    expect(screen.getAllByText('2,321,000.00').length).toBeGreaterThan(0);
+    expect(screen.getByText(/balanced — your total matches/i)).toBeInTheDocument();
+
+    // The queue holds the decimal strings verbatim — no float reserialization.
+    const stored = localStorage.getItem('fg.attendant.offline-queue') ?? '';
+    expect(stored).toContain('"cash_amount":"2000000"');
+    expect(stored).toContain('"mobile_money_amount":"321000"');
   });
 
   it('locks into the read-only submitted view once the one-per-shift submission exists', async () => {

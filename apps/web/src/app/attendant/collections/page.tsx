@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { ArrowLeft, Check, CloudOff, Loader2 } from 'lucide-react';
 
 import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
 import {
@@ -29,6 +29,13 @@ import {
   meterFractionDigits,
   subtractMeterDecimals,
 } from '@/lib/meter-decimal';
+import {
+  getSyncEngine,
+  isOfflineError,
+  useAttendantSnapshot,
+  useSyncEngineState,
+  type CollectionPayload,
+} from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
 
@@ -87,12 +94,11 @@ function signedDifference(d: Difference): string {
 }
 
 export default function CollectionsPage() {
-  const snapshot = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => api.attendantCurrentShift(signal),
+  const snapshot = useAttendantSnapshot({
     // Receipt status advances on supervisor actions — keep the screen live.
     refetchInterval: 30_000,
   });
+  const engineState = useSyncEngineState();
 
   if (snapshot.isPending) {
     return (
@@ -103,7 +109,7 @@ export default function CollectionsPage() {
       </div>
     );
   }
-  if (snapshot.isError) {
+  if (snapshot.showError) {
     return (
       <ErrorState
         title="Couldn't load your collections"
@@ -113,7 +119,17 @@ export default function CollectionsPage() {
     );
   }
 
-  const data = snapshot.data;
+  const data = snapshot.data as AttendantCurrentShift;
+
+  // A collection already saved on this phone for this shift (Phase 6a queue):
+  // the form is replaced by the queued submission until it syncs — one
+  // submission per shift, including the offline one.
+  const queuedCollection = engineState.items.find(
+    (i) =>
+      i.action_type === 'collection' &&
+      i.shift_id === (data.shift?.id ?? '') &&
+      (i.sync_status === 'pending' || i.sync_status === 'syncing'),
+  );
   if (!data.shift) {
     return (
       <div className="flex flex-col gap-4">
@@ -167,6 +183,8 @@ export default function CollectionsPage() {
           <SubmittedCollection data={data} />
           <ReceiptStatus data={data} />
         </>
+      ) : queuedCollection ? (
+        <QueuedCollection payload={queuedCollection.payload as CollectionPayload} data={data} />
       ) : data.next_action === 'await_reading_verification' ? (
         // Honest wait state: the shift is closed but the supervisor is still
         // verifying readings — a correction would change the expected figure,
@@ -248,20 +266,45 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
   const expected = data.expected_cash ?? '0';
 
   const submit = useMutation({
-    mutationFn: () =>
-      api.submitCash(shiftID, {
+    mutationFn: async () => {
+      const payload = {
         cash_amount: tenderOrZero(inputs.cash),
         mobile_money_amount: tenderOrZero(inputs.mobile_money),
         card_amount: tenderOrZero(inputs.card),
         credit_amount: tenderOrZero(inputs.credit),
         ...(reason.trim() !== '' ? { notes: reason.trim() } : {}),
-      }),
-    onSuccess: async () => {
+      };
+      try {
+        await api.submitCash(shiftID, payload);
+        return 'submitted' as const;
+      } catch (e) {
+        // Connectivity failure → save the submission on this phone (exact
+        // decimal strings preserved) and replay it when online returns.
+        if (isOfflineError(e)) {
+          await getSyncEngine().enqueue({
+            action_type: 'collection',
+            shift_id: shiftID,
+            payload,
+            label: 'Submit collections',
+          });
+          return 'queued' as const;
+        }
+        throw e;
+      }
+    },
+    onSuccess: async (result) => {
       setSubmitError(null);
-      toast.success(
-        'Collections submitted',
-        'Your supervisor will now confirm the cash they receive from you.',
-      );
+      if (result === 'queued') {
+        toast.success(
+          'Collections saved on this phone',
+          'They will sync when you are back online.',
+        );
+      } else {
+        toast.success(
+          'Collections submitted',
+          'Your supervisor will now confirm the cash they receive from you.',
+        );
+      }
       await qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
     onError: (e) => {
@@ -465,6 +508,61 @@ function DifferenceLine({ difference }: { difference: Difference }) {
         </p>
       );
   }
+}
+
+/**
+ * The submission saved on this phone while offline (Phase 6a): the same
+ * locked, read-only breakdown — clearly marked unsynced. It replaces the form
+ * (one submission per shift, including the queued one); the sync sheet on the
+ * header chip carries retry/conflict handling.
+ */
+function QueuedCollection({
+  payload,
+  data,
+}: {
+  payload: CollectionPayload;
+  data: AttendantCurrentShift;
+}) {
+  const expected = data.expected_cash ?? '0';
+  const total = [
+    payload.cash_amount,
+    payload.mobile_money_amount,
+    payload.card_amount,
+    payload.credit_amount,
+  ].reduce((sum, v) => addMeterDecimals(sum, v.trim() === '' ? '0' : v), '0');
+  const difference = differenceVsExpected(total, expected);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center justify-between gap-2 text-base">
+          Your submission
+          <span className="flex size-7 items-center justify-center rounded-full bg-warning/15 text-warning">
+            <CloudOff className="size-4" aria-hidden />
+          </span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-1.5">
+        <p
+          className="rounded-md bg-warning/10 px-3 py-2 text-sm font-medium text-warning"
+          role="status"
+        >
+          Saved on this phone — will sync when you are back online.
+        </p>
+        <Row label="Cash" value={formatMoney(payload.cash_amount)} />
+        <Row label="Mobile money" value={formatMoney(payload.mobile_money_amount)} />
+        <Row label="Card" value={formatMoney(payload.card_amount)} />
+        <Row label="Credit" value={formatMoney(payload.credit_amount)} />
+        <div className="border-t border-border pt-1.5">
+          <Row label="Submitted total" value={formatMoney(total)} strong />
+          <Row label="Expected" value={formatMoney(expected)} />
+        </div>
+        <DifferenceLine difference={difference} />
+        {payload.notes ? (
+          <p className="text-sm text-muted-foreground">Reason: {payload.notes}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
 }
 
 /** The locked, read-only view once the one-per-shift submission exists. */

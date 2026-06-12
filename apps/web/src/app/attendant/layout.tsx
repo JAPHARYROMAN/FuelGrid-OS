@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Fuel, Wifi, WifiOff } from 'lucide-react';
+import { Fuel } from 'lucide-react';
 
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { Toaster } from '@/components/toaster';
+
+import { ServiceWorkerManager } from './sw-register';
+import { OfflineHint, SyncStatusChip } from './sync-status';
 
 /**
  * Mobile Attendant App shell (Phase 1). Deliberately NOT the desktop
@@ -14,6 +16,11 @@ import { Toaster } from '@/components/toaster';
  * Auth: the same session as the main app. Server-side middleware redirects
  * unauthenticated visits to /login?next=/attendant; ProtectedRoute is the
  * client-side flash guard on top.
+ *
+ * Offline (Phase 6a): the header chip is the real sync indicator backed by
+ * the offline action queue (tap → sync details sheet); the strip under the
+ * header marks stale data while offline; ServiceWorkerManager registers
+ * /sw.js (app-shell offline) and offers the update-reload affordance.
  */
 export default function AttendantLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -27,50 +34,14 @@ export default function AttendantLayout({ children }: { children: React.ReactNod
               </span>
               Attendant
             </span>
-            <ConnectionHint />
+            <SyncStatusChip />
           </div>
         </header>
+        <ServiceWorkerManager />
+        <OfflineHint />
         <main className="mx-auto w-full max-w-md flex-1 px-4 py-5 pb-12">{children}</main>
       </div>
       <Toaster />
     </ProtectedRoute>
-  );
-}
-
-/**
- * Online/offline hint (PRD sync-status visibility). Phase 1 has no offline
- * queue yet (Phase 6); this only tells the attendant whether actions can
- * reach the server right now. Colour is always paired with text.
- */
-function ConnectionHint() {
-  const [online, setOnline] = useState(true);
-
-  useEffect(() => {
-    setOnline(navigator.onLine);
-    const up = () => setOnline(true);
-    const down = () => setOnline(false);
-    window.addEventListener('online', up);
-    window.addEventListener('offline', down);
-    return () => {
-      window.removeEventListener('online', up);
-      window.removeEventListener('offline', down);
-    };
-  }, []);
-
-  return (
-    <span
-      className={
-        'flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ' +
-        (online ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger')
-      }
-      role="status"
-    >
-      {online ? (
-        <Wifi className="size-3.5" aria-hidden />
-      ) : (
-        <WifiOff className="size-3.5" aria-hidden />
-      )}
-      {online ? 'Online' : 'Offline'}
-    </span>
   );
 }

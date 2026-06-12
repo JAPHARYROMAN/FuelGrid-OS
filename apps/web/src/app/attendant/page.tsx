@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Check, CircleDashed, Loader2 } from 'lucide-react';
 
 import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
@@ -19,8 +19,20 @@ import {
 
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
+import {
+  getSyncEngine,
+  isOfflineError,
+  useAttendantSnapshot,
+  useSyncEngineState,
+} from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
+
+/** Sentinel a mutation returns when the action was queued offline instead. */
+const QUEUED = Symbol('queued-offline');
+
+/** The optimistic message shown when an action is saved to the offline queue. */
+const QUEUED_MESSAGE = 'Saved on this phone — will sync when you are back online.';
 
 /**
  * Workflow checklist stages in order. next_action maps onto a stage so the
@@ -60,20 +72,51 @@ export default function AttendantHomePage() {
   const qc = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
   const [justCheckedIn, setJustCheckedIn] = useState(false);
+  const [queuedNotice, setQueuedNotice] = useState(false);
 
-  const snapshot = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: ({ signal }) => api.attendantCurrentShift(signal),
+  const snapshot = useAttendantSnapshot({
     // The workflow advances on supervisor actions too — keep the screen live.
     refetchInterval: 30_000,
   });
+  const engineState = useSyncEngineState();
 
   const shiftID = snapshot.data?.shift?.id ?? '';
 
+  // Actions already saved on this phone for this shift (Phase 6a offline
+  // queue) — the UI treats them as done-but-unsynced rather than re-offering
+  // the button.
+  const waitingItems = engineState.items.filter(
+    (i) => i.shift_id === shiftID && (i.sync_status === 'pending' || i.sync_status === 'syncing'),
+  );
+  const queuedCheckIn = waitingItems.some((i) => i.action_type === 'check_in');
+  const queuedConfirmIDs = new Set(
+    waitingItems
+      .filter((i) => i.action_type === 'confirm_assignment')
+      .map((i) => (i.payload as { assignment_id: string }).assignment_id),
+  );
+
   // Check-in with optimistic UI: flip the local snapshot immediately, roll
   // back on failure, and reconcile with the server's computed state after.
+  // A connectivity failure is NOT an error: the check-in is queued on this
+  // phone (the optimistic state stands) and replays when online returns.
   const checkIn = useMutation({
-    mutationFn: () => api.checkInToShift(shiftID, { device_info: { app: 'attendant-pwa' } }),
+    mutationFn: async () => {
+      const payload = { device_info: { app: 'attendant-pwa' } };
+      try {
+        return await api.checkInToShift(shiftID, payload);
+      } catch (e) {
+        if (isOfflineError(e)) {
+          await getSyncEngine().enqueue({
+            action_type: 'check_in',
+            shift_id: shiftID,
+            payload,
+            label: 'Check in',
+          });
+          return QUEUED;
+        }
+        throw e;
+      }
+    },
     onMutate: async () => {
       await qc.cancelQueries({ queryKey: QUERY_KEY });
       const prev = qc.getQueryData<AttendantCurrentShift>(QUERY_KEY);
@@ -90,26 +133,53 @@ export default function AttendantHomePage() {
       if (ctx?.prev) qc.setQueryData(QUERY_KEY, ctx.prev);
       setActionError(e instanceof SdkError ? e.message : 'Could not check in. Try again.');
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       setActionError(null);
-      setJustCheckedIn(true);
+      if (result === QUEUED) setQueuedNotice(true);
+      else setJustCheckedIn(true);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
   // Confirms every still-unconfirmed assignment (idempotent server-side).
+  // Offline, each confirmation is queued per assignment and replayed in order.
   const confirmAssignments = useMutation({
     mutationFn: async () => {
-      const pending = (snapshot.data?.assignments ?? []).filter((a) => !a.confirmed_at);
+      const pending = (snapshot.data?.assignments ?? []).filter(
+        (a) => !a.confirmed_at && !queuedConfirmIDs.has(a.assignment_id),
+      );
+      let queuedAny = false;
       for (const a of pending) {
-        await api.confirmNozzleAssignment(shiftID, a.assignment_id);
+        try {
+          await api.confirmNozzleAssignment(shiftID, a.assignment_id);
+        } catch (e) {
+          if (isOfflineError(e)) {
+            await getSyncEngine().enqueue({
+              action_type: 'confirm_assignment',
+              shift_id: shiftID,
+              payload: {
+                assignment_id: a.assignment_id,
+                pump_number: a.pump_number,
+                nozzle_number: a.nozzle_number,
+              },
+              label: `Confirm pump ${a.pump_number} · nozzle ${a.nozzle_number}`,
+            });
+            queuedAny = true;
+            continue;
+          }
+          throw e;
+        }
       }
+      return queuedAny ? QUEUED : undefined;
     },
     onError: (e) =>
       setActionError(
         e instanceof SdkError ? e.message : 'Could not confirm the assignment. Try again.',
       ),
-    onSuccess: () => setActionError(null),
+    onSuccess: (result) => {
+      setActionError(null);
+      if (result === QUEUED) setQueuedNotice(true);
+    },
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
@@ -122,7 +192,9 @@ export default function AttendantHomePage() {
       </div>
     );
   }
-  if (snapshot.isError) {
+  // Hard error only when there is nothing to show; with a cached snapshot
+  // the screen renders the last synced info (the shell strip marks it).
+  if (snapshot.showError) {
     return (
       <ErrorState
         title="Couldn't load your shift"
@@ -132,7 +204,7 @@ export default function AttendantHomePage() {
     );
   }
 
-  const data = snapshot.data;
+  const data = snapshot.data as AttendantCurrentShift;
   const s = data.shift;
   const busy = checkIn.isPending || confirmAssignments.isPending;
 
@@ -243,6 +315,14 @@ export default function AttendantHomePage() {
           You are checked in.
         </p>
       ) : null}
+      {queuedNotice || queuedCheckIn || queuedConfirmIDs.size > 0 ? (
+        <p
+          className="rounded-md bg-warning/10 px-3 py-2 text-sm font-medium text-warning"
+          role="status"
+        >
+          {QUEUED_MESSAGE}
+        </p>
+      ) : null}
       {actionError ? (
         <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
           {actionError}
@@ -266,6 +346,11 @@ export default function AttendantHomePage() {
       <NextActionButton
         data={data}
         busy={busy}
+        queuedCheckIn={queuedCheckIn}
+        queuedConfirms={
+          data.assignments.length > 0 &&
+          data.assignments.every((a) => a.confirmed_at || queuedConfirmIDs.has(a.assignment_id))
+        }
         onCheckIn={() => checkIn.mutate()}
         onConfirm={() => confirmAssignments.mutate()}
       />
@@ -358,6 +443,8 @@ export default function AttendantHomePage() {
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                     {a.confirmed_at ? (
                       <Badge tone="success">Confirmed</Badge>
+                    ) : queuedConfirmIDs.has(a.assignment_id) ? (
+                      <Badge tone="info">Confirmed — waiting to sync</Badge>
                     ) : (
                       <Badge tone="warning">Awaiting your confirmation</Badge>
                     )}
@@ -440,16 +527,31 @@ export default function AttendantHomePage() {
 function NextActionButton({
   data,
   busy,
+  queuedCheckIn,
+  queuedConfirms,
   onCheckIn,
   onConfirm,
 }: {
   data: AttendantCurrentShift;
   busy: boolean;
+  /** A check-in is already saved on this phone, waiting to sync. */
+  queuedCheckIn: boolean;
+  /** Every unconfirmed assignment has a confirmation saved on this phone. */
+  queuedConfirms: boolean;
   onCheckIn: () => void;
   onConfirm: () => void;
 }) {
   switch (data.next_action) {
     case 'check_in':
+      // Already captured offline: don't re-offer the button — the queue
+      // replays it (idempotent server-side) when the connection returns.
+      if (queuedCheckIn) {
+        return (
+          <Button className="h-14 text-lg" disabled>
+            Checked in — waiting to sync
+          </Button>
+        );
+      }
       return (
         <Button className="h-14 text-lg" disabled={busy} onClick={onCheckIn}>
           {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
@@ -457,6 +559,13 @@ function NextActionButton({
         </Button>
       );
     case 'confirm_assignment':
+      if (queuedConfirms) {
+        return (
+          <Button className="h-14 text-lg" disabled>
+            Confirmed — waiting to sync
+          </Button>
+        );
+      }
       return (
         <Button className="h-14 text-lg" disabled={busy} onClick={onConfirm}>
           {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
