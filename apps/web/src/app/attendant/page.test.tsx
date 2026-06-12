@@ -252,7 +252,7 @@ describe('AttendantHomePage', () => {
     expect(progress).toHaveAttribute('href', '/attendant/review-status');
   });
 
-  it('deep-links submit_collections to the existing my-shift page', async () => {
+  it('drives submit_collections to the NATIVE collections screen (no deep-link)', async () => {
     attendantCurrentShift.mockResolvedValue({
       ...baseSnapshot,
       next_action: 'submit_collections',
@@ -272,8 +272,74 @@ describe('AttendantHomePage', () => {
     renderPage();
 
     const link = await screen.findByRole('link', { name: /submit collections/i });
-    expect(link).toHaveAttribute('href', '/my-shift');
+    expect(link).toHaveAttribute('href', '/attendant/collections');
+    // The honest "opens the full site" stub is gone for this stage too.
+    expect(screen.queryByText(/opens the full site/i)).not.toBeInTheDocument();
     // Expected collections figure is visible once the shift is closed.
     expect(screen.getByText(/2,321,000/)).toBeInTheDocument();
+  });
+
+  it('links await_collection_receipt to the native collections screen', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      next_action: 'await_collection_receipt',
+      user_message: 'Collections submitted. Wait for your supervisor to confirm receipt.',
+      shift: { ...baseSnapshot.shift!, status: 'closed' },
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+      expected_cash: '2321000.00',
+      cash_submission: {
+        id: 'cs-1',
+        shift_id: 'shift-1',
+        expected_cash: '2321000.00',
+        cash_amount: '2321000.00',
+        mobile_money_amount: '0.00',
+        card_amount: '0.00',
+        credit_amount: '0.00',
+        submitted_total: '2321000.00',
+        variance: '0.00',
+        submitted_by: 'u-att',
+        submitted_at: '2026-06-11T18:00:00Z',
+      },
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: /view collection status/i });
+    expect(link).toHaveAttribute('href', '/attendant/collections');
+  });
+
+  it('drives complete to the native shift-complete screen (check-out lives there)', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      status: 'complete',
+      next_action: 'complete',
+      user_message: 'Shift complete. Well done.',
+      shift: { ...baseSnapshot.shift!, status: 'approved' },
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const link = await screen.findByRole('link', { name: /finish your shift/i });
+    expect(link).toHaveAttribute('href', '/attendant/shift-complete');
+    // Check-out moved to the shift-complete screen — no button here.
+    expect(screen.queryByRole('button', { name: /check out/i })).not.toBeInTheDocument();
+  });
+
+  it('links the collection_rejected blocked state to the collections screen', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...baseSnapshot,
+      next_action: 'blocked',
+      blocking_code: 'collection_rejected',
+      user_message: 'Your collection was rejected. See your supervisor.',
+      shift: { ...baseSnapshot.shift!, status: 'closed' },
+      attendance: { status: 'checked_in', check_in_at: '2026-06-11T05:10:00Z' },
+      expected_cash: '2321000.00',
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    expect(
+      await screen.findByText('Your collection was rejected. See your supervisor.'),
+    ).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /view collection status/i });
+    expect(link).toHaveAttribute('href', '/attendant/collections');
   });
 });

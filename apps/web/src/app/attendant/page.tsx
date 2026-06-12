@@ -97,14 +97,6 @@ export default function AttendantHomePage() {
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
-  const checkOut = useMutation({
-    mutationFn: () => api.checkOutOfShift(shiftID),
-    onError: (e) =>
-      setActionError(e instanceof SdkError ? e.message : 'Could not check out. Try again.'),
-    onSuccess: () => setActionError(null),
-    onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
-  });
-
   // Confirms every still-unconfirmed assignment (idempotent server-side).
   const confirmAssignments = useMutation({
     mutationFn: async () => {
@@ -142,8 +134,7 @@ export default function AttendantHomePage() {
 
   const data = snapshot.data;
   const s = data.shift;
-  const checkedIn = data.attendance.status === 'checked_in';
-  const busy = checkIn.isPending || checkOut.isPending || confirmAssignments.isPending;
+  const busy = checkIn.isPending || confirmAssignments.isPending;
 
   // ----- No shift yet: off duty / expected today -----
   if (!s) {
@@ -277,8 +268,6 @@ export default function AttendantHomePage() {
         busy={busy}
         onCheckIn={() => checkIn.mutate()}
         onConfirm={() => confirmAssignments.mutate()}
-        onCheckOut={() => checkOut.mutate()}
-        checkedIn={checkedIn}
       />
 
       {/* Workflow checklist */}
@@ -444,25 +433,20 @@ export default function AttendantHomePage() {
 }
 
 /**
- * The single primary CTA the snapshot's next_action drives. Opening (Phase 2)
- * and closing/review (Phase 3) stages go to their native mobile screens; the
- * collections stage still deep-links to the existing /my-shift page until its
- * Phase 4 screen ships (honest stub — clearly labelled as the full site).
+ * The single primary CTA the snapshot's next_action drives. Every stage now
+ * has a native mobile screen: opening (Phase 2), closing/review (Phase 3),
+ * and collections / shift complete (Phase 4) — no /my-shift deep-links left.
  */
 function NextActionButton({
   data,
   busy,
-  checkedIn,
   onCheckIn,
   onConfirm,
-  onCheckOut,
 }: {
   data: AttendantCurrentShift;
   busy: boolean;
-  checkedIn: boolean;
   onCheckIn: () => void;
   onConfirm: () => void;
-  onCheckOut: () => void;
 }) {
   switch (data.next_action) {
     case 'check_in':
@@ -521,40 +505,52 @@ function NextActionButton({
         </Button>
       );
     case 'submit_collections':
-      return <DeepLink label="Submit collections" />;
+      // Native Phase 4 screen — expected basis + tender breakdown form.
+      return (
+        <Button asChild className="h-14 text-lg">
+          <Link href="/attendant/collections">
+            Submit collections
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
+    case 'await_collection_receipt':
+      // A wait state with a native place to watch it: the submitted
+      // breakdown + supervisor receipt status (Phase 4).
+      return (
+        <Button asChild className="h-14 text-lg" variant="outline">
+          <Link href="/attendant/collections">
+            View collection status
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
     case 'complete':
-      return checkedIn ? (
-        <Button className="h-14 text-lg" variant="outline" disabled={busy} onClick={onCheckOut}>
-          {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-          Check out
+      // Native Phase 4 end-of-shift summary, where check-out lives.
+      return (
+        <Button asChild className="h-14 text-lg">
+          <Link href="/attendant/shift-complete">
+            Finish your shift
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
+        </Button>
+      );
+    case 'blocked':
+      // A rejected collection is the one blocked state with a native screen
+      // to consult: the receipt status with the supervisor's reason.
+      return data.blocking_code === 'collection_rejected' ? (
+        <Button asChild className="h-14 text-lg" variant="outline">
+          <Link href="/attendant/collections">
+            View collection status
+            <ArrowRight className="size-5" aria-hidden />
+          </Link>
         </Button>
       ) : null;
     default:
-      // Wait states (blocked / await_*): nothing to press — the screen
-      // refreshes itself and the status strip explains what's happening.
+      // Wait states (await_*): nothing to press — the screen refreshes
+      // itself and the status strip explains what's happening.
       return null;
   }
-}
-
-/**
- * Honest deep-link stub: this stage's dedicated mobile screen arrives in
- * Phase 4 (collections); until then the action opens the existing My Shift
- * page.
- */
-function DeepLink({ label, subtle }: { label: string; subtle?: boolean }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <Button asChild className="h-14 text-lg" variant={subtle ? 'outline' : 'primary'}>
-        <Link href="/my-shift">
-          {label}
-          <ArrowRight className="size-5" aria-hidden />
-        </Link>
-      </Button>
-      <p className="text-center text-xs text-muted-foreground">
-        Opens the full site for now — the mobile screen for this step is coming soon.
-      </p>
-    </div>
-  );
 }
 
 function Row({ label, value }: { label: string; value: string }) {

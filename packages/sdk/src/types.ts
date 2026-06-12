@@ -976,6 +976,30 @@ export interface AttendantReading {
 }
 
 /**
+ * One frozen shift close line with its nozzle's display labels — the expected
+ * collection's per-nozzle calculation basis (litres_sold × unit_price =
+ * expected_value, Mobile Attendant Phase 4). Litres/price/value are exact
+ * decimal STRINGS; prices are never attendant-editable.
+ */
+export interface AttendantCloseLine {
+  nozzle_id: string;
+  pump_number: number;
+  nozzle_number: number;
+  product_name: string;
+  product_color: string;
+  /** Exact decimal string (numeric 14,3). */
+  opening_reading: string;
+  /** Exact decimal string (numeric 14,3). */
+  closing_reading: string;
+  /** Exact decimal string (numeric 14,3). */
+  litres_sold: string;
+  /** Exact decimal string (numeric 14,2). */
+  unit_price: string;
+  /** Exact decimal string (numeric 14,2). */
+  expected_value: string;
+}
+
+/**
  * The Mobile Attendant App workflow snapshot (self-scoped) — one payload the
  * mobile home screen renders directly, with a computed next_action and a
  * plain-English user_message.
@@ -994,6 +1018,8 @@ export interface AttendantCurrentShift {
   expected_openings_available: boolean;
   /** Exact decimal string (numeric 14,2), present once the shift is closed. */
   expected_cash?: string;
+  /** The expected collection's per-nozzle calculation basis, present once the shift is closed. */
+  close_lines?: AttendantCloseLine[];
   cash_submission?: CashSubmission;
   collection_receipt?: CollectionReceipt;
 }
