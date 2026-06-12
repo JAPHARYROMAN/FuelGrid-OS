@@ -136,6 +136,7 @@ import type {
   ShiftException,
   ReadingVerification,
   ReadingVerificationList,
+  ReadingVerificationPage,
   SetupChecklist,
   Station,
   StationOverview,
@@ -1847,6 +1848,20 @@ export class Client {
   }
 
   /**
+   * A shift's reading verifications (station.read) — the supervisor review
+   * surface's verified set, with both values + reason on corrections.
+   */
+  listReadingVerifications(
+    shiftID: string,
+    signal?: AbortSignal,
+  ): Promise<ReadingVerificationPage> {
+    return this.request<ReadingVerificationPage>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/reading-verifications`,
+      { signal },
+    );
+  }
+
+  /**
    * Verify one closing reading with a corrected figure (reading.override).
    * The verified reading is an exact decimal STRING; the original meter
    * reading is never mutated and the reason is mandatory.
@@ -1911,6 +1926,17 @@ export class Client {
     return this.request<CollectionReceipt>(
       `/api/v1/shifts/${encodeURIComponent(shiftID)}/cash-submission/confirm`,
       { method: 'POST', body: req, signal },
+    );
+  }
+
+  /**
+   * The shift's collection receipt (station.read) — the supervisor review
+   * surface's receipt status. 404 while no receipt exists yet.
+   */
+  getCollectionReceipt(shiftID: string, signal?: AbortSignal): Promise<CollectionReceipt> {
+    return this.request<CollectionReceipt>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/collection-receipt`,
+      { signal },
     );
   }
 

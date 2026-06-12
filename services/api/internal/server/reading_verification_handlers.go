@@ -108,6 +108,47 @@ func (s *Server) shiftForVerification(w http.ResponseWriter, r *http.Request, ac
 	return shift, true
 }
 
+// handleListReadingVerifications is the supervisor's station-scoped read of a
+// shift's verification set (station.read; Mobile Attendant Phase 5) — the
+// review surface renders pending vs verified from this list joined to the
+// shift's meter readings, including both values + reason on corrections.
+func (s *Server) handleListReadingVerifications(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid shift id")
+		return
+	}
+	ctx := r.Context()
+	shift, err := s.operations.GetShift(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "shift not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", shift.StationID) {
+		return
+	}
+	all, err := s.readings.ListVerificationsForShift(ctx, actor.TenantID, shift.ID)
+	if err != nil {
+		s.logger.Error("list reading verifications", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	items := make([]readingVerificationDTO, 0, len(all))
+	for i := range all {
+		items = append(items, toReadingVerificationDTO(&all[i]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+}
+
 // handleVerifyShiftReadings batch-approves every ACTIVE closing reading of
 // the shift as-is (final = submitted, status approved). Idempotent: readings
 // that already carry a verification are skipped; the response always returns

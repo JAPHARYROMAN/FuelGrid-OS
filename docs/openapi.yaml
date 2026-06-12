@@ -1811,6 +1811,17 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Shift is not open }
 
+  /api/v1/shifts/{id}/reading-verifications:
+    get:
+      tags: [Shifts]
+      summary: List a shift's reading verifications (station.read)
+      description: The supervisor review surface's verified set — each row carries the attendant's submitted figure, the supervisor's figure when corrected, the final approved figure, and the reason where one was required. Readings without a row here are still pending verification.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingVerificationPage' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/shifts/{id}/readings/verify:
     post:
       tags: [Shifts]
@@ -1872,6 +1883,17 @@ paths:
         '403': { description: Missing cash.confirm, or the receiver is the submitter (separation of duties) }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Shift not closed, no cash submission yet, or already confirmed }
+
+  /api/v1/shifts/{id}/collection-receipt:
+    get:
+      tags: [Shifts]
+      summary: Get a shift's collection receipt (station.read)
+      description: The supervisor review surface's receipt status — received / approved_with_difference / rejected, with the snapshots, difference, and reason. 404 while no receipt has been recorded yet.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CollectionReceipt' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Shift not found, or no collection receipt recorded yet }
 
   /api/v1/shifts/{id}/expected-opening-readings:
     get:
@@ -6477,12 +6499,17 @@ components:
         reason: { type: string }
         verified_by: { type: string, format: uuid }
         verified_at: { type: string, format: date-time }
-    ReadingVerificationList:
+    ReadingVerificationPage:
       type: object
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReadingVerification' } }
         count: { type: integer }
-        newly_verified: { type: integer }
+    ReadingVerificationList:
+      allOf:
+        - $ref: '#/components/schemas/ReadingVerificationPage'
+        - type: object
+          properties:
+            newly_verified: { type: integer, description: Verifications created by THIS batch call (0 on an idempotent rerun) }
     CollectionReceipt:
       type: object
       description: Supervisor confirmation of a shift's cash submission. Every money figure is an exact decimal string (numeric 14,2); difference = received − expected.

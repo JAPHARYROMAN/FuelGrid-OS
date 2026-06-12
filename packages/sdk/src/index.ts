@@ -188,6 +188,7 @@ export type {
   ShiftSummary,
   ReadingVerification,
   ReadingVerificationList,
+  ReadingVerificationPage,
   CollectionReceipt,
   ConfirmCashSubmissionRequest,
   ExpectedOpeningReading,

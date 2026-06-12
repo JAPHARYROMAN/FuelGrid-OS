@@ -837,9 +837,16 @@ export interface ReadingVerification {
   verified_at: string;
 }
 
-export interface ReadingVerificationList {
+/**
+ * A shift's verification set as read by the supervisor review surface
+ * (Mobile Attendant Phase 5).
+ */
+export interface ReadingVerificationPage {
   items: ReadingVerification[];
   count: number;
+}
+
+export interface ReadingVerificationList extends ReadingVerificationPage {
   /** Verifications created by THIS batch call (0 on an idempotent rerun). */
   newly_verified: number;
 }

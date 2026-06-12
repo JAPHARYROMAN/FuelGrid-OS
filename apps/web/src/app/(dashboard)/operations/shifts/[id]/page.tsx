@@ -1,9 +1,9 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -12,10 +12,23 @@ import {
   Gauge,
   Lock,
   PlayCircle,
+  ShieldCheck,
+  UserCheck,
+  Wallet,
   XCircle,
 } from 'lucide-react';
 
-import { SdkError, type AuditLogEntry, type MeterReading, type Shift } from '@fuelgrid/sdk';
+import {
+  SdkError,
+  type AuditLogEntry,
+  type CashSubmission,
+  type CollectionReceipt,
+  type MeterReading,
+  type ReadingVerification,
+  type Shift,
+  type ShiftAttendance,
+  type ShiftDetail,
+} from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -24,29 +37,62 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   EmptyState,
   ErrorState,
+  Input,
   PageHeader,
   Skeleton,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { apiErrorBody, apiErrorCode, apiErrorMessage } from '@/lib/api-error';
 import { usePermission } from '@/hooks/use-permissions';
+import { PermissionGate } from '@/components/permission-gate';
+import { formatMoney } from '@/lib/money';
+import {
+  compareMeterDecimals,
+  isMeterDecimal,
+  meterFractionDigits,
+  subtractMeterDecimals,
+} from '@/lib/meter-decimal';
 
 // ---------------------------------------------------------------------------
-// Feature 3.4 — shift timeline.
-//
-// There is no dedicated GET /shifts/{id}/timeline endpoint. Rather than add a
-// thin backend route, the timeline is COMPOSED from real domain data already
-// readable with station.read:
-//   - the shift's own lifecycle fields (opened_at/by, closed_at/by,
-//     approved_at/by + status) → opened / submitted / approved / rejected,
-//   - the shift's meter readings (GET /shifts/{id}/meter-readings) → readings,
-// and ENRICHED, when the actor holds audit.read, from the append-only audit
-// trail filtered to this shift (GET /audit-logs?entity_type=shift&entity_id=…)
-// so events like nozzle assignment / cash submission / revenue recognition /
-// lock also surface. The page degrades gracefully without audit.read.
+// Shift review (Mobile Attendant Phase 5) — the supervisor side of the
+// attendant app's wait-states. One page per shift composing:
+//   - attendance: who checked in/out and when (GET /attendance),
+//   - the readings verification queue: every ACTIVE closing reading joined to
+//     its verification row (GET /reading-verifications) with batch approve
+//     (POST /readings/verify) + per-reading correct (POST /verify-correct),
+//   - the collection receipt: expected vs attendant-submitted, the received
+//     total, and the resulting receipt (POST /cash-submission/confirm,
+//     GET /collection-receipt),
+//   - approval readiness: the server's 409 gates (readings_unverified /
+//     collection_unconfirmed) rendered as a human checklist,
+//   - the existing lifecycle timeline (Feature 3.4), unchanged below.
+// The backend stays authoritative throughout: permission hooks only hide or
+// disable controls, and every server refusal (403 SoD, 409 gates) is surfaced
+// as a plain-language message.
 // ---------------------------------------------------------------------------
+
+interface NozzleMeta {
+  pumpNumber: number;
+  nozzleNumber: number;
+  productName: string;
+  meterDecimalPlaces: number;
+}
+
+function nozzleLabel(nozzleID: string, meta?: NozzleMeta): string {
+  if (!meta) return nozzleID.slice(0, 8);
+  return `Pump ${meta.pumpNumber} · Nozzle ${meta.nozzleNumber}`;
+}
+
+// --- Timeline (Feature 3.4, unchanged) --------------------------------------
 
 type TimelineKind =
   | 'opened'
@@ -108,6 +154,11 @@ function auditTitle(action: string): string {
     'shift.attendant_unassigned': 'Attendant unassigned',
     'shift.nozzle_assigned': 'Nozzle assigned',
     'shift.nozzle_unassigned': 'Nozzle unassigned',
+    'shift.attendant_checked_in': 'Attendant checked in',
+    'shift.attendant_checked_out': 'Attendant checked out',
+    'reading_verification.approved': 'Reading verified (approved)',
+    'reading_verification.corrected': 'Reading verified (corrected)',
+    'cash.collection_confirmed': 'Collection receipt recorded',
     'revenue.recognized': 'Revenue recognized',
     'cash.submitted': 'Cash submitted',
   };
@@ -126,8 +177,6 @@ function deriveEvents(shift: Shift, readings: MeterReading[]): TimelineEvent[] {
     detail: shift.slot ? `${shift.slot} slot` : undefined,
   });
 
-  // Reading captures (active, non-superseded). Group opening/closing per nozzle
-  // is left to the audit enrichment; here each captured reading is one event.
   for (const reading of readings) {
     events.push({
       id: `reading-${reading.id}`,
@@ -164,14 +213,19 @@ function deriveEvents(shift: Shift, readings: MeterReading[]): TimelineEvent[] {
   return events;
 }
 
-export default function ShiftTimelinePage() {
+// --- Page --------------------------------------------------------------------
+
+export default function ShiftReviewPage() {
   const params = useParams<{ id: string }>();
   const shiftID = params.id;
+  const qc = useQueryClient();
 
   const shift = useQuery({
     queryKey: ['shift', shiftID],
     queryFn: ({ signal }) => api.getShift(shiftID, signal),
   });
+  const stationID = shift.data?.station_id ?? '';
+  const closed = !!shift.data && shift.data.status !== 'open';
 
   const readings = useQuery({
     queryKey: ['shift-meter-readings', shiftID],
@@ -179,8 +233,67 @@ export default function ShiftTimelinePage() {
     enabled: !!shift.data,
   });
 
-  // Enrich from the audit trail only when the actor can read it; the derived
-  // timeline stands on its own otherwise.
+  const verifications = useQuery({
+    queryKey: ['shift-reading-verifications', shiftID],
+    queryFn: ({ signal }) => api.listReadingVerifications(shiftID, signal),
+    enabled: !!shift.data,
+  });
+
+  const attendance = useQuery({
+    queryKey: ['shift-attendance', shiftID],
+    queryFn: ({ signal }) => api.listShiftAttendance(shiftID, signal),
+    enabled: !!shift.data,
+  });
+
+  // Display names for attendants/recorders: the station's employee register
+  // links user accounts to full names.
+  const employees = useQuery({
+    queryKey: ['station-employees', stationID],
+    queryFn: ({ signal }) => api.listEmployees(stationID, { limit: 200 }, signal),
+    enabled: !!stationID,
+  });
+
+  // Pump/nozzle numbers + meter precision for the queue's labels and the
+  // correction modal's client-side scale validation (mirrors the server 422).
+  const stationOverview = useQuery({
+    queryKey: ['station-overview', stationID, 'shift-review'],
+    queryFn: ({ signal }) => api.getStationOverview(stationID, signal),
+    enabled: !!stationID,
+  });
+
+  const products = useQuery({
+    queryKey: ['products'],
+    queryFn: ({ signal }) => api.listProducts(signal),
+    enabled: !!shift.data,
+  });
+
+  const closeSummary = useQuery({
+    queryKey: ['shift-close-summary', shiftID],
+    queryFn: ({ signal }) => api.getCloseSummary(shiftID, signal),
+    enabled: closed,
+  });
+
+  // 404 = "no receipt yet" — a normal state of the panel, not an error.
+  const receipt = useQuery({
+    queryKey: ['shift-collection-receipt', shiftID],
+    queryFn: async ({ signal }) => {
+      try {
+        return await api.getCollectionReceipt(shiftID, signal);
+      } catch (e) {
+        if (e instanceof SdkError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    enabled: closed,
+  });
+
+  const exceptions = useQuery({
+    queryKey: ['shift-exceptions', shiftID],
+    queryFn: ({ signal }) => api.listShiftExceptions(shiftID, signal),
+    enabled: closed,
+  });
+
+  // Enrich the timeline from the audit trail only when the actor can read it.
   const canAudit = usePermission('audit.read');
   const audit = useQuery({
     queryKey: ['shift-audit', shiftID],
@@ -189,14 +302,41 @@ export default function ShiftTimelinePage() {
     enabled: !!shift.data && canAudit === true,
   });
 
+  function refreshReview() {
+    qc.invalidateQueries({ queryKey: ['shift', shiftID] });
+    qc.invalidateQueries({ queryKey: ['shift-reading-verifications', shiftID] });
+    qc.invalidateQueries({ queryKey: ['shift-close-summary', shiftID] });
+    qc.invalidateQueries({ queryKey: ['shift-collection-receipt', shiftID] });
+    qc.invalidateQueries({ queryKey: ['shift-exceptions', shiftID] });
+  }
+
+  const nameByUserID = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of employees.data?.items ?? []) {
+      if (e.user_id) map.set(e.user_id, e.full_name);
+    }
+    return map;
+  }, [employees.data]);
+
+  const nozzleMeta = useMemo(() => {
+    const productName = new Map((products.data?.items ?? []).map((p) => [p.id, p.name]));
+    const map = new Map<string, NozzleMeta>();
+    for (const pump of stationOverview.data?.pumps ?? []) {
+      for (const nozzle of pump.nozzles) {
+        map.set(nozzle.id, {
+          pumpNumber: pump.number,
+          nozzleNumber: nozzle.number,
+          productName: productName.get(nozzle.product_id) ?? 'fuel',
+          meterDecimalPlaces: nozzle.meter_decimal_places,
+        });
+      }
+    }
+    return map;
+  }, [stationOverview.data, products.data]);
+
   const events = useMemo<TimelineEvent[]>(() => {
     if (!shift.data) return [];
     const derived = deriveEvents(shift.data, readings.data?.items ?? []);
-
-    // Audit enrichment: add events for actions the derived set doesn't already
-    // cover (assignments, cash, recognition, lock). Lifecycle actions
-    // (opened/closed/approved/rejected) are already derived, so skip those to
-    // avoid duplicates.
     const derivedActions = new Set([
       'shift.opened',
       'shift.closed',
@@ -225,8 +365,8 @@ export default function ShiftTimelinePage() {
     <div className="flex flex-col gap-7">
       <PageHeader
         eyebrow="Operations"
-        title={shift.data ? `${shift.data.name} · timeline` : 'Shift timeline'}
-        description="The shift's lifecycle composed from domain events: opened, readings, submitted, approved or rejected."
+        title={shift.data ? `${shift.data.name} · review` : 'Shift review'}
+        description="Attendance, closing-reading verification, the collection receipt, and approval readiness for this shift."
         actions={
           <Button asChild variant="ghost" size="sm">
             <Link href="/operations">
@@ -273,6 +413,62 @@ export default function ShiftTimelinePage() {
               </Badge>
             </CardHeader>
           </Card>
+
+          <AttendancePanel
+            shift={shift.data}
+            attendance={attendance.data?.items ?? []}
+            pending={attendance.isPending}
+            error={attendance.isError ? attendance.error : null}
+            nameByUserID={nameByUserID}
+          />
+
+          <VerificationQueue
+            shift={shift.data}
+            stationID={stationID}
+            readings={readings.data?.items ?? []}
+            readingsPending={readings.isPending}
+            verifications={verifications.data?.items ?? []}
+            verificationsPending={verifications.isPending}
+            nozzleMeta={nozzleMeta}
+            nameByUserID={nameByUserID}
+            onChanged={refreshReview}
+          />
+
+          {closed ? (
+            <CollectionReceiptPanel
+              shiftID={shiftID}
+              stationID={stationID}
+              expectedCash={closeSummary.data?.expected_cash}
+              cashSubmission={closeSummary.data?.cash_submission ?? null}
+              loading={closeSummary.isPending || receipt.isPending}
+              receipt={receipt.data ?? null}
+              nameByUserID={nameByUserID}
+              onChanged={refreshReview}
+            />
+          ) : null}
+
+          {closed ? (
+            <ApprovalReadiness
+              shift={shift.data}
+              stationID={stationID}
+              pendingReadings={pendingClosingReadings(
+                readings.data?.items ?? [],
+                verifications.data?.items ?? [],
+              )}
+              cashSubmission={closeSummary.data?.cash_submission ?? null}
+              receipt={receipt.data ?? null}
+              openExceptions={
+                (exceptions.data?.items ?? []).filter((e) => e.status === 'open').length
+              }
+              loading={
+                verifications.isPending ||
+                closeSummary.isPending ||
+                receipt.isPending ||
+                exceptions.isPending
+              }
+              onChanged={refreshReview}
+            />
+          ) : null}
 
           <Card>
             <CardHeader className="gap-1">
@@ -333,5 +529,886 @@ export default function ShiftTimelinePage() {
         </>
       )}
     </div>
+  );
+}
+
+// --- Attendance --------------------------------------------------------------
+
+function AttendancePanel({
+  shift,
+  attendance,
+  pending,
+  error,
+  nameByUserID,
+}: {
+  shift: ShiftDetail;
+  attendance: ShiftAttendance[];
+  pending: boolean;
+  error: unknown;
+  nameByUserID: Map<string, string>;
+}) {
+  const byAttendant = new Map(attendance.map((a) => [a.attendant_id, a]));
+  // The roster drives the rows so a rostered attendant who never checked in is
+  // visible at a glance; attendance rows for since-unassigned users still show.
+  const rosterIDs = shift.attendants.map((a) => a.user_id);
+  const extraIDs = attendance.map((a) => a.attendant_id).filter((id) => !rosterIDs.includes(id));
+  const rows = [...rosterIDs, ...extraIDs];
+
+  return (
+    <Card data-testid="attendance-panel">
+      <CardHeader className="gap-1">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <UserCheck className="size-4 text-accent" />
+          Attendance
+        </CardTitle>
+        <CardDescription>Who checked in and out of this shift, and when.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {pending ? (
+          <Skeleton className="h-16 rounded-lg" />
+        ) : error ? (
+          <p className="text-sm text-danger">
+            {apiErrorMessage(error, "Couldn't load attendance for this shift.")}
+          </p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No attendants on this shift.</p>
+        ) : (
+          <ul className="flex flex-col gap-1.5">
+            {rows.map((userID) => {
+              const rec = byAttendant.get(userID);
+              return (
+                <li
+                  key={userID}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
+                  data-testid="attendance-row"
+                >
+                  <span className="font-medium">
+                    {nameByUserID.get(userID) ?? `Attendant ${userID.slice(0, 8)}`}
+                  </span>
+                  {rec ? (
+                    <span className="flex flex-wrap items-center gap-2">
+                      <Badge tone={rec.status === 'checked_in' ? 'success' : 'neutral'}>
+                        {rec.status === 'checked_in' ? 'Checked in' : 'Checked out'}
+                      </Badge>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        in {new Date(rec.check_in_at).toLocaleTimeString()}
+                        {rec.check_out_at
+                          ? ` · out ${new Date(rec.check_out_at).toLocaleTimeString()}`
+                          : ''}
+                      </span>
+                    </span>
+                  ) : (
+                    <Badge tone="warning">Not checked in</Badge>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- Readings verification queue ----------------------------------------------
+
+/** The shift's ACTIVE closing readings that have no verification row yet. */
+function pendingClosingReadings(
+  readings: MeterReading[],
+  verifications: ReadingVerification[],
+): MeterReading[] {
+  const verified = new Set(verifications.map((v) => v.reading_id));
+  return readings.filter(
+    (r) => r.reading_type === 'closing' && r.status === 'active' && !verified.has(r.id),
+  );
+}
+
+function VerificationQueue({
+  shift,
+  stationID,
+  readings,
+  readingsPending,
+  verifications,
+  verificationsPending,
+  nozzleMeta,
+  nameByUserID,
+  onChanged,
+}: {
+  shift: ShiftDetail;
+  stationID: string;
+  readings: MeterReading[];
+  readingsPending: boolean;
+  verifications: ReadingVerification[];
+  verificationsPending: boolean;
+  nozzleMeta: Map<string, NozzleMeta>;
+  nameByUserID: Map<string, string>;
+  onChanged: () => void;
+}) {
+  const [approveAllOpen, setApproveAllOpen] = useState(false);
+  const [correcting, setCorrecting] = useState<MeterReading | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const canVerify = usePermission('reading.override', { stationID });
+
+  const verificationByReading = new Map(verifications.map((v) => [v.reading_id, v]));
+  const openingByNozzle = new Map(
+    readings
+      .filter((r) => r.reading_type === 'opening' && r.status === 'active')
+      .map((r) => [r.nozzle_id, r.reading]),
+  );
+  const attendantByNozzle = new Map(
+    shift.nozzle_assignments.map((a) => [a.nozzle_id, a.attendant_id]),
+  );
+
+  const closing = readings.filter((r) => r.reading_type === 'closing' && r.status === 'active');
+  const pending = closing.filter((r) => !verificationByReading.has(r.id));
+
+  const approveAll = useMutation({
+    mutationFn: () => api.verifyShiftReadings(shift.id),
+    onSuccess: () => {
+      setActionError(null);
+      setApproveAllOpen(false);
+      onChanged();
+    },
+    onError: (e) => {
+      setApproveAllOpen(false);
+      setActionError(
+        e instanceof SdkError && e.status === 403
+          ? apiErrorMessage(e, 'You cannot verify these readings.')
+          : apiErrorMessage(e, "Couldn't verify the readings. Try again."),
+      );
+    },
+  });
+
+  return (
+    <Card data-testid="verification-queue">
+      <CardHeader className="gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ShieldCheck className="size-4 text-accent" />
+            Closing readings verification
+          </CardTitle>
+          {pending.length > 0 ? (
+            <PermissionGate permission="reading.override" stationId={stationID} mode="hide">
+              <Button size="sm" onClick={() => setApproveAllOpen(true)}>
+                Approve all ({pending.length})
+              </Button>
+            </PermissionGate>
+          ) : null}
+        </div>
+        <CardDescription>
+          Each submitted closing reading awaits your verification: approve it as submitted, or
+          correct it with a reason. Separation of duties — you cannot verify readings you recorded
+          yourself.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {actionError ? (
+          <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            {actionError}
+          </p>
+        ) : null}
+
+        {readingsPending || verificationsPending ? (
+          <Skeleton className="h-24 rounded-lg" />
+        ) : closing.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No closing readings submitted yet
+            {shift.status === 'open' ? ' — the shift is still running.' : '.'}
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {closing.map((reading) => {
+              const verification = verificationByReading.get(reading.id);
+              const meta = nozzleMeta.get(reading.nozzle_id);
+              const opening = openingByNozzle.get(reading.nozzle_id);
+              const finalReading = verification?.final_approved_reading ?? reading.reading;
+              const litres =
+                opening != null && compareMeterDecimals(finalReading, opening) >= 0
+                  ? subtractMeterDecimals(finalReading, opening)
+                  : null;
+              const attendantID = attendantByNozzle.get(reading.nozzle_id);
+              return (
+                <li
+                  key={reading.id}
+                  className="flex flex-col gap-1.5 rounded-lg border border-border/70 bg-muted/20 p-3"
+                  data-testid="verification-row"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium">
+                      {nozzleLabel(reading.nozzle_id, meta)}
+                      {meta ? (
+                        <span className="text-muted-foreground"> · {meta.productName}</span>
+                      ) : null}
+                    </span>
+                    <VerificationBadge verification={verification} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                    <span>
+                      Attendant:{' '}
+                      {attendantID
+                        ? (nameByUserID.get(attendantID) ?? attendantID.slice(0, 8))
+                        : 'unassigned'}
+                    </span>
+                    <span className="font-mono tabular-nums">
+                      {opening ?? '—'} → {reading.reading}
+                    </span>
+                    {litres != null ? (
+                      <span className="font-mono tabular-nums">{litres} L</span>
+                    ) : null}
+                  </div>
+                  {verification?.status === 'corrected' ? (
+                    <p className="text-sm text-warning">
+                      Submitted{' '}
+                      <span className="font-mono tabular-nums">
+                        {verification.attendant_submitted_reading}
+                      </span>{' '}
+                      → approved{' '}
+                      <span className="font-mono tabular-nums">
+                        {verification.final_approved_reading}
+                      </span>
+                      {verification.reason ? <> — {verification.reason}</> : null}
+                    </p>
+                  ) : null}
+                  {verification?.status === 'rejected' && verification.reason ? (
+                    <p className="text-sm text-danger">Rejected — {verification.reason}</p>
+                  ) : null}
+                  {!verification && canVerify ? (
+                    <div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setActionError(null);
+                          setCorrecting(reading);
+                        }}
+                      >
+                        Correct…
+                      </Button>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+
+      {/* Approve-all confirmation */}
+      <Dialog open={approveAllOpen} onOpenChange={setApproveAllOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Approve all pending readings?</DialogTitle>
+            <DialogDescription>
+              This approves {pending.length} closing reading{pending.length === 1 ? '' : 's'}{' '}
+              exactly as submitted by the attendants. Use “Correct…” on a reading instead if a
+              figure is wrong.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApproveAllOpen(false)}>
+              Cancel
+            </Button>
+            <Button disabled={approveAll.isPending} onClick={() => approveAll.mutate()}>
+              {approveAll.isPending ? 'Approving…' : 'Approve all as submitted'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Per-reading correction */}
+      {correcting ? (
+        <CorrectReadingDialog
+          shiftID={shift.id}
+          reading={correcting}
+          meta={nozzleMeta.get(correcting.nozzle_id)}
+          opening={openingByNozzle.get(correcting.nozzle_id)}
+          onClose={() => setCorrecting(null)}
+          onCorrected={() => {
+            setCorrecting(null);
+            onChanged();
+          }}
+        />
+      ) : null}
+    </Card>
+  );
+}
+
+function VerificationBadge({ verification }: { verification?: ReadingVerification }) {
+  if (!verification) return <Badge tone="warning">Pending verification</Badge>;
+  switch (verification.status) {
+    case 'approved':
+      return <Badge tone="success">Approved</Badge>;
+    case 'corrected':
+      return <Badge tone="warning">Corrected</Badge>;
+    case 'rejected':
+      return <Badge tone="danger">Rejected</Badge>;
+    default:
+      return <Badge tone="neutral">{verification.status}</Badge>;
+  }
+}
+
+function CorrectReadingDialog({
+  shiftID,
+  reading,
+  meta,
+  opening,
+  onClose,
+  onCorrected,
+}: {
+  shiftID: string;
+  reading: MeterReading;
+  meta?: NozzleMeta;
+  opening?: string;
+  onClose: () => void;
+  onCorrected: () => void;
+}) {
+  const [value, setValue] = useState('');
+  const [reason, setReason] = useState('');
+
+  const places = meta?.meterDecimalPlaces ?? 3;
+  const trimmed = value.trim();
+  const invalid = trimmed !== '' && !isMeterDecimal(trimmed);
+  const overScale = !invalid && trimmed !== '' && meterFractionDigits(trimmed) > places;
+  const belowOpening =
+    !invalid &&
+    !overScale &&
+    trimmed !== '' &&
+    opening != null &&
+    compareMeterDecimals(trimmed, opening) < 0;
+  const reasonMissing = reason.trim() === '';
+  const submittable = trimmed !== '' && !invalid && !overScale && !belowOpening && !reasonMissing;
+
+  const correct = useMutation({
+    mutationFn: () =>
+      api.verifyCorrectReading(shiftID, reading.id, {
+        verified_reading: trimmed,
+        reason: reason.trim(),
+      }),
+    onSuccess: onCorrected,
+  });
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Correct closing reading</DialogTitle>
+          <DialogDescription>
+            {nozzleLabel(reading.nozzle_id, meta)} — the attendant submitted{' '}
+            <span className="font-mono tabular-nums">{reading.reading}</span>. The original stays
+            stored; your verified figure becomes the final approved reading.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-muted-foreground">
+              Verified reading ({places} decimal{places === 1 ? '' : 's'} max)
+            </span>
+            <Input
+              aria-label="Verified reading"
+              className="text-right font-mono tabular-nums"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              aria-invalid={invalid || overScale || belowOpening}
+            />
+          </label>
+          {invalid ? (
+            <p className="text-sm text-danger" role="alert">
+              Enter numbers only, like 1500 or 1500.25.
+            </p>
+          ) : overScale ? (
+            <p className="text-sm text-danger" role="alert">
+              Too many decimals — this meter records at most {places} decimal
+              {places === 1 ? '' : 's'}.
+            </p>
+          ) : belowOpening ? (
+            <p className="text-sm text-danger" role="alert">
+              The verified reading cannot be below the opening reading ({opening}).
+            </p>
+          ) : null}
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-muted-foreground">Reason (required)</span>
+            <Input
+              aria-label="Correction reason"
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. pump display misread by attendant"
+            />
+          </label>
+          {correct.isError ? (
+            <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+              {apiErrorMessage(correct.error, "Couldn't record the correction.")}
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!submittable || correct.isPending} onClick={() => correct.mutate()}>
+            {correct.isPending ? 'Saving…' : 'Verify with correction'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Collection receipt --------------------------------------------------------
+
+const RECEIPT_TENDERS = [
+  { key: 'cash_amount', label: 'Cash' },
+  { key: 'mobile_money_amount', label: 'Mobile money' },
+  { key: 'card_amount', label: 'Card' },
+  { key: 'credit_amount', label: 'Credit' },
+] as const;
+
+function CollectionReceiptPanel({
+  shiftID,
+  stationID,
+  expectedCash,
+  cashSubmission,
+  loading,
+  receipt,
+  nameByUserID,
+  onChanged,
+}: {
+  shiftID: string;
+  stationID: string;
+  expectedCash?: string;
+  cashSubmission: CashSubmission | null;
+  loading: boolean;
+  receipt: CollectionReceipt | null;
+  nameByUserID: Map<string, string>;
+  onChanged: () => void;
+}) {
+  const [received, setReceived] = useState('');
+  const [reason, setReason] = useState('');
+  const [comment, setComment] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+
+  const canConfirm = usePermission('cash.confirm', { stationID });
+
+  const expected = cashSubmission?.expected_cash ?? expectedCash ?? '0';
+  const trimmed = received.trim();
+  const validMoney = trimmed !== '' && isMeterDecimal(trimmed) && meterFractionDigits(trimmed) <= 2;
+  const differs = validMoney && compareMeterDecimals(trimmed, expected) !== 0;
+  // The server demands a reason when received ≠ expected, and always on a
+  // rejection — mirror it client-side so the 400 never has to fire.
+  const reasonRequired = differs || rejecting;
+  const submittable = validMoney && (!reasonRequired || reason.trim() !== '');
+
+  const confirm = useMutation({
+    mutationFn: () =>
+      api.confirmCashSubmission(shiftID, {
+        received_total: trimmed,
+        ...(rejecting ? { status: 'rejected' as const } : {}),
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
+        ...(comment.trim() ? { supervisor_comment: comment.trim() } : {}),
+      }),
+    onSuccess: () => {
+      setReceived('');
+      setReason('');
+      setComment('');
+      setRejecting(false);
+      onChanged();
+    },
+  });
+
+  return (
+    <Card data-testid="collection-receipt-panel">
+      <CardHeader className="gap-1">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Wallet className="size-4 text-accent" />
+          Collection receipt
+        </CardTitle>
+        <CardDescription>
+          Confirm the cash physically handed over against the expected collection. Separation of
+          duties — you cannot confirm a submission you made yourself.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {loading ? (
+          <Skeleton className="h-24 rounded-lg" />
+        ) : !cashSubmission ? (
+          <p className="text-sm text-muted-foreground">
+            No cash submission yet — the attendant submits collections after the closing readings
+            are verified.
+          </p>
+        ) : (
+          <>
+            <div className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
+              <ReceiptRow label="Expected collection" value={formatMoney(expected)} strong />
+              <ReceiptRow
+                label="Attendant submitted"
+                value={formatMoney(cashSubmission.submitted_total)}
+                strong
+              />
+              {RECEIPT_TENDERS.map((t) => (
+                <ReceiptRow
+                  key={t.key}
+                  label={t.label}
+                  value={formatMoney(cashSubmission[t.key])}
+                />
+              ))}
+              <ReceiptRow
+                label="Variance vs expected"
+                value={formatMoney(cashSubmission.variance)}
+                tone={
+                  compareMeterDecimals(
+                    cashSubmission.submitted_total,
+                    cashSubmission.expected_cash,
+                  ) === 0
+                    ? 'success'
+                    : 'danger'
+                }
+              />
+            </div>
+            {cashSubmission.notes ? (
+              <p className="rounded-md bg-muted/40 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Attendant&apos;s note: </span>
+                {cashSubmission.notes}
+              </p>
+            ) : null}
+
+            {receipt ? (
+              <ReceiptStatus receipt={receipt} nameByUserID={nameByUserID} />
+            ) : canConfirm === false ? (
+              <p className="text-sm text-muted-foreground" data-testid="receipt-readonly">
+                Awaiting collection confirmation — recording the receipt requires the cash.confirm
+                permission.
+              </p>
+            ) : (
+              <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-3">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Record receipt
+                </span>
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-muted-foreground">Received total</span>
+                  <Input
+                    aria-label="Received total"
+                    className="text-right font-mono tabular-nums"
+                    type="text"
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={received}
+                    onChange={(e) => setReceived(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </label>
+                {trimmed !== '' && !validMoney ? (
+                  <p className="text-sm text-danger" role="alert">
+                    Enter a money amount with at most 2 decimals, like 1445500 or 1445500.50.
+                  </p>
+                ) : differs ? (
+                  <p className="text-sm text-warning" role="status">
+                    Received differs from expected by{' '}
+                    <span className="font-mono tabular-nums">
+                      {compareMeterDecimals(trimmed, expected) < 0 ? '-' : '+'}
+                      {subtractMeterDecimals(
+                        compareMeterDecimals(trimmed, expected) < 0 ? expected : trimmed,
+                        compareMeterDecimals(trimmed, expected) < 0 ? trimmed : expected,
+                      )}
+                    </span>{' '}
+                    — a reason is required.
+                  </p>
+                ) : null}
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-muted-foreground">
+                    Reason{reasonRequired ? ' (required)' : ' (optional)'}
+                  </span>
+                  <Input
+                    aria-label="Receipt reason"
+                    type="text"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder={
+                      rejecting ? 'Why the handover is rejected' : 'Why the received amount differs'
+                    }
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm">
+                  <span className="text-muted-foreground">Comment (optional)</span>
+                  <Input
+                    aria-label="Receipt comment"
+                    type="text"
+                    value={comment}
+                    onChange={(e) => setComment(e.target.value)}
+                  />
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={rejecting}
+                    onChange={(e) => setRejecting(e.target.checked)}
+                    aria-label="Reject this handover"
+                  />
+                  Reject this handover (reason required; the attendant must resubmit)
+                </label>
+                {confirm.isError ? (
+                  <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+                    {apiErrorMessage(confirm.error, "Couldn't record the receipt.")}
+                  </p>
+                ) : null}
+                <PermissionGate permission="cash.confirm" stationId={stationID}>
+                  <Button
+                    className="self-start"
+                    size="sm"
+                    variant={rejecting ? 'danger' : 'primary'}
+                    disabled={!submittable || confirm.isPending}
+                    onClick={() => confirm.mutate()}
+                  >
+                    {confirm.isPending
+                      ? 'Recording…'
+                      : rejecting
+                        ? 'Reject handover'
+                        : 'Confirm receipt'}
+                  </Button>
+                </PermissionGate>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReceiptRow({
+  label,
+  value,
+  strong,
+  tone,
+}: {
+  label: string;
+  value: string;
+  strong?: boolean;
+  tone?: 'success' | 'danger';
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={
+          `font-mono tabular-nums${strong ? ' font-semibold' : ''}` +
+          (tone === 'danger' ? ' text-danger' : tone === 'success' ? ' text-success' : '')
+        }
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ReceiptStatus({
+  receipt,
+  nameByUserID,
+}: {
+  receipt: CollectionReceipt;
+  nameByUserID: Map<string, string>;
+}) {
+  const badge =
+    receipt.status === 'received' ? (
+      <Badge tone="success">Received — balanced</Badge>
+    ) : receipt.status === 'approved_with_difference' ? (
+      <Badge tone="warning">Approved with difference</Badge>
+    ) : (
+      <Badge tone="danger">Rejected</Badge>
+    );
+  return (
+    <div
+      className="flex flex-col gap-1.5 rounded-lg border border-border/70 bg-muted/20 p-3 text-sm"
+      data-testid="receipt-status"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-medium">
+          Receipt recorded by{' '}
+          {nameByUserID.get(receipt.received_by) ?? receipt.received_by.slice(0, 8)} ·{' '}
+          {new Date(receipt.received_at).toLocaleString()}
+        </span>
+        {badge}
+      </div>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
+        <span>
+          Received:{' '}
+          <span className="font-mono tabular-nums text-foreground">
+            {formatMoney(receipt.supervisor_received_total)}
+          </span>
+        </span>
+        <span>
+          Difference:{' '}
+          <span
+            className={`font-mono tabular-nums ${
+              compareMeterDecimals(receipt.supervisor_received_total, receipt.expected_amount) === 0
+                ? 'text-success'
+                : 'text-danger'
+            }`}
+          >
+            {formatMoney(receipt.difference)}
+          </span>
+        </span>
+      </div>
+      {receipt.reason ? (
+        <p>
+          <span className="text-muted-foreground">Reason: </span>
+          {receipt.reason}
+        </p>
+      ) : null}
+      {receipt.supervisor_comment ? (
+        <p>
+          <span className="text-muted-foreground">Comment: </span>
+          {receipt.supervisor_comment}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+// --- Approval readiness ---------------------------------------------------------
+
+interface ChecklistItem {
+  key: string;
+  ok: boolean;
+  label: string;
+}
+
+function ApprovalReadiness({
+  shift,
+  stationID,
+  pendingReadings,
+  cashSubmission,
+  receipt,
+  openExceptions,
+  loading,
+  onChanged,
+}: {
+  shift: ShiftDetail;
+  stationID: string;
+  pendingReadings: MeterReading[];
+  cashSubmission: CashSubmission | null;
+  receipt: CollectionReceipt | null;
+  openExceptions: number;
+  loading: boolean;
+  onChanged: () => void;
+}) {
+  const [gateError, setGateError] = useState<string | null>(null);
+
+  const approve = useMutation({
+    mutationFn: () => api.approveShift(shift.id),
+    onSuccess: () => {
+      setGateError(null);
+      onChanged();
+    },
+    onError: (e) => {
+      // The server's 409 gates carry machine-readable codes — translate them
+      // into the same language as the checklist instead of a raw error.
+      const code = apiErrorCode(e);
+      if (code === 'readings_unverified') {
+        const raw = apiErrorBody(e)?.unverified_count;
+        const n = typeof raw === 'number' ? raw : null;
+        setGateError(
+          `${n ?? 'Some'} closing reading${n === 1 ? ' is' : 's are'} still awaiting verification — verify them above, then approve.`,
+        );
+      } else if (code === 'collection_unconfirmed') {
+        setGateError(
+          'The collection has not been confirmed — record the cash receipt above, then approve.',
+        );
+      } else {
+        setGateError(apiErrorMessage(e, "Couldn't approve the shift."));
+      }
+      onChanged();
+    },
+  });
+
+  if (shift.status === 'approved') {
+    return (
+      <Card data-testid="approval-readiness">
+        <CardContent className="flex items-center gap-2 pt-6 text-sm">
+          <CheckCircle2 className="size-4 text-success" />
+          Shift approved
+          {shift.approved_at ? ` ${new Date(shift.approved_at).toLocaleString()}` : ''} — revenue
+          recognized from the verified readings.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const items: ChecklistItem[] = [
+    {
+      key: 'readings',
+      ok: pendingReadings.length === 0,
+      label:
+        pendingReadings.length === 0
+          ? 'All closing readings verified'
+          : `${pendingReadings.length} reading${pendingReadings.length === 1 ? '' : 's'} awaiting verification`,
+    },
+    {
+      key: 'collection',
+      ok: !!cashSubmission && !!receipt && receipt.status !== 'rejected',
+      label: !cashSubmission
+        ? 'Cash not submitted yet'
+        : !receipt
+          ? 'Collection not confirmed'
+          : receipt.status === 'rejected'
+            ? 'Collection rejected — awaiting resubmission and a fresh receipt'
+            : 'Collection receipt recorded',
+    },
+    {
+      key: 'exceptions',
+      ok: openExceptions === 0,
+      label:
+        openExceptions === 0
+          ? 'No open exceptions'
+          : `${openExceptions} open exception${openExceptions === 1 ? '' : 's'} to resolve`,
+    },
+  ];
+  const ready = items.every((i) => i.ok);
+
+  return (
+    <Card data-testid="approval-readiness">
+      <CardHeader className="gap-1">
+        <CardTitle className="text-base">Approval readiness</CardTitle>
+        <CardDescription>
+          Everything the server requires before this shift can be approved.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {loading ? (
+          <Skeleton className="h-20 rounded-lg" />
+        ) : (
+          <ul className="flex flex-col gap-1.5 text-sm">
+            {items.map((item) => (
+              <li key={item.key} className="flex items-center gap-2" data-testid="readiness-item">
+                {item.ok ? (
+                  <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden />
+                ) : (
+                  <XCircle className="size-4 shrink-0 text-warning" aria-hidden />
+                )}
+                <span className={item.ok ? '' : 'text-warning'}>{item.label}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {gateError ? (
+          <p className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning" role="alert">
+            {gateError}
+          </p>
+        ) : null}
+        <PermissionGate permission="shift.approve" stationId={stationID}>
+          <Button
+            className="self-start"
+            disabled={loading || !ready || approve.isPending}
+            title={ready ? undefined : 'Complete the checklist first'}
+            onClick={() => approve.mutate()}
+          >
+            {approve.isPending ? 'Approving…' : 'Approve shift'}
+          </Button>
+        </PermissionGate>
+      </CardContent>
+    </Card>
   );
 }
