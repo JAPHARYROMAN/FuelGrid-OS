@@ -19,6 +19,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { useT } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { formatMoney } from '@/lib/money';
 import {
@@ -37,6 +38,7 @@ const QUERY_KEY = ['attendant-current-shift'];
  * the attendant is still checked in (Phase 0 endpoint).
  */
 export default function ShiftCompletePage() {
+  const t = useT();
   const qc = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -63,7 +65,6 @@ export default function ShiftCompletePage() {
             action_type: 'check_out',
             shift_id: shiftID,
             payload: {},
-            label: 'Check out',
           });
           return 'queued' as const;
         }
@@ -73,13 +74,12 @@ export default function ShiftCompletePage() {
     onSuccess: (result) => {
       setActionError(null);
       if (result === 'queued') {
-        toast.success('Check-out saved on this phone', 'It will sync when you are back online.');
+        toast.success(t.complete.toastQueuedTitle, t.complete.toastQueuedBody);
       } else {
-        toast.success('Checked out', 'Thanks for your shift — see you next time.');
+        toast.success(t.complete.toastDoneTitle, t.complete.toastDoneBody);
       }
     },
-    onError: (e) =>
-      setActionError(e instanceof SdkError ? e.message : 'Could not check out. Try again.'),
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : t.complete.errCheckOut),
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
@@ -95,9 +95,13 @@ export default function ShiftCompletePage() {
   if (snapshot.showError) {
     return (
       <ErrorState
-        title="Couldn't load your shift"
+        title={t.common.couldNotLoadShift}
         description={String((snapshot.error as Error).message)}
-        onRetry={() => snapshot.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => snapshot.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -107,7 +111,7 @@ export default function ShiftCompletePage() {
     return (
       <div className="flex flex-col gap-4">
         <BackHome />
-        <EmptyState title="No shift to complete" description="You are not on a shift right now." />
+        <EmptyState title={t.complete.emptyTitle} description={t.complete.emptyBody} />
       </div>
     );
   }
@@ -119,7 +123,7 @@ export default function ShiftCompletePage() {
         <BackHome />
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Your shift is not complete yet</CardTitle>
+            <CardTitle className="text-lg">{t.complete.notCompleteTitle}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <p className="text-base text-muted-foreground" role="status">
@@ -127,7 +131,7 @@ export default function ShiftCompletePage() {
             </p>
             <Button asChild className="h-12 text-base" variant="outline">
               <Link href="/attendant">
-                Back to my shift
+                {t.common.backToMyShift}
                 <ArrowRight className="size-5" aria-hidden />
               </Link>
             </Button>
@@ -162,14 +166,14 @@ export default function ShiftCompletePage() {
             <PartyPopper className="size-6" aria-hidden />
           </span>
           <p className="text-lg font-semibold" role="status">
-            Shift complete — well done!
+            {t.complete.doneTitle}
           </p>
           <p className="text-base text-muted-foreground">{data.user_message}</p>
           <Badge
             tone={data.shift.status === 'approved' ? 'success' : 'info'}
             className="capitalize"
           >
-            Shift {data.shift.status}
+            {t.home.shiftStatusBadge(data.shift.status)}
           </Badge>
         </CardContent>
       </Card>
@@ -178,19 +182,19 @@ export default function ShiftCompletePage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between gap-2 text-base">
-            Readings
-            <Badge tone="success">Verified</Badge>
+            {t.complete.readings}
+            <Badge tone="success">{t.complete.verifiedBadge}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-1.5">
           <p className="text-base text-muted-foreground" role="status">
-            {decided} of {data.assignments.length} closing readings verified by your supervisor.
+            {t.complete.readingsVerified(decided, data.assignments.length)}
           </p>
           <Link
             href="/attendant/review-status"
             className="text-base font-medium underline-offset-2 hover:underline"
           >
-            View reading details
+            {t.complete.viewReadingDetails}
           </Link>
         </CardContent>
       </Card>
@@ -199,34 +203,39 @@ export default function ShiftCompletePage() {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center justify-between gap-2 text-base">
-            Collections
+            {t.complete.collections}
             {receipt ? (
               receipt.status === 'approved_with_difference' ? (
-                <Badge tone="warning">Approved with difference</Badge>
+                <Badge tone="warning">{t.complete.badgeApprovedWithDifference}</Badge>
               ) : (
-                <Badge tone="success">Received</Badge>
+                <Badge tone="success">{t.complete.badgeReceived}</Badge>
               )
             ) : (
-              <Badge tone="success">Submitted</Badge>
+              <Badge tone="success">{t.complete.badgeSubmitted}</Badge>
             )}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-1.5">
           {data.expected_cash != null ? (
-            <Row label="Expected" value={formatMoney(data.expected_cash)} />
+            <Row label={t.complete.expected} value={formatMoney(data.expected_cash)} />
           ) : null}
           {data.cash_submission ? (
-            <Row label="You submitted" value={formatMoney(data.cash_submission.submitted_total)} />
+            <Row
+              label={t.complete.youSubmitted}
+              value={formatMoney(data.cash_submission.submitted_total)}
+            />
           ) : null}
           {receipt ? (
             <>
               <Row
-                label="Supervisor received"
+                label={t.complete.supervisorReceived}
                 value={formatMoney(receipt.supervisor_received_total)}
               />
-              <Row label="Difference" value={formatMoney(receipt.difference)} />
+              <Row label={t.complete.difference} value={formatMoney(receipt.difference)} />
               {receipt.reason ? (
-                <p className="text-sm text-muted-foreground">Supervisor reason: {receipt.reason}</p>
+                <p className="text-sm text-muted-foreground">
+                  {t.common.supervisorReason(receipt.reason)}
+                </p>
               ) : null}
             </>
           ) : null}
@@ -234,7 +243,7 @@ export default function ShiftCompletePage() {
             href="/attendant/collections"
             className="text-base font-medium underline-offset-2 hover:underline"
           >
-            View collection details
+            {t.complete.viewCollectionDetails}
           </Link>
         </CardContent>
       </Card>
@@ -251,7 +260,7 @@ export default function ShiftCompletePage() {
           className="rounded-md bg-warning/10 px-3 py-3 text-center text-base font-medium text-warning"
           role="status"
         >
-          Checked out — saved on this phone, will sync when you are back online.
+          {t.complete.checkedOutQueued}
         </p>
       ) : checkedIn ? (
         <Button
@@ -260,7 +269,7 @@ export default function ShiftCompletePage() {
           onClick={() => checkOut.mutate()}
         >
           {checkOut.isPending ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-          Check out
+          {t.complete.checkOut}
         </Button>
       ) : data.attendance.status === 'checked_out' ? (
         <p
@@ -268,7 +277,7 @@ export default function ShiftCompletePage() {
           role="status"
         >
           <Check className="size-5" aria-hidden />
-          You are checked out
+          {t.complete.youAreCheckedOut}
           {data.attendance.check_out_at
             ? ` (${new Date(data.attendance.check_out_at).toLocaleTimeString([], {
                 hour: '2-digit',
@@ -291,11 +300,12 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function BackHome() {
+  const t = useT();
   return (
     <Button asChild variant="ghost" className="h-12 w-fit -ml-2 text-base">
       <Link href="/attendant">
         <ArrowLeft className="size-5" aria-hidden />
-        My shift
+        {t.common.myShift}
       </Link>
     </Button>
   );

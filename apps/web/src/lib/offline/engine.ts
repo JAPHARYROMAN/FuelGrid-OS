@@ -167,7 +167,13 @@ export class SyncEngine {
   async retry(localActionID: string): Promise<void> {
     const item = this.state.items.find((i) => i.local_action_id === localActionID);
     if (!item || item.sync_status === 'synced' || item.sync_status === 'syncing') return;
-    await this.store.put({ ...item, sync_status: 'pending', error_message: undefined });
+    await this.store.put({
+      ...item,
+      sync_status: 'pending',
+      error_message: undefined,
+      error_code: undefined,
+      error_params: undefined,
+    });
     if (this.state.phase === 'auth_required') this.setState({ phase: 'idle' });
     await this.refreshItems();
     await this.sync();
@@ -232,21 +238,37 @@ export class SyncEngine {
         const outcome = await replayAction(this.replayApi, item);
 
         if (outcome.kind === 'synced') {
-          await this.store.put({ ...item, sync_status: 'synced', error_message: undefined });
+          await this.store.put({
+            ...item,
+            sync_status: 'synced',
+            error_message: undefined,
+            error_code: undefined,
+            error_params: undefined,
+          });
           continue;
         }
         if (outcome.kind === 'conflict') {
+          // The CODE (+ params) is what the sync sheet renders — translated
+          // at display time; the message is the untranslated fallback.
           await this.store.put({
             ...item,
             sync_status: 'conflict',
             error_message: outcome.message,
+            error_code: outcome.code,
+            error_params: outcome.params,
             server_value: outcome.serverValue,
           });
           blockedShifts.add(item.shift_id);
           continue;
         }
         if (outcome.kind === 'failed') {
-          await this.store.put({ ...item, sync_status: 'failed', error_message: outcome.message });
+          await this.store.put({
+            ...item,
+            sync_status: 'failed',
+            error_message: outcome.message,
+            error_code: outcome.code,
+            error_params: outcome.params,
+          });
           blockedShifts.add(item.shift_id);
           continue;
         }
@@ -256,6 +278,8 @@ export class SyncEngine {
           sync_status: 'pending',
           retry_count: item.retry_count + 1,
           error_message: outcome.kind === 'transient' ? outcome.message : undefined,
+          error_code: outcome.kind === 'transient' ? outcome.code : undefined,
+          error_params: undefined,
         });
         if (outcome.kind === 'auth') nextPhase = 'auth_required';
         if (outcome.kind === 'offline') this.setState({ online: false });

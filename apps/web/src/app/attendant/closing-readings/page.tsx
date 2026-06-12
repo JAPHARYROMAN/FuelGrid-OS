@@ -26,6 +26,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { useT, type Messages } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import {
   addMeterDecimals,
@@ -43,13 +44,6 @@ import {
 } from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
-
-/**
- * Mirrors the server's rollback rule (readings.ErrMeterRollback): a closing
- * meter can never read below its opening — blocked client-side with the same
- * explanation the server would give.
- */
-const LOWER_BLOCKED_MESSAGE = 'Closing reading cannot be lower than opening reading.';
 
 /**
  * High-delta warning heuristic (CLIENT-SIDE ONLY — deliberately not a backend
@@ -146,6 +140,7 @@ function submittable(status: RowStatus): status is { kind: 'ok' | 'high'; litres
 }
 
 export default function ClosingReadingsPage() {
+  const t = useT();
   const router = useRouter();
   const qc = useQueryClient();
 
@@ -200,12 +195,11 @@ export default function ClosingReadingsPage() {
                 pump_number: assignment.pump_number,
                 nozzle_number: assignment.nozzle_number,
               },
-              label: `Closing reading ${reading} — pump ${assignment.pump_number} · nozzle ${assignment.nozzle_number}`,
             });
             outcome[assignment.nozzle_id] = { ok: true, queued: true };
             continue;
           }
-          outcome[assignment.nozzle_id] = { ok: false, message: captureErrorMessage(e) };
+          outcome[assignment.nozzle_id] = { ok: false, message: captureErrorMessage(e, t) };
         }
       }
       return outcome;
@@ -217,23 +211,15 @@ export default function ClosingReadingsPage() {
       const queued = allResults.filter((r) => r.queued).length;
       if (saved === rows.length) {
         if (queued > 0) {
-          toast.success(
-            'Closing readings saved on this phone',
-            'They will sync when you are back online.',
-          );
+          toast.success(t.closing.toastQueuedTitle, t.closing.toastQueuedBody);
         } else {
-          toast.success(
-            'Closing readings submitted',
-            'Your supervisor will now review and verify them.',
-          );
+          toast.success(t.closing.toastSubmittedTitle, t.closing.toastSubmittedBody);
         }
         await qc.invalidateQueries({ queryKey: QUERY_KEY });
         router.push('/attendant');
         return;
       }
-      setSubmitSummary(
-        `Saved ${saved} of ${rows.length} readings. Fix the nozzles marked below and try again.`,
-      );
+      setSubmitSummary(t.closing.partialSummary(saved, rows.length));
       await qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
     onSettled: () => setConfirming(false),
@@ -251,9 +237,13 @@ export default function ClosingReadingsPage() {
   if (snapshot.showError) {
     return (
       <ErrorState
-        title="Couldn't load your shift"
+        title={t.common.couldNotLoadShift}
         description={String((snapshot.error as Error).message)}
-        onRetry={() => snapshot.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => snapshot.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -264,12 +254,8 @@ export default function ClosingReadingsPage() {
       <div className="flex flex-col gap-4">
         <BackHome />
         <EmptyState
-          title="Nothing to close right now"
-          description={
-            !data.shift
-              ? 'You are not on a shift. Closing readings are captured at the end of your shift.'
-              : 'No nozzles are assigned to you yet, so there is nothing to close.'
-          }
+          title={t.closing.emptyTitle}
+          description={!data.shift ? t.closing.emptyNoShift : t.closing.emptyNoAssignments}
         />
       </div>
     );
@@ -328,10 +314,7 @@ export default function ClosingReadingsPage() {
     return (
       <div className="flex flex-col gap-4">
         <BackHome />
-        <EmptyState
-          title="Your shift is no longer open"
-          description="Closing readings can no longer be captured. Talk to your supervisor about the missing nozzles."
-        />
+        <EmptyState title={t.closing.shiftNotOpenTitle} description={t.closing.shiftNotOpenBody} />
       </div>
     );
   }
@@ -347,10 +330,9 @@ export default function ClosingReadingsPage() {
       <BackHome />
 
       <div>
-        <h1 className="text-xl font-semibold leading-tight">Closing readings</h1>
+        <h1 className="text-xl font-semibold leading-tight">{t.closing.title}</h1>
         <p className="text-base text-muted-foreground" role="status">
-          {submittedCount} of {rows.length} nozzles submitted. Enter the closing meter on each
-          nozzle — litres sold are calculated for you.
+          {t.closing.progress(submittedCount, rows.length)}
         </p>
       </div>
 
@@ -377,31 +359,33 @@ export default function ClosingReadingsPage() {
                   {a.product_name}
                 </span>
                 <span className="font-mono text-xs font-normal text-muted-foreground">
-                  Pump {a.pump_number} · Nozzle {a.nozzle_number}
+                  {t.common.pumpNozzle(a.pump_number, a.nozzle_number)}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-2.5">
               <p className="flex items-center justify-between text-base">
-                <span className="text-muted-foreground">Opening reading</span>
+                <span className="text-muted-foreground">{t.closing.openingReading}</span>
                 <span className="font-mono font-medium tabular-nums">
-                  {reading?.opening_reading ?? 'Not recorded'}
+                  {reading?.opening_reading ?? t.closing.notRecorded}
                 </span>
               </p>
 
               {status.kind === 'submitted' && reading?.closing_reading ? (
                 <>
                   <p className="flex items-center justify-between text-base">
-                    <span className="text-muted-foreground">Closing reading</span>
+                    <span className="text-muted-foreground">{t.closing.closingReading}</span>
                     <span className="font-mono text-lg font-semibold tabular-nums">
                       {reading.closing_reading}
                     </span>
                   </p>
                   {reading.opening_reading ? (
                     <p className="flex items-center justify-between text-base">
-                      <span className="text-muted-foreground">Litres sold</span>
+                      <span className="text-muted-foreground">{t.closing.litresSold}</span>
                       <span className="font-mono font-medium tabular-nums">
-                        {subtractMeterDecimals(reading.closing_reading, reading.opening_reading)} L
+                        {t.closing.litresValue(
+                          subtractMeterDecimals(reading.closing_reading, reading.opening_reading),
+                        )}
                       </span>
                     </p>
                   ) : null}
@@ -412,31 +396,31 @@ export default function ClosingReadingsPage() {
               ) : status.kind === 'queued' && queued ? (
                 <>
                   <p className="flex items-center justify-between text-base">
-                    <span className="text-muted-foreground">Closing reading</span>
+                    <span className="text-muted-foreground">{t.closing.closingReading}</span>
                     <span className="font-mono text-lg font-semibold tabular-nums">{queued}</span>
                   </p>
                   {reading?.opening_reading ? (
                     <p className="flex items-center justify-between text-base">
-                      <span className="text-muted-foreground">Litres sold</span>
+                      <span className="text-muted-foreground">{t.closing.litresSold}</span>
                       <span className="font-mono font-medium tabular-nums">
-                        {subtractMeterDecimals(queued, reading.opening_reading)} L
+                        {t.closing.litresValue(
+                          subtractMeterDecimals(queued, reading.opening_reading),
+                        )}
                       </span>
                     </p>
                   ) : null}
                   <div>
-                    <Badge tone="info">Saved on this phone — will sync</Badge>
+                    <Badge tone="info">{t.common.savedOnPhoneBadge}</Badge>
                   </div>
                 </>
               ) : status.kind === 'no_opening' ? (
                 <p className="rounded-md bg-warning/10 px-3 py-2 text-sm text-warning" role="alert">
-                  No opening reading was recorded for this nozzle, so its closing cannot be
-                  validated. Verify the opening reading first.
+                  {t.closing.noOpening}
                 </p>
               ) : (
                 <>
                   <label htmlFor={inputID} className="text-sm text-muted-foreground">
-                    Closing meter reading ({a.meter_decimal_places} decimal
-                    {a.meter_decimal_places === 1 ? '' : 's'} max)
+                    {t.closing.meterLabel(a.meter_decimal_places)}
                   </label>
                   <Input
                     id={inputID}
@@ -463,7 +447,7 @@ export default function ClosingReadingsPage() {
                       className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
                       role="alert"
                     >
-                      Not saved: {result.message}
+                      {t.closing.notSaved(result.message ?? '')}
                     </p>
                   ) : null}
                 </>
@@ -478,14 +462,13 @@ export default function ClosingReadingsPage() {
       {confirming ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Confirm your closing readings</CardTitle>
+            <CardTitle className="text-base">{t.closing.confirmTitle}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <p className="text-base" role="status">
-              You are submitting {confirmRows.length} reading
-              {confirmRows.length === 1 ? '' : 's'} totalling{' '}
-              <span className="font-mono font-semibold tabular-nums">{totalLitres}</span> litres —
-              confirm.
+              {t.closing.confirmSummaryPrefix(confirmRows.length)}
+              <span className="font-mono font-semibold tabular-nums">{totalLitres}</span>
+              {t.closing.confirmSummarySuffix}
             </p>
             <ul className="flex flex-col gap-2">
               {confirmRows.map((r) => (
@@ -494,7 +477,7 @@ export default function ClosingReadingsPage() {
                   className="flex items-center justify-between gap-2 text-base"
                 >
                   <span>
-                    Pump {r.assignment.pump_number} · Nozzle {r.assignment.nozzle_number} (
+                    {t.common.pumpNozzle(r.assignment.pump_number, r.assignment.nozzle_number)} (
                     {r.assignment.product_name})
                   </span>
                   <span className="text-right">
@@ -502,15 +485,13 @@ export default function ClosingReadingsPage() {
                       {r.value.trim()}
                     </span>
                     <span className="block font-mono text-xs tabular-nums text-muted-foreground">
-                      {(r.status as { litres: string }).litres} L sold
+                      {t.closing.litresSoldShort((r.status as { litres: string }).litres)}
                     </span>
                   </span>
                 </li>
               ))}
             </ul>
-            <p className="text-sm text-muted-foreground">
-              Submitted readings are locked — only your supervisor can correct them during review.
-            </p>
+            <p className="text-sm text-muted-foreground">{t.closing.lockNote}</p>
             <Button
               className="h-14 text-lg"
               disabled={submit.isPending}
@@ -521,7 +502,7 @@ export default function ClosingReadingsPage() {
               }
             >
               {submit.isPending ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-              Confirm and submit
+              {t.common.confirmAndSubmit}
             </Button>
             <Button
               variant="outline"
@@ -529,7 +510,7 @@ export default function ClosingReadingsPage() {
               disabled={submit.isPending}
               onClick={() => setConfirming(false)}
             >
-              Go back and edit
+              {t.common.goBackAndEdit}
             </Button>
           </CardContent>
         </Card>
@@ -539,7 +520,7 @@ export default function ClosingReadingsPage() {
           disabled={!allSubmittable || submit.isPending}
           onClick={() => setConfirming(true)}
         >
-          Submit closing readings
+          {t.closing.submitButton}
         </Button>
       )}
     </div>
@@ -547,16 +528,17 @@ export default function ClosingReadingsPage() {
 }
 
 /** Maps a capture failure to a plain-language, per-nozzle message. */
-function captureErrorMessage(e: unknown): string {
+function captureErrorMessage(e: unknown, t: Messages): string {
   if (e instanceof SdkError) {
     const body = e.body as { code?: string } | null;
     if (body && body.code === 'closing_already_submitted') {
-      return 'A closing reading was already submitted for this nozzle — it is pending supervisor review.';
+      return t.closing.errAlreadySubmitted;
     }
-    if (e.status === 409) return 'A closing reading was already recorded for this nozzle.';
+    if (e.status === 409) return t.closing.errAlreadyRecorded;
+    // Raw server prose — shown verbatim (untranslated) as the honest fallback.
     if (e.message) return e.message;
   }
-  return 'Could not save this reading. Check your connection and try again.';
+  return t.closing.errGeneric;
 }
 
 /**
@@ -566,15 +548,16 @@ function captureErrorMessage(e: unknown): string {
  * closing_already_submitted).
  */
 function SubmittedBadge({ status }: { status?: string }) {
+  const t = useT();
   switch (status) {
     case 'approved':
-      return <Badge tone="success">Approved by supervisor</Badge>;
+      return <Badge tone="success">{t.closing.badgeApproved}</Badge>;
     case 'corrected':
-      return <Badge tone="warning">Corrected by supervisor</Badge>;
+      return <Badge tone="warning">{t.closing.badgeCorrected}</Badge>;
     case 'rejected':
-      return <Badge tone="danger">Rejected by supervisor</Badge>;
+      return <Badge tone="danger">{t.closing.badgeRejected}</Badge>;
     default:
-      return <Badge tone="info">Submitted — pending supervisor review</Badge>;
+      return <Badge tone="info">{t.closing.badgePending}</Badge>;
   }
 }
 
@@ -583,43 +566,42 @@ function SubmittedBadge({ status }: { status?: string }) {
  * only reinforces it (PRD §15.1).
  */
 function RowStatusLine({ id, status }: { id: string; status: RowStatus }) {
+  const t = useT();
   switch (status.kind) {
     case 'ok':
       return (
         <p id={id} className="text-base font-medium text-success" role="status">
-          Litres sold: {status.litres} L
+          {t.closing.statusOk(status.litres)}
         </p>
       );
     case 'high':
       return (
         <p id={id} className="text-base font-medium text-warning" role="status">
-          Litres sold: {status.litres} L — this looks unusually high. Double-check the meter; you
-          can still submit it.
+          {t.closing.statusHigh(status.litres)}
         </p>
       );
     case 'lower':
       return (
         <p id={id} className="text-base font-medium text-danger" role="status">
-          {LOWER_BLOCKED_MESSAGE}
+          {t.closing.lowerBlocked}
         </p>
       );
     case 'scale':
       return (
         <p id={id} className="text-base font-medium text-danger" role="status">
-          Too many decimals — this meter records at most {status.places} decimal
-          {status.places === 1 ? '' : 's'}.
+          {t.closing.statusScale(status.places)}
         </p>
       );
     case 'invalid':
       return (
         <p id={id} className="text-base font-medium text-danger" role="status">
-          Enter numbers only, like 1500 or 1500.25.
+          {t.closing.statusInvalid}
         </p>
       );
     case 'empty':
       return (
         <p id={id} className="text-base text-muted-foreground" role="status">
-          Enter the closing reading shown on the meter.
+          {t.closing.statusEmpty}
         </p>
       );
     default:
@@ -637,6 +619,7 @@ function AllSubmitted({
   queued?: number;
   closed?: boolean;
 }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-4">
       <BackHome />
@@ -646,26 +629,24 @@ function AllSubmitted({
             <Check className="size-6" aria-hidden />
           </span>
           <p className="text-lg font-semibold" role="status">
-            All closing readings are submitted
+            {t.closing.allSubmittedTitle}
           </p>
           <p className="text-base text-muted-foreground">
-            {total} of {total} nozzles submitted{closed ? ' and the shift is closed' : ''}. Your
-            supervisor reviews them next.
+            {t.closing.allSubmittedBody(total, Boolean(closed))}
           </p>
           {queued > 0 ? (
             <p className="text-sm font-medium text-warning" role="status">
-              {queued} reading{queued === 1 ? ' is' : 's are'} saved on this phone and will sync
-              when you are back online.
+              {t.closing.queuedNote(queued)}
             </p>
           ) : null}
           <Button asChild className="h-14 w-full text-lg">
             <Link href="/attendant/review-status">
-              View review status
+              {t.closing.viewReviewStatus}
               <ArrowRight className="size-5" aria-hidden />
             </Link>
           </Button>
           <Button asChild variant="outline" className="h-12 w-full text-base">
-            <Link href="/attendant">Back to my shift</Link>
+            <Link href="/attendant">{t.common.backToMyShift}</Link>
           </Button>
         </CardContent>
       </Card>
@@ -674,11 +655,12 @@ function AllSubmitted({
 }
 
 function BackHome() {
+  const t = useT();
   return (
     <Button asChild variant="ghost" className="h-12 w-fit -ml-2 text-base">
       <Link href="/attendant">
         <ArrowLeft className="size-5" aria-hidden />
-        My shift
+        {t.common.myShift}
       </Link>
     </Button>
   );

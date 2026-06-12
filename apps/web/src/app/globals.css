@@ -250,6 +250,70 @@
   }
 }
 
+/*
+ * Mobile Attendant accessibility modes (Phase 6b, PRD §15.1). The attendant
+ * shell root carries `data-text-size` and `data-contrast`; everything below
+ * is scoped to those attributes so the desktop dashboard is untouched.
+ *
+ * Large text: Tailwind v4 text-* utilities resolve `var(--text-*)` at the
+ * element, so re-declaring the font-size variables on the shell root scales
+ * every utility inside it (~1.25×). The paired --text-*--line-height vars are
+ * unitless ratios and stay proportional automatically. A min-height floor
+ * keeps every control comfortably above the 44px touch target as text grows.
+ *
+ * High contrast: the theme colors are HSL triplets resolved through
+ * `hsl(var(--color-*))` at the element, so scoped re-declarations raise the
+ * contrast of text, borders, and status colors (which always pair with text
+ * — never colour alone) without touching the markup. Light and dark/navy
+ * themes each get a tuned set.
+ */
+[data-text-size='large'] {
+  --text-xs: 0.9375rem;
+  --text-sm: 1.09375rem;
+  --text-base: 1.25rem;
+  --text-lg: 1.40625rem;
+  --text-xl: 1.5625rem;
+  --text-2xl: 1.875rem;
+}
+
+/* Touch-target floor in large-text mode: controls never shrink below 48px. */
+[data-text-size='large'] :is(button, input, select, textarea) {
+  min-height: 3rem;
+}
+
+[data-contrast='high'] {
+  /* Light theme: darker secondary text/borders, deeper status colors. */
+  --color-muted-foreground: 240 6% 24%;
+  --color-border: 240 6% 46%;
+  --color-input: 240 6% 40%;
+  --color-accent: 243 75% 46%;
+  --color-ring: 243 90% 38%;
+  --color-success: 152 80% 24%;
+  --color-warning: 28 100% 30%;
+  --color-danger: 0 85% 36%;
+  --color-info: 217 95% 38%;
+}
+
+.dark [data-contrast='high'],
+.navy [data-contrast='high'] {
+  /* Dark themes: brighter secondary text/borders, lighter status colors. */
+  --color-muted-foreground: 240 6% 88%;
+  --color-border: 240 6% 55%;
+  --color-input: 240 6% 60%;
+  --color-accent: 243 100% 82%;
+  --color-ring: 243 100% 82%;
+  --color-success: 152 70% 68%;
+  --color-warning: 40 100% 70%;
+  --color-danger: 0 100% 76%;
+  --color-info: 217 100% 78%;
+}
+
+/* High contrast also strengthens keyboard focus visibility. */
+[data-contrast='high'] :focus-visible {
+  outline: 3px solid hsl(var(--color-ring));
+  outline-offset: 2px;
+}
+
 @layer utilities {
   /* Subtle ambient grid/glow used on marketing-grade surfaces (login). */
   .bg-grid {

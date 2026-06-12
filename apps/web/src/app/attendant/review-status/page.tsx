@@ -16,6 +16,7 @@ import {
   Skeleton,
 } from '@fuelgrid/ui';
 
+import { useT } from '@/lib/i18n';
 import { subtractMeterDecimals } from '@/lib/meter-decimal';
 import { useAttendantSnapshot } from '@/lib/offline';
 
@@ -27,6 +28,7 @@ import { useAttendantSnapshot } from '@/lib/offline';
  * approved applied) with the supervisor's reason.
  */
 export default function ReviewStatusPage() {
+  const t = useT();
   const snapshot = useAttendantSnapshot({
     // Supervisor decisions land outside this screen — keep it live.
     refetchInterval: 30_000,
@@ -44,9 +46,13 @@ export default function ReviewStatusPage() {
   if (snapshot.showError) {
     return (
       <ErrorState
-        title="Couldn't load your shift"
+        title={t.common.couldNotLoadShift}
         description={String((snapshot.error as Error).message)}
-        onRetry={() => snapshot.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => snapshot.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -57,12 +63,8 @@ export default function ReviewStatusPage() {
       <div className="flex flex-col gap-4">
         <BackHome />
         <EmptyState
-          title="No readings to review"
-          description={
-            !data.shift
-              ? 'You are not on a shift, so there are no submitted readings to track.'
-              : 'No nozzles are assigned to you on this shift.'
-          }
+          title={t.review.emptyTitle}
+          description={!data.shift ? t.review.emptyNoShift : t.review.emptyNoAssignments}
         />
       </div>
     );
@@ -83,9 +85,9 @@ export default function ReviewStatusPage() {
       <BackHome />
 
       <div>
-        <h1 className="text-xl font-semibold leading-tight">Reading review status</h1>
+        <h1 className="text-xl font-semibold leading-tight">{t.review.title}</h1>
         <p className="text-base text-muted-foreground" role="status">
-          {verified.length} of {rows.length} readings verified by your supervisor.
+          {t.review.progress(verified.length, rows.length)}
         </p>
       </div>
 
@@ -102,7 +104,7 @@ export default function ReviewStatusPage() {
                 {a.product_name}
               </span>
               <span className="font-mono text-xs font-normal text-muted-foreground">
-                Pump {a.pump_number} · Nozzle {a.nozzle_number}
+                {t.common.pumpNozzle(a.pump_number, a.nozzle_number)}
               </span>
             </CardTitle>
           </CardHeader>
@@ -118,7 +120,7 @@ export default function ReviewStatusPage() {
       {submitted.length < rows.length ? (
         <Button asChild className="h-14 text-lg">
           <Link href="/attendant/closing-readings">
-            Finish closing readings
+            {t.review.finishClosings}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -129,18 +131,19 @@ export default function ReviewStatusPage() {
 
 /** Review status as text + colour, never colour alone (PRD §15.1). */
 function StatusBadge({ reading }: { reading?: AttendantReading }) {
+  const t = useT();
   if (reading?.closing_reading == null) {
-    return <Badge tone="neutral">Not submitted yet</Badge>;
+    return <Badge tone="neutral">{t.review.badgeNotSubmitted}</Badge>;
   }
   switch (reading.verification_status) {
     case 'approved':
-      return <Badge tone="success">Approved</Badge>;
+      return <Badge tone="success">{t.review.badgeApproved}</Badge>;
     case 'corrected':
-      return <Badge tone="warning">Corrected by supervisor</Badge>;
+      return <Badge tone="warning">{t.review.badgeCorrected}</Badge>;
     case 'rejected':
-      return <Badge tone="danger">Rejected</Badge>;
+      return <Badge tone="danger">{t.review.badgeRejected}</Badge>;
     default:
-      return <Badge tone="info">Pending supervisor review</Badge>;
+      return <Badge tone="info">{t.review.badgePending}</Badge>;
   }
 }
 
@@ -150,12 +153,9 @@ function StatusBadge({ reading }: { reading?: AttendantReading }) {
  * approved — plus the exact difference and the supervisor's reason.
  */
 function ReadingOutcome({ reading }: { reading?: AttendantReading }) {
+  const t = useT();
   if (reading?.closing_reading == null) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Submit this nozzle's closing reading to start the review.
-      </p>
-    );
+    return <p className="text-sm text-muted-foreground">{t.review.submitPrompt}</p>;
   }
   const submitted = reading.closing_reading;
   const final = reading.final_reading;
@@ -163,25 +163,23 @@ function ReadingOutcome({ reading }: { reading?: AttendantReading }) {
 
   return (
     <div className="flex flex-col gap-1.5 text-base">
-      <Row label="You submitted" value={submitted} />
+      <Row label={t.review.youSubmitted} value={submitted} />
       {corrected ? (
         <>
-          <Row label="Supervisor approved" value={final} />
-          <Row label="Difference" value={subtractMeterDecimals(final, submitted)} />
+          <Row label={t.review.supervisorApproved} value={final} />
+          <Row label={t.review.difference} value={subtractMeterDecimals(final, submitted)} />
         </>
       ) : null}
       {reading.verification_status === 'approved' && final != null ? (
-        <Row label="Approved reading" value={final} />
+        <Row label={t.review.approvedReading} value={final} />
       ) : null}
       {reading.verification_reason ? (
         <p className="rounded-md bg-muted px-3 py-2 text-sm">
-          <span className="font-medium">Reason:</span> {reading.verification_reason}
+          <span className="font-medium">{t.review.reasonLabel}</span> {reading.verification_reason}
         </p>
       ) : null}
       {reading.verification_status === 'pending' ? (
-        <p className="text-sm text-muted-foreground">
-          Your supervisor has not reviewed this reading yet.
-        </p>
+        <p className="text-sm text-muted-foreground">{t.review.notReviewedYet}</p>
       ) : null}
     </div>
   );
@@ -197,11 +195,12 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function BackHome() {
+  const t = useT();
   return (
     <Button asChild variant="ghost" className="h-12 w-fit -ml-2 text-base">
       <Link href="/attendant">
         <ArrowLeft className="size-5" aria-hidden />
-        My shift
+        {t.common.myShift}
       </Link>
     </Button>
   );
