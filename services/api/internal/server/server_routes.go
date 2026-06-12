@@ -990,7 +990,10 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 	// Supervisor verification of closing readings — the dual-value
 	// model (Mobile Attendant App, Phase 0). Station-scoped via
 	// reading.override, authorized in-handler; separation of duties
-	// (verifier != recorder) also in-handler.
+	// (verifier != recorder) also in-handler. The verification set is
+	// a station-scoped read (Phase 5 supervisor review surface).
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/shifts/{id}/reading-verifications", s.handleListReadingVerifications)
 	r.With(s.requirePermissionHeld("reading.override")).
 		Post("/shifts/{id}/readings/verify", s.handleVerifyShiftReadings)
 	r.With(s.requirePermissionHeld("reading.override")).
@@ -1003,6 +1006,10 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 	// (self-scoped) or station.read holders, resolved in-handler.
 	r.With(s.requirePermissionHeld("cash.confirm")).
 		Post("/shifts/{id}/cash-submission/confirm", s.handleConfirmCashSubmission)
+	// The receipt itself is a station-scoped read (Phase 5 supervisor
+	// review surface); 404 while no receipt exists yet.
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/shifts/{id}/collection-receipt", s.handleGetCollectionReceipt)
 	r.Get("/shifts/{id}/expected-opening-readings", s.handleExpectedOpeningReadings)
 }
 

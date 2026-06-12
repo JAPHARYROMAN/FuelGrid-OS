@@ -85,6 +85,46 @@ func (s *Server) requireCollectionReceiptConfirmed(w http.ResponseWriter, ctx co
 	return true
 }
 
+// handleGetCollectionReceipt is the supervisor's station-scoped read of a
+// shift's collection receipt (station.read; Mobile Attendant Phase 5) — the
+// review surface's receipt status. 404 while no receipt exists yet.
+func (s *Server) handleGetCollectionReceipt(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid shift id")
+		return
+	}
+	ctx := r.Context()
+	shift, err := s.operations.GetShift(ctx, actor.TenantID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "shift not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !s.authorizeStation(w, r, actor, "station.read", shift.StationID) {
+		return
+	}
+	receipt, err := s.operations.GetCollectionReceiptForShift(ctx, actor.TenantID, shift.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "no collection receipt for this shift yet")
+		return
+	}
+	if err != nil {
+		s.logger.Error("get collection receipt", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, toCollectionReceiptDTO(receipt))
+}
+
 type confirmCashSubmissionRequest struct {
 	ReceivedTotal decimalInput `json:"received_total"`
 	// Status is "received" (default) or "rejected"; a non-zero difference

@@ -23,6 +23,8 @@ import { CalendarClock, CheckCircle2, Lock, Plus, Trash2 } from 'lucide-react';
 
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
+import { apiErrorBody, apiErrorCode, apiErrorMessage } from '@/lib/api-error';
+import { usePermission } from '@/hooks/use-permissions';
 import { formatLitres, formatMoney, parseDecimal } from '@/lib/money';
 
 // Money/litre figures are exact decimal strings from the server.
@@ -67,6 +69,15 @@ export default function OperationsPage() {
   const [newShiftName, setNewShiftName] = useState('');
   const [slot, setSlot] = useState<'morning' | 'evening'>('morning');
   const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, AssignmentDraft>>({});
+  // Handover gate state: the prior shifts blocking a new open (409
+  // prior_shift_unapproved) and the reason for an audited override.
+  const [handoverBlock, setHandoverBlock] = useState<string[] | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
+
+  // The handover override is server-gated on shift.approve — only show the
+  // path to holders; everyone else sees the block and the way out (approve
+  // the prior shift).
+  const canOverrideHandover = usePermission('shift.approve', { stationID });
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -123,7 +134,24 @@ export default function OperationsPage() {
       setActionError(null);
       invalidateOperations();
     },
-    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not approve shift'),
+    onError: (e) => {
+      // The approval gates (Mobile Attendant Phase 0) come back as 409s with
+      // machine-readable codes — turn them into next-step guidance pointing
+      // at the shift review page instead of a raw error.
+      const code = apiErrorCode(e);
+      if (code === 'readings_unverified') {
+        const n = apiErrorBody(e)?.unverified_count;
+        setActionError(
+          `${typeof n === 'number' ? n : 'Some'} closing reading${n === 1 ? ' is' : 's are'} awaiting verification — open the shift review to verify them before approving.`,
+        );
+      } else if (code === 'collection_unconfirmed') {
+        setActionError(
+          'The cash handover has not been confirmed — record the collection receipt in the shift review before approving.',
+        );
+      } else {
+        setActionError(apiErrorMessage(e, 'Could not approve shift'));
+      }
+    },
   });
 
   const resolve = useMutation({
@@ -185,14 +213,35 @@ export default function OperationsPage() {
   });
 
   const openShift = useMutation({
-    mutationFn: (dayID: string) =>
-      api.openShift(stationID, { operating_day_id: dayID, name: newShiftName.trim(), slot }),
+    mutationFn: ({ dayID, overrideReason }: { dayID: string; overrideReason?: string }) =>
+      api.openShift(stationID, {
+        operating_day_id: dayID,
+        name: newShiftName.trim(),
+        slot,
+        ...(overrideReason ? { handover_override_reason: overrideReason } : {}),
+      }),
     onSuccess: () => {
       setActionError(null);
       setNewShiftName('');
+      setHandoverBlock(null);
+      setOverrideReason('');
       invalidateOperations();
     },
-    onError: (e) => setActionError(e instanceof SdkError ? e.message : 'Could not open shift'),
+    onError: (e) => {
+      // Handover chain (Mobile Attendant Phase 0): the server refuses to open
+      // while a prior shift is closed-but-not-approved, naming the blockers.
+      // Render that as a guided block (with the audited override path for
+      // shift.approve holders) instead of a raw 409.
+      if (apiErrorCode(e) === 'prior_shift_unapproved') {
+        const ids = apiErrorBody(e)?.unapproved_shift_ids;
+        setHandoverBlock(
+          Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : [],
+        );
+        setActionError(null);
+        return;
+      }
+      setActionError(apiErrorMessage(e, 'Could not open shift'));
+    },
   });
 
   const assignNozzle = useMutation({
@@ -391,7 +440,7 @@ export default function OperationsPage() {
                         disabled={
                           !newShiftName.trim() || openShift.isPending || !scheduledTeam.data?.team
                         }
-                        onClick={() => openShift.mutate(overview.data.day!.id)}
+                        onClick={() => openShift.mutate({ dayID: overview.data.day!.id })}
                       >
                         <Plus className="size-4" />
                         {openShift.isPending ? 'Opening…' : 'Open shift'}
@@ -418,6 +467,26 @@ export default function OperationsPage() {
                       </span>
                     )}
                   </div>
+                  {handoverBlock ? (
+                    <HandoverBlockPanel
+                      blockedShiftIDs={handoverBlock}
+                      shifts={overview.data.shifts}
+                      canOverride={canOverrideHandover === true}
+                      overrideReason={overrideReason}
+                      onOverrideReasonChange={setOverrideReason}
+                      opening={openShift.isPending}
+                      onOverride={() =>
+                        openShift.mutate({
+                          dayID: overview.data.day!.id,
+                          overrideReason: overrideReason.trim(),
+                        })
+                      }
+                      onDismiss={() => {
+                        setHandoverBlock(null);
+                        setOverrideReason('');
+                      }}
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </CardContent>
@@ -627,7 +696,7 @@ function ShiftCard({
         </CardTitle>
         <div className="flex items-center gap-2">
           <Button asChild variant="ghost" size="sm">
-            <Link href={`/operations/shifts/${shift.id}`}>Timeline</Link>
+            <Link href={`/operations/shifts/${shift.id}`}>Review</Link>
           </Button>
           <Badge tone={shiftTone(shift.status)}>{shift.status}</Badge>
         </div>
@@ -1152,6 +1221,86 @@ function MoneyInput({
         placeholder="0.00"
       />
     </label>
+  );
+}
+
+/**
+ * The handover gate rendered as guidance (Mobile Attendant Phase 0/5): a new
+ * shift cannot open while a prior shift is closed-but-not-approved. Names the
+ * blocking shift(s) with a path to their review pages; the audited override
+ * (server-gated on shift.approve, reason mandatory) is shown only to holders.
+ */
+function HandoverBlockPanel({
+  blockedShiftIDs,
+  shifts,
+  canOverride,
+  overrideReason,
+  onOverrideReasonChange,
+  opening,
+  onOverride,
+  onDismiss,
+}: {
+  blockedShiftIDs: string[];
+  shifts: OperationsShift[];
+  canOverride: boolean;
+  overrideReason: string;
+  onOverrideReasonChange: (value: string) => void;
+  opening: boolean;
+  onOverride: () => void;
+  onDismiss: () => void;
+}) {
+  const nameByID = new Map(shifts.map((s) => [s.id, s.name]));
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"
+      role="alert"
+      data-testid="handover-block"
+    >
+      <p className="font-medium text-warning">
+        Shift handover incomplete — approve the previous shift before opening a new one.
+      </p>
+      <p className="text-muted-foreground">
+        Blocking shift{blockedShiftIDs.length === 1 ? '' : 's'}:{' '}
+        {blockedShiftIDs.map((id, i) => (
+          <span key={id}>
+            {i > 0 ? ', ' : ''}
+            <Link
+              className="font-medium underline hover:text-accent"
+              href={`/operations/shifts/${id}`}
+            >
+              {nameByID.get(id) ?? `shift ${id.slice(0, 8)}`}
+            </Link>
+          </span>
+        ))}
+        . The incoming attendants&apos; opening readings derive from its approved closings.
+      </p>
+      {canOverride ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            aria-label="Handover override reason"
+            className="h-8 flex-1 min-w-48"
+            placeholder="Override reason (required, audited)"
+            value={overrideReason}
+            onChange={(e) => onOverrideReasonChange(e.target.value)}
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!overrideReason.trim() || opening}
+            onClick={onOverride}
+          >
+            {opening ? 'Opening…' : 'Override and open'}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Overriding the handover requires the shift.approve permission.
+        </p>
+      )}
+      <Button className="self-start" size="sm" variant="ghost" onClick={onDismiss}>
+        Dismiss
+      </Button>
+    </div>
   );
 }
 

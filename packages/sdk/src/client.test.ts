@@ -474,6 +474,30 @@ describe('Client mobile attendant phase-0 methods', () => {
     expect(res.final_approved_reading).toBe('1490.000');
     expect(res.attendant_submitted_reading).toBe('1500.000');
   });
+
+  it('listReadingVerifications GETs the verification set with decimal strings intact', async () => {
+    const f = jsonFetch(200, {
+      items: [
+        {
+          id: 'v1',
+          attendant_submitted_reading: '1500.000',
+          supervisor_verified_reading: '1490.000',
+          final_approved_reading: '1490.000',
+          status: 'corrected',
+          reason: 'misread',
+        },
+      ],
+      count: 1,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listReadingVerifications('shift-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/reading-verifications');
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(res.count).toBe(1);
+    expect(res.items[0]!.final_approved_reading).toBe('1490.000');
+    expect(res.items[0]!.attendant_submitted_reading).toBe('1500.000');
+  });
 });
 
 describe('Client mobile attendant phase-0 handover methods', () => {
@@ -502,6 +526,25 @@ describe('Client mobile attendant phase-0 handover methods', () => {
         supervisor_comment: 'counted twice',
       }),
     );
+    expect(res.difference).toBe('-5000.00');
+    expect(res.status).toBe('approved_with_difference');
+  });
+
+  it('getCollectionReceipt GETs the collection-receipt path with decimal strings intact', async () => {
+    const f = jsonFetch(200, {
+      id: 'cr1',
+      expected_amount: '1475000.00',
+      attendant_submitted_total: '1475000.00',
+      supervisor_received_total: '1470000.00',
+      difference: '-5000.00',
+      status: 'approved_with_difference',
+      reason: 'short by 5,000',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getCollectionReceipt('shift-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/collection-receipt');
+    expect(init.method ?? 'GET').toBe('GET');
     expect(res.difference).toBe('-5000.00');
     expect(res.status).toBe('approved_with_difference');
   });
