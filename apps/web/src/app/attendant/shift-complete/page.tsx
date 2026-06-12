@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Check, Loader2, PartyPopper } from 'lucide-react';
 
-import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
+import { SdkError } from '@fuelgrid/sdk';
 import {
   Badge,
   Button,
@@ -48,9 +48,7 @@ export default function ShiftCompletePage() {
       toast.success('Checked out', 'Thanks for your shift — see you next time.');
     },
     onError: (e) =>
-      setActionError(
-        e instanceof SdkError ? e.message : 'Could not check out. Try again.',
-      ),
+      setActionError(e instanceof SdkError ? e.message : 'Could not check out. Try again.'),
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
@@ -78,10 +76,7 @@ export default function ShiftCompletePage() {
     return (
       <div className="flex flex-col gap-4">
         <BackHome />
-        <EmptyState
-          title="No shift to complete"
-          description="You are not on a shift right now."
-        />
+        <EmptyState title="No shift to complete" description="You are not on a shift right now." />
       </div>
     );
   }
@@ -194,7 +189,10 @@ export default function ShiftCompletePage() {
           ) : null}
           {receipt ? (
             <>
-              <Row label="Supervisor received" value={formatMoney(receipt.supervisor_received_total)} />
+              <Row
+                label="Supervisor received"
+                value={formatMoney(receipt.supervisor_received_total)}
+              />
               <Row label="Difference" value={formatMoney(receipt.difference)} />
               {receipt.reason ? (
                 <p className="text-sm text-muted-foreground">Supervisor reason: {receipt.reason}</p>

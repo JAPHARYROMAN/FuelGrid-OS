@@ -167,6 +167,14 @@ export default function CollectionsPage() {
           <SubmittedCollection data={data} />
           <ReceiptStatus data={data} />
         </>
+      ) : data.next_action === 'await_reading_verification' ? (
+        // Honest wait state: the shift is closed but the supervisor is still
+        // verifying readings — a correction would change the expected figure,
+        // so the form waits for the final basis (PRD §7.9: approved readings).
+        <p className="rounded-md bg-accent/10 px-3 py-2 text-base" role="status">
+          Your supervisor is still verifying your closing readings. Submit your collections once the
+          expected amount is final.
+        </p>
       ) : (
         <SubmissionForm data={data} />
       )}
@@ -311,7 +319,11 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
             You can submit collections only once for this shift. After this, only your supervisor
             handles changes.
           </p>
-          <Button className="h-14 text-lg" disabled={submit.isPending} onClick={() => submit.mutate()}>
+          <Button
+            className="h-14 text-lg"
+            disabled={submit.isPending}
+            onClick={() => submit.mutate()}
+          >
             {submit.isPending ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
             Confirm and submit
           </Button>
@@ -427,19 +439,28 @@ function DifferenceLine({ difference }: { difference: Difference }) {
   switch (difference.kind) {
     case 'balanced':
       return (
-        <p className="rounded-md bg-success/10 px-3 py-2 text-base font-medium text-success" role="status">
+        <p
+          className="rounded-md bg-success/10 px-3 py-2 text-base font-medium text-success"
+          role="status"
+        >
           Balanced — your total matches the expected collection.
         </p>
       );
     case 'shortage':
       return (
-        <p className="rounded-md bg-danger/10 px-3 py-2 text-base font-medium text-danger" role="status">
+        <p
+          className="rounded-md bg-danger/10 px-3 py-2 text-base font-medium text-danger"
+          role="status"
+        >
           Shortage of {formatMoney(difference.amount)} — you are handing in less than expected.
         </p>
       );
     case 'excess':
       return (
-        <p className="rounded-md bg-warning/10 px-3 py-2 text-base font-medium text-warning" role="status">
+        <p
+          className="rounded-md bg-warning/10 px-3 py-2 text-base font-medium text-warning"
+          role="status"
+        >
           Excess of {formatMoney(difference.amount)} — you are handing in more than expected.
         </p>
       );
@@ -491,7 +512,10 @@ function ReceiptStatus({ data }: { data: AttendantCurrentShift }) {
       </p>
     );
   }
-  const difference = differenceVsExpected(receipt.supervisor_received_total, receipt.expected_amount);
+  const difference = differenceVsExpected(
+    receipt.supervisor_received_total,
+    receipt.expected_amount,
+  );
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -505,7 +529,10 @@ function ReceiptStatus({ data }: { data: AttendantCurrentShift }) {
         <Row label="Expected" value={formatMoney(receipt.expected_amount)} />
         <Row label="Difference" value={formatMoney(receipt.difference)} />
         {receipt.status === 'rejected' ? (
-          <p className="rounded-md bg-danger/10 px-3 py-2 text-base font-medium text-danger" role="alert">
+          <p
+            className="rounded-md bg-danger/10 px-3 py-2 text-base font-medium text-danger"
+            role="alert"
+          >
             Your collection was rejected. See your supervisor.
           </p>
         ) : difference.kind !== 'balanced' ? (
@@ -554,7 +581,9 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
   return (
     <p className="flex items-center justify-between text-base">
       <span className="text-muted-foreground">{label}</span>
-      <span className={`font-mono tabular-nums ${strong ? 'text-lg font-semibold' : 'font-medium'}`}>
+      <span
+        className={`font-mono tabular-nums ${strong ? 'text-lg font-semibold' : 'font-medium'}`}
+      >
         {value}
       </span>
     </p>

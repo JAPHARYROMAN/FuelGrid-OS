@@ -1715,11 +1715,11 @@ paths:
               type: object
               required: [cash_amount]
               properties:
-                cash_amount:         { type: number }
-                mobile_money_amount: { type: number }
-                card_amount:         { type: number }
-                credit_amount:       { type: number }
-                notes:               { type: string }
+                cash_amount:         { type: string, description: Exact decimal string (numeric 14,2); omitted tenders default to "0" }
+                mobile_money_amount: { type: string, description: Exact decimal string (numeric 14,2) }
+                card_amount:         { type: string, description: Exact decimal string (numeric 14,2) }
+                credit_amount:       { type: string, description: Exact decimal string (numeric 14,2) }
+                notes:               { type: string, description: Free-text note; on the attendant path it carries the REQUIRED reason when the submitted total differs from expected }
       responses:
         '201': { description: Submitted, content: { application/json: { schema: { $ref: '#/components/schemas/CashSubmission' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
