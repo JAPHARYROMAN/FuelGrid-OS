@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 
+import { useT } from '@/lib/i18n';
+
 /**
  * Service-worker registration + update affordance for the attendant shell
  * (Mobile Attendant Phase 6a).
@@ -17,6 +19,7 @@ import { RefreshCw } from 'lucide-react';
  * reload once the new worker takes control.
  */
 export function ServiceWorkerManager() {
+  const t = useT();
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
   const reloadingRef = useRef(false);
 
@@ -74,7 +77,7 @@ export function ServiceWorkerManager() {
         }}
       >
         <RefreshCw className="size-4" aria-hidden />
-        App updated — tap to reload
+        {t.sync.updateReady}
       </button>
     </div>
   );

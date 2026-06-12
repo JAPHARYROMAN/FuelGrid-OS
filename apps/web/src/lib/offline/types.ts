@@ -29,6 +29,26 @@ export type OfflineActionType =
  */
 export type OfflineSyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict';
 
+/**
+ * Machine codes for CLIENT-generated queue messages (Phase 6b i18n): the
+ * queue stores codes + params, never display prose, so the sync sheet can
+ * render them in the attendant's language at display time. Raw SERVER error
+ * prose has no code and is kept verbatim in `error_message` as the fallback.
+ */
+export type QueueMessageCode =
+  | 'opening_below_expected'
+  | 'assignment_changed'
+  | 'reading_conflict'
+  | 'collection_conflict'
+  | 'verify_unavailable';
+
+/** Parameters for coded queue messages (JSON-serializable, stored verbatim). */
+export interface QueueMessageParams {
+  reading_type?: 'opening' | 'closing';
+  /** The server's differing figure for conflict messages (decimal string). */
+  server_value?: string;
+}
+
 export interface CheckInPayload {
   device_info?: Record<string, unknown>;
 }
@@ -64,14 +84,27 @@ interface QueuedActionBase {
   /** Monotonic enqueue order — replay is strictly in seq order per shift. */
   seq: number;
   shift_id: string;
-  /** Short human description for the sync details sheet. */
-  label: string;
+  /**
+   * Legacy (Phase 6a) stored display prose. New records do NOT set it — the
+   * sync sheet derives a translated label from action_type + payload at
+   * display time. Kept optional so records persisted before Phase 6b still
+   * render.
+   */
+  label?: string;
   /** ISO timestamp from the device clock at capture time. */
   created_at_local: string;
   retry_count: number;
   sync_status: OfflineSyncStatus;
-  /** Plain-language error for failed/conflict rows in the sync sheet. */
+  /**
+   * Raw error prose for failed/conflict rows. For client-classified outcomes
+   * `error_code` is ALSO set and the sheet renders the translated message;
+   * for raw server errors this prose is shown verbatim (untranslated).
+   */
   error_message?: string;
+  /** Machine code for client-generated messages — translated at display time. */
+  error_code?: QueueMessageCode;
+  /** Parameters for the coded message (reading type, server figure, …). */
+  error_params?: QueueMessageParams;
   /** On conflict: the server's value, kept alongside the local payload. */
   server_value?: string;
 }
@@ -87,6 +120,8 @@ export type QueuedAction = QueuedActionBase &
   );
 
 /** What the caller provides at capture time; identity/order/status are filled in. */
-export type EnqueueInput = Pick<QueuedAction, 'action_type' | 'shift_id' | 'payload' | 'label'> & {
+export type EnqueueInput = Pick<QueuedAction, 'action_type' | 'shift_id' | 'payload'> & {
   action_type: OfflineActionType;
+  /** Legacy display prose — new callers omit it (labels derive from payload). */
+  label?: string;
 };

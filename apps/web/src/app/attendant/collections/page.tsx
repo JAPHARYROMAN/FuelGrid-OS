@@ -20,6 +20,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { useT, type Messages } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import { formatLitres, formatMoney } from '@/lib/money';
 import {
@@ -40,17 +41,25 @@ import {
 const QUERY_KEY = ['attendant-current-shift'];
 
 /** The tender breakdown of the existing cash-submission contract, in order. */
-const TENDERS = [
-  { key: 'cash', label: 'Cash' },
-  { key: 'mobile_money', label: 'Mobile money' },
-  { key: 'card', label: 'Card' },
-  { key: 'credit', label: 'Credit' },
-] as const;
+const TENDER_KEYS = ['cash', 'mobile_money', 'card', 'credit'] as const;
 
-type TenderKey = (typeof TENDERS)[number]['key'];
+type TenderKey = (typeof TENDER_KEYS)[number];
 type TenderInputs = Record<TenderKey, string>;
 
 const EMPTY_TENDERS: TenderInputs = { cash: '', mobile_money: '', card: '', credit: '' };
+
+function tenderLabel(key: TenderKey, t: Messages): string {
+  switch (key) {
+    case 'cash':
+      return t.collections.tenderCash;
+    case 'mobile_money':
+      return t.collections.tenderMobileMoney;
+    case 'card':
+      return t.collections.tenderCard;
+    case 'credit':
+      return t.collections.tenderCredit;
+  }
+}
 
 /** An omitted tender is "0" — mirroring the server's tenderOrZero. */
 function tenderOrZero(value: string): string {
@@ -94,6 +103,7 @@ function signedDifference(d: Difference): string {
 }
 
 export default function CollectionsPage() {
+  const t = useT();
   const snapshot = useAttendantSnapshot({
     // Receipt status advances on supervisor actions — keep the screen live.
     refetchInterval: 30_000,
@@ -112,9 +122,13 @@ export default function CollectionsPage() {
   if (snapshot.showError) {
     return (
       <ErrorState
-        title="Couldn't load your collections"
+        title={t.collections.errLoadTitle}
         description={String((snapshot.error as Error).message)}
-        onRetry={() => snapshot.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => snapshot.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -134,10 +148,7 @@ export default function CollectionsPage() {
     return (
       <div className="flex flex-col gap-4">
         <BackHome />
-        <EmptyState
-          title="No collections right now"
-          description="You are not on a shift. Collections are submitted after your shift closes."
-        />
+        <EmptyState title={t.collections.emptyTitle} description={t.collections.emptyNoShift} />
       </div>
     );
   }
@@ -150,15 +161,14 @@ export default function CollectionsPage() {
         <BackHome />
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Collections</CardTitle>
+            <CardTitle className="text-lg">{t.collections.title}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <p className="text-base text-muted-foreground" role="status">
-              Your expected collection is available after the shift closes. Finish your closing
-              readings and wait for your supervisor to close the shift.
+              {t.collections.preCloseBody}
             </p>
             <Button asChild variant="outline" className="h-12 text-base">
-              <Link href="/attendant">Back to my shift</Link>
+              <Link href="/attendant">{t.common.backToMyShift}</Link>
             </Button>
           </CardContent>
         </Card>
@@ -170,10 +180,8 @@ export default function CollectionsPage() {
     <div className="flex flex-col gap-4">
       <BackHome />
       <div>
-        <h1 className="text-xl font-semibold leading-tight">Collections</h1>
-        <p className="text-base text-muted-foreground">
-          Hand in everything you collected this shift. Amounts are checked against the meters.
-        </p>
+        <h1 className="text-xl font-semibold leading-tight">{t.collections.title}</h1>
+        <p className="text-base text-muted-foreground">{t.collections.subtitle}</p>
       </div>
 
       <ExpectedCollection data={data} />
@@ -190,8 +198,7 @@ export default function CollectionsPage() {
         // verifying readings — a correction would change the expected figure,
         // so the form waits for the final basis (PRD §7.9: approved readings).
         <p className="rounded-md bg-accent/10 px-3 py-2 text-base" role="status">
-          Your supervisor is still verifying your closing readings. Submit your collections once the
-          expected amount is final.
+          {t.collections.awaitVerification}
         </p>
       ) : (
         <SubmissionForm data={data} />
@@ -206,15 +213,16 @@ export default function CollectionsPage() {
  * The attendant sees the price but can never edit it.
  */
 function ExpectedCollection({ data }: { data: AttendantCurrentShift }) {
+  const t = useT();
   const lines = data.close_lines ?? [];
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Expected collection</CardTitle>
+        <CardTitle className="text-base">{t.collections.expectedCollection}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         <p className="flex items-baseline justify-between gap-2">
-          <span className="text-muted-foreground">Total expected</span>
+          <span className="text-muted-foreground">{t.collections.totalExpected}</span>
           <span className="font-mono text-2xl font-semibold tabular-nums">
             {formatMoney(data.expected_cash, { fallback: '0.00' })}
           </span>
@@ -232,7 +240,7 @@ function ExpectedCollection({ data }: { data: AttendantCurrentShift }) {
                   <span className="min-w-0">
                     <span className="block truncate font-medium">{l.product_name}</span>
                     <span className="block font-mono text-xs text-muted-foreground">
-                      Pump {l.pump_number} · Nozzle {l.nozzle_number}
+                      {t.common.pumpNozzle(l.pump_number, l.nozzle_number)}
                     </span>
                   </span>
                 </span>
@@ -241,8 +249,10 @@ function ExpectedCollection({ data }: { data: AttendantCurrentShift }) {
                     {formatMoney(l.expected_value, { fallback: '0.00' })}
                   </span>
                   <span className="block font-mono text-xs tabular-nums text-muted-foreground">
-                    {formatLitres(l.litres_sold, { maximumFractionDigits: 3 })} L ×{' '}
-                    {formatMoney(l.unit_price, { fallback: '0.00' })}
+                    {t.collections.litresTimesPrice(
+                      formatLitres(l.litres_sold, { maximumFractionDigits: 3 }),
+                      formatMoney(l.unit_price, { fallback: '0.00' }),
+                    )}
                   </span>
                 </span>
               </li>
@@ -256,6 +266,7 @@ function ExpectedCollection({ data }: { data: AttendantCurrentShift }) {
 
 /** The tender breakdown form with live difference, reason policy, and confirm step. */
 function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
+  const t = useT();
   const qc = useQueryClient();
   const [inputs, setInputs] = useState<TenderInputs>(EMPTY_TENDERS);
   const [reason, setReason] = useState('');
@@ -285,7 +296,6 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
             action_type: 'collection',
             shift_id: shiftID,
             payload,
-            label: 'Submit collections',
           });
           return 'queued' as const;
         }
@@ -295,27 +305,21 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
     onSuccess: async (result) => {
       setSubmitError(null);
       if (result === 'queued') {
-        toast.success(
-          'Collections saved on this phone',
-          'They will sync when you are back online.',
-        );
+        toast.success(t.collections.toastQueuedTitle, t.collections.toastQueuedBody);
       } else {
-        toast.success(
-          'Collections submitted',
-          'Your supervisor will now confirm the cash they receive from you.',
-        );
+        toast.success(t.collections.toastSubmittedTitle, t.collections.toastSubmittedBody);
       }
       await qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
     onError: (e) => {
       setConfirming(false);
-      setSubmitError(submitErrorMessage(e));
+      setSubmitError(submitErrorMessage(e, t));
     },
   });
 
-  const allValid = TENDERS.every((t) => tenderValid(inputs[t.key]));
+  const allValid = TENDER_KEYS.every((key) => tenderValid(inputs[key]));
   const total = allValid
-    ? TENDERS.reduce((sum, t) => addMeterDecimals(sum, tenderOrZero(inputs[t.key])), '0')
+    ? TENDER_KEYS.reduce((sum, key) => addMeterDecimals(sum, tenderOrZero(inputs[key])), '0')
     : null;
   const difference = total != null ? differenceVsExpected(total, expected) : null;
   const totalIsZero = total != null && compareMeterDecimals(total, '0') === 0;
@@ -331,44 +335,41 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Confirm your collections</CardTitle>
+          <CardTitle className="text-base">{t.collections.confirmTitle}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <p className="text-base" role="status">
-            You are submitting{' '}
-            <span className="font-mono font-semibold tabular-nums">{formatMoney(total)}</span>{' '}
-            against an expected{' '}
-            <span className="font-mono font-semibold tabular-nums">{formatMoney(expected)}</span> —
-            difference{' '}
+            {t.collections.confirmPart1}
+            <span className="font-mono font-semibold tabular-nums">{formatMoney(total)}</span>
+            {t.collections.confirmPart2}
+            <span className="font-mono font-semibold tabular-nums">{formatMoney(expected)}</span>
+            {t.collections.confirmPart3}
             <span className="font-mono font-semibold tabular-nums">
               {formatMoney(signedDifference(difference))}
-            </span>{' '}
-            — confirm.
+            </span>
+            {t.collections.confirmPart4}
           </p>
           <ul className="flex flex-col gap-1.5 border-t border-border pt-3">
-            {TENDERS.map((t) => (
-              <li key={t.key} className="flex items-center justify-between text-base">
-                <span className="text-muted-foreground">{t.label}</span>
+            {TENDER_KEYS.map((key) => (
+              <li key={key} className="flex items-center justify-between text-base">
+                <span className="text-muted-foreground">{tenderLabel(key, t)}</span>
                 <span className="font-mono font-medium tabular-nums">
-                  {formatMoney(tenderOrZero(inputs[t.key]))}
+                  {formatMoney(tenderOrZero(inputs[key]))}
                 </span>
               </li>
             ))}
           </ul>
           {reason.trim() !== '' ? (
-            <p className="text-sm text-muted-foreground">Reason: {reason.trim()}</p>
+            <p className="text-sm text-muted-foreground">{t.common.reason(reason.trim())}</p>
           ) : null}
-          <p className="text-sm text-muted-foreground">
-            You can submit collections only once for this shift. After this, only your supervisor
-            handles changes.
-          </p>
+          <p className="text-sm text-muted-foreground">{t.collections.onceNote}</p>
           <Button
             className="h-14 text-lg"
             disabled={submit.isPending}
             onClick={() => submit.mutate()}
           >
             {submit.isPending ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-            Confirm and submit
+            {t.common.confirmAndSubmit}
           </Button>
           <Button
             variant="outline"
@@ -376,7 +377,7 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
             disabled={submit.isPending}
             onClick={() => setConfirming(false)}
           >
-            Go back and edit
+            {t.common.goBackAndEdit}
           </Button>
         </CardContent>
       </Card>
@@ -386,17 +387,17 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Submit your collections</CardTitle>
+        <CardTitle className="text-base">{t.collections.formTitle}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {TENDERS.map((t) => {
-          const value = inputs[t.key];
+        {TENDER_KEYS.map((key) => {
+          const value = inputs[key];
           const invalid = !tenderValid(value);
-          const inputID = `tender-${t.key}`;
+          const inputID = `tender-${key}`;
           return (
-            <div key={t.key} className="flex flex-col gap-1">
+            <div key={key} className="flex flex-col gap-1">
               <label htmlFor={inputID} className="text-sm text-muted-foreground">
-                {t.label}
+                {tenderLabel(key, t)}
               </label>
               <Input
                 id={inputID}
@@ -408,7 +409,7 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
                 value={value}
                 disabled={submit.isPending}
                 onChange={(e) => {
-                  setInputs((p) => ({ ...p, [t.key]: e.target.value }));
+                  setInputs((p) => ({ ...p, [key]: e.target.value }));
                   setSubmitError(null);
                 }}
                 aria-invalid={invalid}
@@ -416,7 +417,7 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
               />
               {invalid ? (
                 <p id={`${inputID}-error`} className="text-sm font-medium text-danger" role="alert">
-                  Enter a money amount like 250000 or 250000.50 (no minus sign).
+                  {t.collections.tenderInvalid}
                 </p>
               ) : null}
             </div>
@@ -425,13 +426,13 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
 
         <div className="flex flex-col gap-1.5 border-t border-border pt-3">
           <p className="flex items-center justify-between text-base">
-            <span className="text-muted-foreground">Submitted total</span>
+            <span className="text-muted-foreground">{t.collections.submittedTotal}</span>
             <span className="font-mono text-lg font-semibold tabular-nums">
               {total != null ? formatMoney(total) : '—'}
             </span>
           </p>
           <p className="flex items-center justify-between text-base">
-            <span className="text-muted-foreground">Expected</span>
+            <span className="text-muted-foreground">{t.collections.expected}</span>
             <span className="font-mono font-medium tabular-nums">{formatMoney(expected)}</span>
           </p>
           {difference != null ? <DifferenceLine difference={difference} /> : null}
@@ -440,7 +441,7 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
         {reasonRequired ? (
           <div className="flex flex-col gap-1">
             <label htmlFor="collection-reason" className="text-sm font-medium">
-              Reason for the difference (required)
+              {t.collections.reasonLabel}
             </label>
             <textarea
               id="collection-reason"
@@ -451,13 +452,13 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
               onChange={(e) => setReason(e.target.value)}
               placeholder={
                 totalIsZero && difference?.kind === 'balanced'
-                  ? 'Explain why you are submitting nothing'
-                  : 'Explain why your total does not match the expected amount'
+                  ? t.collections.reasonPlaceholderZero
+                  : t.collections.reasonPlaceholderDiff
               }
             />
             {reasonMissing ? (
               <p className="text-sm text-warning" role="status">
-                Add a short reason before you can submit.
+                {t.collections.reasonMissing}
               </p>
             ) : null}
           </div>
@@ -470,7 +471,7 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
         ) : null}
 
         <Button className="h-14 text-lg" disabled={!canSubmit} onClick={() => setConfirming(true)}>
-          Submit collections
+          {t.collections.submitButton}
         </Button>
       </CardContent>
     </Card>
@@ -479,6 +480,7 @@ function SubmissionForm({ data }: { data: AttendantCurrentShift }) {
 
 /** Live difference strip — text always carries the meaning, colour reinforces it (PRD §15.1). */
 function DifferenceLine({ difference }: { difference: Difference }) {
+  const t = useT();
   switch (difference.kind) {
     case 'balanced':
       return (
@@ -486,7 +488,7 @@ function DifferenceLine({ difference }: { difference: Difference }) {
           className="rounded-md bg-success/10 px-3 py-2 text-base font-medium text-success"
           role="status"
         >
-          Balanced — your total matches the expected collection.
+          {t.collections.balanced}
         </p>
       );
     case 'shortage':
@@ -495,7 +497,7 @@ function DifferenceLine({ difference }: { difference: Difference }) {
           className="rounded-md bg-danger/10 px-3 py-2 text-base font-medium text-danger"
           role="status"
         >
-          Shortage of {formatMoney(difference.amount)} — you are handing in less than expected.
+          {t.collections.shortage(formatMoney(difference.amount))}
         </p>
       );
     case 'excess':
@@ -504,7 +506,7 @@ function DifferenceLine({ difference }: { difference: Difference }) {
           className="rounded-md bg-warning/10 px-3 py-2 text-base font-medium text-warning"
           role="status"
         >
-          Excess of {formatMoney(difference.amount)} — you are handing in more than expected.
+          {t.collections.excess(formatMoney(difference.amount))}
         </p>
       );
   }
@@ -523,6 +525,7 @@ function QueuedCollection({
   payload: CollectionPayload;
   data: AttendantCurrentShift;
 }) {
+  const t = useT();
   const expected = data.expected_cash ?? '0';
   const total = [
     payload.cash_amount,
@@ -535,7 +538,7 @@ function QueuedCollection({
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between gap-2 text-base">
-          Your submission
+          {t.collections.yourSubmission}
           <span className="flex size-7 items-center justify-center rounded-full bg-warning/15 text-warning">
             <CloudOff className="size-4" aria-hidden />
           </span>
@@ -546,19 +549,22 @@ function QueuedCollection({
           className="rounded-md bg-warning/10 px-3 py-2 text-sm font-medium text-warning"
           role="status"
         >
-          Saved on this phone — will sync when you are back online.
+          {t.common.savedOnPhone}
         </p>
-        <Row label="Cash" value={formatMoney(payload.cash_amount)} />
-        <Row label="Mobile money" value={formatMoney(payload.mobile_money_amount)} />
-        <Row label="Card" value={formatMoney(payload.card_amount)} />
-        <Row label="Credit" value={formatMoney(payload.credit_amount)} />
+        <Row label={t.collections.tenderCash} value={formatMoney(payload.cash_amount)} />
+        <Row
+          label={t.collections.tenderMobileMoney}
+          value={formatMoney(payload.mobile_money_amount)}
+        />
+        <Row label={t.collections.tenderCard} value={formatMoney(payload.card_amount)} />
+        <Row label={t.collections.tenderCredit} value={formatMoney(payload.credit_amount)} />
         <div className="border-t border-border pt-1.5">
-          <Row label="Submitted total" value={formatMoney(total)} strong />
-          <Row label="Expected" value={formatMoney(expected)} />
+          <Row label={t.collections.submittedTotal} value={formatMoney(total)} strong />
+          <Row label={t.collections.expected} value={formatMoney(expected)} />
         </div>
         <DifferenceLine difference={difference} />
         {payload.notes ? (
-          <p className="text-sm text-muted-foreground">Reason: {payload.notes}</p>
+          <p className="text-sm text-muted-foreground">{t.common.reason(payload.notes)}</p>
         ) : null}
       </CardContent>
     </Card>
@@ -567,6 +573,7 @@ function QueuedCollection({
 
 /** The locked, read-only view once the one-per-shift submission exists. */
 function SubmittedCollection({ data }: { data: AttendantCurrentShift }) {
+  const t = useT();
   const sub = data.cash_submission;
   if (!sub) return null;
   const difference = differenceVsExpected(sub.submitted_total, sub.expected_cash);
@@ -574,23 +581,29 @@ function SubmittedCollection({ data }: { data: AttendantCurrentShift }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between gap-2 text-base">
-          Your submission
+          {t.collections.yourSubmission}
           <span className="flex size-7 items-center justify-center rounded-full bg-success/15 text-success">
             <Check className="size-4" aria-hidden />
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-1.5">
-        <Row label="Cash" value={formatMoney(sub.cash_amount)} />
-        <Row label="Mobile money" value={formatMoney(sub.mobile_money_amount)} />
-        <Row label="Card" value={formatMoney(sub.card_amount)} />
-        <Row label="Credit" value={formatMoney(sub.credit_amount)} />
+        <Row label={t.collections.tenderCash} value={formatMoney(sub.cash_amount)} />
+        <Row label={t.collections.tenderMobileMoney} value={formatMoney(sub.mobile_money_amount)} />
+        <Row label={t.collections.tenderCard} value={formatMoney(sub.card_amount)} />
+        <Row label={t.collections.tenderCredit} value={formatMoney(sub.credit_amount)} />
         <div className="border-t border-border pt-1.5">
-          <Row label="Submitted total" value={formatMoney(sub.submitted_total)} strong />
-          <Row label="Expected" value={formatMoney(sub.expected_cash)} />
+          <Row
+            label={t.collections.submittedTotal}
+            value={formatMoney(sub.submitted_total)}
+            strong
+          />
+          <Row label={t.collections.expected} value={formatMoney(sub.expected_cash)} />
         </div>
         <DifferenceLine difference={difference} />
-        {sub.notes ? <p className="text-sm text-muted-foreground">Reason: {sub.notes}</p> : null}
+        {sub.notes ? (
+          <p className="text-sm text-muted-foreground">{t.common.reason(sub.notes)}</p>
+        ) : null}
       </CardContent>
     </Card>
   );
@@ -602,11 +615,12 @@ function SubmittedCollection({ data }: { data: AttendantCurrentShift }) {
  * reason and plain-language guidance on rejection.
  */
 function ReceiptStatus({ data }: { data: AttendantCurrentShift }) {
+  const t = useT();
   const receipt = data.collection_receipt;
   if (!receipt) {
     return (
       <p className="rounded-md bg-accent/10 px-3 py-2 text-base" role="status">
-        Submitted — waiting for your supervisor to confirm receipt.
+        {t.collections.receiptWaiting}
       </p>
     );
   }
@@ -618,29 +632,37 @@ function ReceiptStatus({ data }: { data: AttendantCurrentShift }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center justify-between gap-2 text-base">
-          Supervisor receipt
+          {t.collections.supervisorReceipt}
           <ReceiptBadge status={receipt.status} />
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-1.5">
-        <Row label="Received" value={formatMoney(receipt.supervisor_received_total)} strong />
-        <Row label="Expected" value={formatMoney(receipt.expected_amount)} />
-        <Row label="Difference" value={formatMoney(receipt.difference)} />
+        <Row
+          label={t.collections.receivedRow}
+          value={formatMoney(receipt.supervisor_received_total)}
+          strong
+        />
+        <Row label={t.collections.expected} value={formatMoney(receipt.expected_amount)} />
+        <Row label={t.collections.differenceRow} value={formatMoney(receipt.difference)} />
         {receipt.status === 'rejected' ? (
           <p
             className="rounded-md bg-danger/10 px-3 py-2 text-base font-medium text-danger"
             role="alert"
           >
-            Your collection was rejected. See your supervisor.
+            {t.collections.rejectedAlert}
           </p>
         ) : difference.kind !== 'balanced' ? (
           <DifferenceLine difference={difference} />
         ) : null}
         {receipt.reason ? (
-          <p className="text-sm text-muted-foreground">Supervisor reason: {receipt.reason}</p>
+          <p className="text-sm text-muted-foreground">
+            {t.common.supervisorReason(receipt.reason)}
+          </p>
         ) : null}
         {receipt.supervisor_comment ? (
-          <p className="text-sm text-muted-foreground">Comment: {receipt.supervisor_comment}</p>
+          <p className="text-sm text-muted-foreground">
+            {t.collections.comment(receipt.supervisor_comment)}
+          </p>
         ) : null}
       </CardContent>
     </Card>
@@ -648,31 +670,33 @@ function ReceiptStatus({ data }: { data: AttendantCurrentShift }) {
 }
 
 function ReceiptBadge({ status }: { status: string }) {
+  const t = useT();
   switch (status) {
     case 'received':
-      return <Badge tone="success">Received</Badge>;
+      return <Badge tone="success">{t.collections.badgeReceived}</Badge>;
     case 'approved_with_difference':
-      return <Badge tone="warning">Approved with difference</Badge>;
+      return <Badge tone="warning">{t.collections.badgeApprovedWithDifference}</Badge>;
     case 'rejected':
-      return <Badge tone="danger">Rejected</Badge>;
+      return <Badge tone="danger">{t.collections.badgeRejected}</Badge>;
     default:
       return <Badge tone="neutral">{status.replaceAll('_', ' ')}</Badge>;
   }
 }
 
 /** Maps a submission failure to a plain-language message. */
-function submitErrorMessage(e: unknown): string {
+function submitErrorMessage(e: unknown, t: Messages): string {
   if (e instanceof SdkError) {
     const body = e.body as { code?: string } | null;
     if (body?.code === 'variance_reason_required') {
-      return 'Your total does not match the expected amount — add a reason explaining the difference.';
+      return t.collections.errVarianceReason;
     }
     if (e.status === 409) {
-      return 'Collections were already submitted for this shift.';
+      return t.collections.errAlreadySubmitted;
     }
+    // Raw server prose — shown verbatim (untranslated) as the honest fallback.
     if (e.message) return e.message;
   }
-  return 'Could not submit your collections. Check your connection and try again.';
+  return t.collections.errGeneric;
 }
 
 function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
@@ -689,11 +713,12 @@ function Row({ label, value, strong }: { label: string; value: string; strong?: 
 }
 
 function BackHome() {
+  const t = useT();
   return (
     <Button asChild variant="ghost" className="h-12 w-fit -ml-2 text-base">
       <Link href="/attendant">
         <ArrowLeft className="size-5" aria-hidden />
-        My shift
+        {t.common.myShift}
       </Link>
     </Button>
   );

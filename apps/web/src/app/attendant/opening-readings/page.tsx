@@ -27,6 +27,7 @@ import {
 
 import { api } from '@/lib/api';
 import { usePermission } from '@/hooks/use-permissions';
+import { useT, type Messages } from '@/lib/i18n';
 import { toast } from '@/lib/toast';
 import {
   compareMeterDecimals,
@@ -42,14 +43,6 @@ import {
 } from '@/lib/offline';
 
 const QUERY_KEY = ['attendant-current-shift'];
-
-/**
- * The message mirrored from the server's 422 `opening_below_expected` —
- * meters only move forward, so a lower-than-handover figure is blocked
- * client-side with the same explanation the server would give (PRD §7.5).
- */
-const LOWER_BLOCKED_MESSAGE =
-  "Reading is lower than the previous shift's approved closing. Call your supervisor.";
 
 /** Per-nozzle live verification status, always conveyed as text + colour. */
 type RowStatus =
@@ -99,6 +92,7 @@ function submittable(status: RowStatus): boolean {
 }
 
 export default function OpeningReadingsPage() {
+  const t = useT();
   const router = useRouter();
   const qc = useQueryClient();
 
@@ -168,12 +162,11 @@ export default function OpeningReadingsPage() {
                 pump_number: assignment.pump_number,
                 nozzle_number: assignment.nozzle_number,
               },
-              label: `Opening reading ${reading} — pump ${assignment.pump_number} · nozzle ${assignment.nozzle_number}`,
             });
             outcome[assignment.nozzle_id] = { ok: true, queued: true };
             continue;
           }
-          outcome[assignment.nozzle_id] = { ok: false, message: captureErrorMessage(e) };
+          outcome[assignment.nozzle_id] = { ok: false, message: captureErrorMessage(e, t) };
         }
       }
       return outcome;
@@ -185,26 +178,24 @@ export default function OpeningReadingsPage() {
       const queued = results.filter((r) => r.queued).length;
       if (saved === rows.length) {
         if (queued > 0) {
-          toast.success(
-            'Opening readings saved on this phone',
-            'They will sync when you are back online.',
-          );
+          toast.success(t.opening.toastQueuedTitle, t.opening.toastQueuedBody);
         } else {
-          toast.success('Opening readings saved', 'All your nozzles are verified.');
+          toast.success(t.opening.toastSavedTitle, t.opening.toastSavedBody);
         }
         await qc.invalidateQueries({ queryKey: QUERY_KEY });
         router.push('/attendant');
         return;
       }
-      setSubmitSummary(
-        `Saved ${saved} of ${rows.length} readings. Fix the nozzles marked below and try again.`,
-      );
+      setSubmitSummary(t.opening.partialSummary(saved, rows.length));
       await qc.invalidateQueries({ queryKey: QUERY_KEY });
     },
     onSettled: () => setConfirming(false),
   });
 
   const reportIssue = useMutation({
+    // The incident description is SERVER data read by supervisors/audit —
+    // deliberately not localized (English keeps the operational record
+    // uniform across the tenant).
     mutationFn: (description: string) =>
       api.createIncident({
         station_id: stationID ?? '',
@@ -217,8 +208,8 @@ export default function OpeningReadingsPage() {
     onSuccess: () => setReported(true),
     onError: (e) =>
       toast.error(
-        'Could not report the issue',
-        e instanceof SdkError ? e.message : 'Try again or call your supervisor.',
+        t.opening.errReportTitle,
+        e instanceof SdkError ? e.message : t.opening.errReportBody,
       ),
   });
 
@@ -234,9 +225,13 @@ export default function OpeningReadingsPage() {
   if (snapshot.showError) {
     return (
       <ErrorState
-        title="Couldn't load your shift"
+        title={t.common.couldNotLoadShift}
         description={String((snapshot.error as Error).message)}
-        onRetry={() => snapshot.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => snapshot.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -246,9 +241,13 @@ export default function OpeningReadingsPage() {
   if (expected.isError && engineState.online) {
     return (
       <ErrorState
-        title="Couldn't load the expected readings"
+        title={t.opening.errExpectedTitle}
         description={String((expected.error as Error).message)}
-        onRetry={() => expected.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => expected.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -259,13 +258,13 @@ export default function OpeningReadingsPage() {
       <div className="flex flex-col gap-4">
         <BackHome />
         <EmptyState
-          title="Nothing to verify right now"
+          title={t.opening.emptyTitle}
           description={
             !data.shift
-              ? 'You are not on a shift. Opening readings are captured at the start of your shift.'
+              ? t.opening.emptyNoShift
               : data.shift.status !== 'open'
-                ? 'Your shift is no longer open, so opening readings can no longer be captured.'
-                : 'No nozzles are assigned to you yet. Your supervisor assigns them after you check in.'
+                ? t.opening.emptyNotOpen
+                : t.opening.emptyNoAssignments
           }
         />
       </div>
@@ -312,20 +311,18 @@ export default function OpeningReadingsPage() {
               <Check className="size-6" aria-hidden />
             </span>
             <p className="text-lg font-semibold" role="status">
-              All opening readings are recorded
+              {t.opening.allRecordedTitle}
             </p>
             <p className="text-base text-muted-foreground">
-              {rows.length} of {rows.length} nozzles verified. You are set for this shift.
+              {t.opening.allRecordedBody(rows.length)}
             </p>
             {rows.some((r) => r.queued) ? (
               <p className="text-sm font-medium text-warning" role="status">
-                {rows.filter((r) => r.queued).length} reading
-                {rows.filter((r) => r.queued).length === 1 ? ' is' : 's are'} saved on this phone
-                and will sync when you are back online.
+                {t.opening.queuedNote(rows.filter((r) => r.queued).length)}
               </p>
             ) : null}
             <Button asChild className="h-14 w-full text-lg">
-              <Link href="/attendant">Back to my shift</Link>
+              <Link href="/attendant">{t.common.backToMyShift}</Link>
             </Button>
           </CardContent>
         </Card>
@@ -340,10 +337,9 @@ export default function OpeningReadingsPage() {
       <BackHome />
 
       <div>
-        <h1 className="text-xl font-semibold leading-tight">Opening readings</h1>
+        <h1 className="text-xl font-semibold leading-tight">{t.opening.title}</h1>
         <p className="text-base text-muted-foreground" role="status">
-          {verifiedCount} of {rows.length} nozzles verified. Compare each meter with the expected
-          figure and save.
+          {t.opening.progress(verifiedCount, rows.length)}
         </p>
       </div>
 
@@ -370,33 +366,32 @@ export default function OpeningReadingsPage() {
                   {a.product_name}
                 </span>
                 <span className="font-mono text-xs font-normal text-muted-foreground">
-                  Pump {a.pump_number} · Nozzle {a.nozzle_number}
+                  {t.common.pumpNozzle(a.pump_number, a.nozzle_number)}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-2.5">
               <p className="flex items-center justify-between text-base">
-                <span className="text-muted-foreground">Expected opening</span>
+                <span className="text-muted-foreground">{t.opening.expectedOpening}</span>
                 <span className="font-mono font-medium tabular-nums">
-                  {exp ?? 'No previous reading'}
+                  {exp ?? t.opening.noPreviousReading}
                 </span>
               </p>
 
               {recorded ? (
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-lg font-semibold tabular-nums">{recorded}</span>
-                  <Badge tone="success">Recorded</Badge>
+                  <Badge tone="success">{t.opening.recordedBadge}</Badge>
                 </div>
               ) : queued ? (
                 <div className="flex items-center justify-between gap-2">
                   <span className="font-mono text-lg font-semibold tabular-nums">{queued}</span>
-                  <Badge tone="info">Saved on this phone — will sync</Badge>
+                  <Badge tone="info">{t.common.savedOnPhoneBadge}</Badge>
                 </div>
               ) : (
                 <>
                   <label htmlFor={inputID} className="text-sm text-muted-foreground">
-                    Meter reading ({a.meter_decimal_places} decimal
-                    {a.meter_decimal_places === 1 ? '' : 's'} max)
+                    {t.opening.meterLabel(a.meter_decimal_places)}
                   </label>
                   <Input
                     id={inputID}
@@ -423,7 +418,7 @@ export default function OpeningReadingsPage() {
                       className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger"
                       role="alert"
                     >
-                      Not saved: {result.message}
+                      {t.opening.notSaved(result.message ?? '')}
                     </p>
                   ) : null}
                 </>
@@ -442,11 +437,11 @@ export default function OpeningReadingsPage() {
         >
           <p className="flex items-start gap-2 text-base font-medium text-danger">
             <AlertTriangle className="mt-0.5 size-5 shrink-0" aria-hidden />
-            {LOWER_BLOCKED_MESSAGE}
+            {t.opening.lowerBlocked}
           </p>
           {reported ? (
             <p className="text-base text-danger" role="status">
-              Issue reported. Your supervisor has been notified.
+              {t.opening.issueReported}
             </p>
           ) : canReportIncident ? (
             <Button
@@ -469,13 +464,10 @@ export default function OpeningReadingsPage() {
               ) : (
                 <Megaphone className="size-5" aria-hidden />
               )}
-              Report issue to supervisor
+              {t.opening.reportIssue}
             </Button>
           ) : (
-            <p className="text-sm text-danger/90">
-              You cannot file the report from here yet — call your supervisor to resolve this before
-              the shift can continue.
-            </p>
+            <p className="text-sm text-danger/90">{t.opening.cannotReport}</p>
           )}
         </div>
       ) : null}
@@ -485,7 +477,7 @@ export default function OpeningReadingsPage() {
       {confirming ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Confirm your readings</CardTitle>
+            <CardTitle className="text-base">{t.opening.confirmTitle}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <ul className="flex flex-col gap-2">
@@ -495,16 +487,14 @@ export default function OpeningReadingsPage() {
                   className="flex items-center justify-between gap-2 text-base"
                 >
                   <span>
-                    Pump {r.assignment.pump_number} · Nozzle {r.assignment.nozzle_number} (
+                    {t.common.pumpNozzle(r.assignment.pump_number, r.assignment.nozzle_number)} (
                     {r.assignment.product_name})
                   </span>
                   <span className="font-mono font-semibold tabular-nums">{r.value.trim()}</span>
                 </li>
               ))}
             </ul>
-            <p className="text-sm text-muted-foreground">
-              Saved readings are locked once your shift opens — corrections need your supervisor.
-            </p>
+            <p className="text-sm text-muted-foreground">{t.opening.lockNote}</p>
             <Button
               className="h-14 text-lg"
               disabled={submit.isPending}
@@ -515,7 +505,7 @@ export default function OpeningReadingsPage() {
               }
             >
               {submit.isPending ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-              Confirm and save
+              {t.opening.confirmAndSave}
             </Button>
             <Button
               variant="outline"
@@ -523,7 +513,7 @@ export default function OpeningReadingsPage() {
               disabled={submit.isPending}
               onClick={() => setConfirming(false)}
             >
-              Go back and edit
+              {t.common.goBackAndEdit}
             </Button>
           </CardContent>
         </Card>
@@ -533,7 +523,7 @@ export default function OpeningReadingsPage() {
           disabled={!allSubmittable || submit.isPending}
           onClick={() => setConfirming(true)}
         >
-          Save opening readings
+          {t.opening.saveButton}
         </Button>
       )}
     </div>
@@ -541,14 +531,15 @@ export default function OpeningReadingsPage() {
 }
 
 /** Maps a capture failure to a plain-language, per-nozzle message. */
-function captureErrorMessage(e: unknown): string {
+function captureErrorMessage(e: unknown, t: Messages): string {
   if (e instanceof SdkError) {
     const body = e.body as { code?: string } | null;
-    if (body && body.code === 'opening_below_expected') return LOWER_BLOCKED_MESSAGE;
-    if (e.status === 409) return 'An opening reading was already recorded for this nozzle.';
+    if (body && body.code === 'opening_below_expected') return t.opening.lowerBlocked;
+    if (e.status === 409) return t.opening.errAlreadyRecorded;
+    // Raw server prose — shown verbatim (untranslated) as the honest fallback.
     if (e.message) return e.message;
   }
-  return 'Could not save this reading. Check your connection and try again.';
+  return t.opening.errGeneric;
 }
 
 /**
@@ -556,49 +547,49 @@ function captureErrorMessage(e: unknown): string {
  * colour only reinforces it (PRD §15.1).
  */
 function RowStatusLine({ id, status }: { id: string; status: RowStatus }) {
+  const t = useT();
   switch (status.kind) {
     case 'matched':
       return (
         <p id={id} className="text-base font-medium text-success" role="status">
-          Matched — same as the expected opening.
+          {t.opening.statusMatched}
         </p>
       );
     case 'higher':
       return (
         <p id={id} className="text-base font-medium text-warning" role="status">
-          Higher than expected by {status.difference}. You can save it, but tell your supervisor if
-          this looks wrong.
+          {t.opening.statusHigher(status.difference)}
         </p>
       );
     case 'lower':
       return (
         <p id={id} className="text-base font-medium text-danger" role="status">
-          Lower than expected. {LOWER_BLOCKED_MESSAGE}
+          {t.opening.statusLowerPrefix}
+          {t.opening.lowerBlocked}
         </p>
       );
     case 'no_expected':
       return (
         <p id={id} className="text-base text-muted-foreground" role="status">
-          No previous reading for this nozzle — enter the meter as you see it.
+          {t.opening.statusNoExpected}
         </p>
       );
     case 'scale':
       return (
         <p id={id} className="text-base font-medium text-danger" role="status">
-          Too many decimals — this meter records at most {status.places} decimal
-          {status.places === 1 ? '' : 's'}.
+          {t.opening.statusScale(status.places)}
         </p>
       );
     case 'invalid':
       return (
         <p id={id} className="text-base font-medium text-danger" role="status">
-          Enter numbers only, like 1500 or 1500.25.
+          {t.opening.statusInvalid}
         </p>
       );
     case 'empty':
       return (
         <p id={id} className="text-base text-muted-foreground" role="status">
-          Enter the reading shown on the meter.
+          {t.opening.statusEmpty}
         </p>
       );
     default:
@@ -607,11 +598,12 @@ function RowStatusLine({ id, status }: { id: string; status: RowStatus }) {
 }
 
 function BackHome() {
+  const t = useT();
   return (
     <Button asChild variant="ghost" className="h-12 w-fit -ml-2 text-base">
       <Link href="/attendant">
         <ArrowLeft className="size-5" aria-hidden />
-        My shift
+        {t.common.myShift}
       </Link>
     </Button>
   );

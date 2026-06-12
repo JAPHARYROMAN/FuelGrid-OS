@@ -18,6 +18,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { useT, type Messages } from '@/lib/i18n';
 import { formatMoney } from '@/lib/money';
 import {
   getSyncEngine,
@@ -31,24 +32,22 @@ const QUERY_KEY = ['attendant-current-shift'];
 /** Sentinel a mutation returns when the action was queued offline instead. */
 const QUEUED = Symbol('queued-offline');
 
-/** The optimistic message shown when an action is saved to the offline queue. */
-const QUEUED_MESSAGE = 'Saved on this phone — will sync when you are back online.';
-
 /**
  * Workflow checklist stages in order. next_action maps onto a stage so the
  * attendant always sees where they are (PRD §5.2 guided workflow). Wait
- * states (await_*, blocked) sit on the stage being waited on.
+ * states (await_*, blocked) sit on the stage being waited on. Labels come
+ * from the dictionary at render time (Phase 6b i18n).
  */
-const STAGES = [
-  { key: 'check_in', label: 'Check in' },
-  { key: 'confirm_assignment', label: 'Confirm nozzles' },
-  { key: 'verify_opening_readings', label: 'Verify opening readings' },
-  { key: 'working', label: 'Work the shift' },
-  { key: 'submit_closing_readings', label: 'Submit closing readings' },
-  { key: 'await_reading_verification', label: 'Supervisor verifies readings' },
-  { key: 'submit_collections', label: 'Submit collections' },
-  { key: 'await_collection_receipt', label: 'Supervisor confirms cash' },
-  { key: 'complete', label: 'Shift complete' },
+const STAGE_KEYS = [
+  'check_in',
+  'confirm_assignment',
+  'verify_opening_readings',
+  'working',
+  'submit_closing_readings',
+  'await_reading_verification',
+  'submit_collections',
+  'await_collection_receipt',
+  'complete',
 ] as const;
 
 function stageIndex(snapshot: AttendantCurrentShift): number {
@@ -64,11 +63,12 @@ function stageIndex(snapshot: AttendantCurrentShift): number {
         return 0;
     }
   }
-  const idx = STAGES.findIndex((s) => s.key === snapshot.next_action);
+  const idx = STAGE_KEYS.findIndex((key) => key === snapshot.next_action);
   return idx === -1 ? 0 : idx;
 }
 
 export default function AttendantHomePage() {
+  const t = useT();
   const qc = useQueryClient();
   const [actionError, setActionError] = useState<string | null>(null);
   const [justCheckedIn, setJustCheckedIn] = useState(false);
@@ -110,7 +110,6 @@ export default function AttendantHomePage() {
             action_type: 'check_in',
             shift_id: shiftID,
             payload,
-            label: 'Check in',
           });
           return QUEUED;
         }
@@ -124,14 +123,14 @@ export default function AttendantHomePage() {
         qc.setQueryData<AttendantCurrentShift>(QUERY_KEY, {
           ...prev,
           attendance: { ...prev.attendance, status: 'checked_in' },
-          user_message: 'You are checked in.',
+          user_message: t.home.checkedInBanner,
         });
       }
       return { prev };
     },
     onError: (e, _vars, ctx) => {
       if (ctx?.prev) qc.setQueryData(QUERY_KEY, ctx.prev);
-      setActionError(e instanceof SdkError ? e.message : 'Could not check in. Try again.');
+      setActionError(e instanceof SdkError ? e.message : t.home.errCheckIn);
     },
     onSuccess: (result) => {
       setActionError(null);
@@ -162,7 +161,6 @@ export default function AttendantHomePage() {
                 pump_number: a.pump_number,
                 nozzle_number: a.nozzle_number,
               },
-              label: `Confirm pump ${a.pump_number} · nozzle ${a.nozzle_number}`,
             });
             queuedAny = true;
             continue;
@@ -172,10 +170,7 @@ export default function AttendantHomePage() {
       }
       return queuedAny ? QUEUED : undefined;
     },
-    onError: (e) =>
-      setActionError(
-        e instanceof SdkError ? e.message : 'Could not confirm the assignment. Try again.',
-      ),
+    onError: (e) => setActionError(e instanceof SdkError ? e.message : t.home.errConfirm),
     onSuccess: (result) => {
       setActionError(null);
       if (result === QUEUED) setQueuedNotice(true);
@@ -197,9 +192,13 @@ export default function AttendantHomePage() {
   if (snapshot.showError) {
     return (
       <ErrorState
-        title="Couldn't load your shift"
+        title={t.common.couldNotLoadShift}
         description={String((snapshot.error as Error).message)}
-        onRetry={() => snapshot.refetch()}
+        action={
+          <Button variant="secondary" onClick={() => snapshot.refetch()}>
+            {t.common.tryAgain}
+          </Button>
+        }
       />
     );
   }
@@ -215,7 +214,7 @@ export default function AttendantHomePage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg">
-              {data.status === 'expected_today' ? 'You are on duty today' : 'Off duty'}
+              {data.status === 'expected_today' ? t.home.onDutyToday : t.home.offDuty}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -225,7 +224,7 @@ export default function AttendantHomePage() {
             {data.expected_today ? (
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="info" className="capitalize">
-                  {data.expected_today.slot} shift
+                  {t.home.slotShiftBadge(data.expected_today.slot)}
                 </Badge>
                 <Badge tone="neutral">{data.expected_today.team_name}</Badge>
                 {data.station ? <Badge tone="neutral">{data.station.name}</Badge> : null}
@@ -238,7 +237,7 @@ export default function AttendantHomePage() {
               onClick={() => snapshot.refetch()}
             >
               {snapshot.isFetching ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              Check again
+              {t.home.checkAgain}
             </Button>
           </CardContent>
         </Card>
@@ -247,7 +246,7 @@ export default function AttendantHomePage() {
   }
 
   const currentStage = stageIndex(data);
-  const slotLabel = s.slot ? `${s.slot.charAt(0).toUpperCase()}${s.slot.slice(1)} shift` : s.name;
+  const slotLabel = s.slot ? t.home.slotShiftHeader(s.slot) : s.name;
 
   // Per-nozzle opening verification progress (Phase 2): how many of the
   // actor's assigned nozzles already have an opening reading captured.
@@ -267,6 +266,13 @@ export default function AttendantHomePage() {
     ),
   ).length;
 
+  const attendanceLine =
+    data.attendance.status === 'checked_in'
+      ? t.home.attendanceCheckedIn
+      : data.attendance.status === 'checked_out'
+        ? t.home.attendanceCheckedOut
+        : t.home.attendanceNotCheckedIn;
+
   return (
     <div className="flex flex-col gap-4">
       {/* Shift header */}
@@ -276,11 +282,13 @@ export default function AttendantHomePage() {
             <div>
               <p className="text-lg font-semibold leading-tight">{data.station?.name}</p>
               <p className="text-sm text-muted-foreground">
-                {slotLabel} · opened{' '}
-                {new Date(s.opened_at).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                {slotLabel} ·{' '}
+                {t.home.openedAt(
+                  new Date(s.opened_at).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }),
+                )}
               </p>
             </div>
             <Badge
@@ -289,18 +297,18 @@ export default function AttendantHomePage() {
               }
               className="capitalize"
             >
-              Shift {s.status}
+              {t.home.shiftStatusBadge(s.status)}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            You are {data.attendance.status === 'not_checked_in' ? 'not checked in' : null}
-            {data.attendance.status === 'checked_in' ? 'checked in' : null}
-            {data.attendance.status === 'checked_out' ? 'checked out' : null}
+            {attendanceLine}
             {data.attendance.check_in_at
-              ? ` (since ${new Date(data.attendance.check_in_at).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })})`
+              ? t.home.attendanceSince(
+                  new Date(data.attendance.check_in_at).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  }),
+                )
               : null}
           </p>
         </CardContent>
@@ -312,7 +320,7 @@ export default function AttendantHomePage() {
           className="rounded-md bg-success/10 px-3 py-2 text-sm font-medium text-success"
           role="status"
         >
-          You are checked in.
+          {t.home.checkedInBanner}
         </p>
       ) : null}
       {queuedNotice || queuedCheckIn || queuedConfirmIDs.size > 0 ? (
@@ -320,7 +328,7 @@ export default function AttendantHomePage() {
           className="rounded-md bg-warning/10 px-3 py-2 text-sm font-medium text-warning"
           role="status"
         >
-          {QUEUED_MESSAGE}
+          {t.common.savedOnPhone}
         </p>
       ) : null}
       {actionError ? (
@@ -353,19 +361,20 @@ export default function AttendantHomePage() {
         }
         onCheckIn={() => checkIn.mutate()}
         onConfirm={() => confirmAssignments.mutate()}
+        t={t}
       />
 
       {/* Workflow checklist */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Shift progress</CardTitle>
+          <CardTitle className="text-base">{t.home.shiftProgress}</CardTitle>
         </CardHeader>
         <CardContent>
           <ol className="flex flex-col gap-2.5">
-            {STAGES.map((stage, i) => {
+            {STAGE_KEYS.map((stageKey, i) => {
               const state = i < currentStage ? 'done' : i === currentStage ? 'current' : 'pending';
               return (
-                <li key={stage.key} className="flex items-center gap-3 text-base">
+                <li key={stageKey} className="flex items-center gap-3 text-base">
                   {state === 'done' ? (
                     <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-success/15 text-success">
                       <Check className="size-4" aria-hidden />
@@ -388,21 +397,25 @@ export default function AttendantHomePage() {
                           : 'text-muted-foreground'
                     }
                   >
-                    {stage.label}
-                    {state === 'done' ? <span className="sr-only"> — done</span> : null}
-                    {state === 'current' ? <span className="sr-only"> — current step</span> : null}
+                    {t.home.stages[stageKey]}
+                    {state === 'done' ? (
+                      <span className="sr-only">{t.home.srStageDone}</span>
+                    ) : null}
+                    {state === 'current' ? (
+                      <span className="sr-only">{t.home.srStageCurrent}</span>
+                    ) : null}
                   </span>
-                  {stage.key === 'verify_opening_readings' && data.assignments.length > 0 ? (
+                  {stageKey === 'verify_opening_readings' && data.assignments.length > 0 ? (
                     <span className="ml-auto whitespace-nowrap text-sm tabular-nums text-muted-foreground">
-                      {openingsVerified} of {data.assignments.length} nozzles verified
+                      {t.home.nozzlesVerifiedCount(openingsVerified, data.assignments.length)}
                     </span>
                   ) : null}
-                  {stage.key === 'await_reading_verification' && data.assignments.length > 0 ? (
+                  {stageKey === 'await_reading_verification' && data.assignments.length > 0 ? (
                     <Link
                       href="/attendant/review-status"
                       className="ml-auto whitespace-nowrap text-sm tabular-nums text-muted-foreground underline-offset-2 hover:underline"
                     >
-                      {readingsVerified} of {data.assignments.length} verified
+                      {t.home.verifiedCount(readingsVerified, data.assignments.length)}
                     </Link>
                   ) : null}
                 </li>
@@ -415,13 +428,11 @@ export default function AttendantHomePage() {
       {/* My nozzles */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">My nozzles</CardTitle>
+          <CardTitle className="text-base">{t.home.myNozzles}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {data.assignments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No nozzles assigned to you yet. Your supervisor assigns them after you check in.
-            </p>
+            <p className="text-sm text-muted-foreground">{t.home.noNozzlesYet}</p>
           ) : (
             data.assignments.map((a) => {
               const reading = data.readings.find((r) => r.nozzle_id === a.nozzle_id);
@@ -437,25 +448,25 @@ export default function AttendantHomePage() {
                       {a.product_name}
                     </span>
                     <span className="font-mono text-xs text-muted-foreground">
-                      Pump {a.pump_number} · Nozzle {a.nozzle_number}
+                      {t.common.pumpNozzle(a.pump_number, a.nozzle_number)}
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                     {a.confirmed_at ? (
-                      <Badge tone="success">Confirmed</Badge>
+                      <Badge tone="success">{t.home.confirmedBadge}</Badge>
                     ) : queuedConfirmIDs.has(a.assignment_id) ? (
-                      <Badge tone="info">Confirmed — waiting to sync</Badge>
+                      <Badge tone="info">{t.home.confirmedWaitingSync}</Badge>
                     ) : (
-                      <Badge tone="warning">Awaiting your confirmation</Badge>
+                      <Badge tone="warning">{t.home.awaitingConfirmation}</Badge>
                     )}
                     {reading?.opening_reading ? (
                       <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                        Open {reading.opening_reading}
+                        {t.home.openReading(reading.opening_reading)}
                       </span>
                     ) : null}
                     {reading?.closing_reading ? (
                       <span className="font-mono text-xs tabular-nums text-muted-foreground">
-                        Close {reading.closing_reading}
+                        {t.home.closeReading(reading.closing_reading)}
                       </span>
                     ) : null}
                     {reading?.verification_status ? (
@@ -469,7 +480,7 @@ export default function AttendantHomePage() {
                         }
                         className="capitalize"
                       >
-                        Reading {reading.verification_status}
+                        {t.home.readingStatusBadge(reading.verification_status)}
                       </Badge>
                     ) : null}
                   </div>
@@ -484,20 +495,23 @@ export default function AttendantHomePage() {
       {data.expected_cash ? (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Collections</CardTitle>
+            <CardTitle className="text-base">{t.home.collections}</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-1.5 text-base">
-            <Row label="Expected" value={formatMoney(data.expected_cash, { fallback: '0.00' })} />
+            <Row
+              label={t.home.expected}
+              value={formatMoney(data.expected_cash, { fallback: '0.00' })}
+            />
             {data.cash_submission ? (
               <Row
-                label="Submitted"
+                label={t.home.submitted}
                 value={formatMoney(data.cash_submission.submitted_total, { fallback: '0.00' })}
               />
             ) : null}
             {data.collection_receipt ? (
               <>
                 <Row
-                  label="Received"
+                  label={t.home.received}
                   value={formatMoney(data.collection_receipt.supervisor_received_total, {
                     fallback: '0.00',
                   })}
@@ -507,7 +521,7 @@ export default function AttendantHomePage() {
                     tone={data.collection_receipt.status === 'rejected' ? 'danger' : 'success'}
                     className="capitalize"
                   >
-                    {data.collection_receipt.status.replaceAll('_', ' ')}
+                    {t.home.receiptStatusBadge(data.collection_receipt.status)}
                   </Badge>
                 </div>
               </>
@@ -531,6 +545,7 @@ function NextActionButton({
   queuedConfirms,
   onCheckIn,
   onConfirm,
+  t,
 }: {
   data: AttendantCurrentShift;
   busy: boolean;
@@ -540,6 +555,7 @@ function NextActionButton({
   queuedConfirms: boolean;
   onCheckIn: () => void;
   onConfirm: () => void;
+  t: Messages;
 }) {
   switch (data.next_action) {
     case 'check_in':
@@ -548,28 +564,28 @@ function NextActionButton({
       if (queuedCheckIn) {
         return (
           <Button className="h-14 text-lg" disabled>
-            Checked in — waiting to sync
+            {t.home.ctaCheckedInQueued}
           </Button>
         );
       }
       return (
         <Button className="h-14 text-lg" disabled={busy} onClick={onCheckIn}>
           {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-          Check in
+          {t.home.ctaCheckIn}
         </Button>
       );
     case 'confirm_assignment':
       if (queuedConfirms) {
         return (
           <Button className="h-14 text-lg" disabled>
-            Confirmed — waiting to sync
+            {t.home.ctaConfirmedQueued}
           </Button>
         );
       }
       return (
         <Button className="h-14 text-lg" disabled={busy} onClick={onConfirm}>
           {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
-          Confirm my nozzles
+          {t.home.ctaConfirmNozzles}
         </Button>
       );
     case 'verify_opening_readings':
@@ -577,7 +593,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg">
           <Link href="/attendant/opening-readings">
-            Verify opening readings
+            {t.home.ctaVerifyOpenings}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -588,7 +604,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg" variant="outline">
           <Link href="/attendant/closing-readings">
-            Enter closing readings
+            {t.home.ctaEnterClosings}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -597,7 +613,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg">
           <Link href="/attendant/closing-readings">
-            Finish closing readings
+            {t.home.ctaFinishClosings}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -608,7 +624,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg" variant="outline">
           <Link href="/attendant/review-status">
-            View review status
+            {t.home.ctaViewReviewStatus}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -618,7 +634,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg">
           <Link href="/attendant/collections">
-            Submit collections
+            {t.home.ctaSubmitCollections}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -629,7 +645,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg" variant="outline">
           <Link href="/attendant/collections">
-            View collection status
+            {t.home.ctaViewCollectionStatus}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -639,7 +655,7 @@ function NextActionButton({
       return (
         <Button asChild className="h-14 text-lg">
           <Link href="/attendant/shift-complete">
-            Finish your shift
+            {t.home.ctaFinishShift}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>
@@ -650,7 +666,7 @@ function NextActionButton({
       return data.blocking_code === 'collection_rejected' ? (
         <Button asChild className="h-14 text-lg" variant="outline">
           <Link href="/attendant/collections">
-            View collection status
+            {t.home.ctaViewCollectionStatus}
             <ArrowRight className="size-5" aria-hidden />
           </Link>
         </Button>

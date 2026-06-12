@@ -43,7 +43,13 @@ import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
 
 import { compareMeterDecimals, addMeterDecimals, isMeterDecimal } from '@/lib/meter-decimal';
 
-import type { CollectionPayload, QueuedAction, ReadingPayload } from './types';
+import type {
+  CollectionPayload,
+  QueuedAction,
+  QueueMessageCode,
+  QueueMessageParams,
+  ReadingPayload,
+} from './types';
 
 /** The slice of the SDK client the replay engine needs. */
 export interface ReplayApi {
@@ -70,13 +76,25 @@ export interface ReplayApi {
   ): Promise<unknown>;
 }
 
+/**
+ * `message` is always the developer/English fallback prose (raw server text
+ * for uncoded outcomes). Client-classified outcomes ALSO carry `code` +
+ * `params` so the sync sheet can render them in the attendant's language
+ * (Phase 6b) — the queue stores the code, not the prose.
+ */
 export type ReplayOutcome =
   | { kind: 'synced'; note?: string }
-  | { kind: 'conflict'; message: string; serverValue?: string }
-  | { kind: 'failed'; message: string }
+  | {
+      kind: 'conflict';
+      message: string;
+      code?: QueueMessageCode;
+      params?: QueueMessageParams;
+      serverValue?: string;
+    }
+  | { kind: 'failed'; message: string; code?: QueueMessageCode; params?: QueueMessageParams }
   | { kind: 'offline' }
   | { kind: 'auth' }
-  | { kind: 'transient'; message: string };
+  | { kind: 'transient'; message: string; code?: QueueMessageCode };
 
 /** Whether an error is the SDK's transport-failure signal (offline, DNS, …). */
 export function isOfflineError(err: unknown): boolean {
@@ -131,7 +149,13 @@ async function verifyReadingDuplicate(
   try {
     snapshot = await api.attendantCurrentShift();
   } catch (err) {
-    return commonOutcome(err) ?? { kind: 'transient', message: 'could not verify with the server' };
+    return (
+      commonOutcome(err) ?? {
+        kind: 'transient',
+        message: 'could not verify with the server',
+        code: 'verify_unavailable',
+      }
+    );
   }
   const reading = snapshot.readings.find((r) => r.nozzle_id === action.payload.nozzle_id);
   const serverFigure = type === 'opening' ? reading?.opening_reading : reading?.closing_reading;
@@ -144,6 +168,8 @@ async function verifyReadingDuplicate(
       serverFigure != null
         ? `The server already has a different ${type} reading (${serverFigure}) for this nozzle. Your figure is kept here — show it to your supervisor.`
         : `The server reported this ${type} reading as already submitted but it is not visible on your shift. Your figure is kept here — show it to your supervisor.`,
+    code: 'reading_conflict',
+    params: { reading_type: type, server_value: serverFigure ?? undefined },
     serverValue: serverFigure ?? undefined,
   };
 }
@@ -157,7 +183,13 @@ async function verifyCollectionDuplicate(
   try {
     snapshot = await api.attendantCurrentShift();
   } catch (err) {
-    return commonOutcome(err) ?? { kind: 'transient', message: 'could not verify with the server' };
+    return (
+      commonOutcome(err) ?? {
+        kind: 'transient',
+        message: 'could not verify with the server',
+        code: 'verify_unavailable',
+      }
+    );
   }
   const existing = snapshot.cash_submission;
   if (!existing) {
@@ -171,6 +203,8 @@ async function verifyCollectionDuplicate(
   return {
     kind: 'conflict',
     message: `Collections were already submitted for this shift with a different total (${existing.submitted_total}). Your amounts are kept here — show them to your supervisor.`,
+    code: 'collection_conflict',
+    params: { server_value: existing.submitted_total },
     serverValue: existing.submitted_total,
   };
 }
@@ -215,6 +249,7 @@ export async function replayAction(api: ReplayApi, action: QueuedAction): Promis
             kind: 'conflict',
             message:
               'Your nozzle assignment changed while you were offline. Check your assignment and confirm it again.',
+            code: 'assignment_changed',
           };
         }
         return { kind: 'failed', message: sdkErr.message };
@@ -250,6 +285,7 @@ export async function replayAction(api: ReplayApi, action: QueuedAction): Promis
             kind: 'failed',
             message:
               "Reading is lower than the previous shift's approved closing. Call your supervisor.",
+            code: 'opening_below_expected',
           };
         }
         return { kind: 'failed', message: sdkErr.message };
