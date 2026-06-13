@@ -2026,6 +2026,65 @@ export interface ReportsOverview {
   categories: ReportCategory[];
 }
 
+/** Availability of a catalog category or report. */
+export type ReportAvailability = 'live' | 'partial' | 'placeholder';
+
+/**
+ * A category's live key metric on the Reports Home. `value` is a decimal
+ * string for money/litres or a count, and is `null` when no figure is genuinely
+ * computable (a partial/placeholder category) or a sensitive figure is gated
+ * away — `reason` then explains why, honestly. Never a fabricated number.
+ */
+export interface ReportCatalogMetric {
+  label: string;
+  value: string | null;
+  unit?: string;
+  reason?: string;
+}
+
+/** One report under a category that the actor may see. */
+export interface ReportCatalogReport {
+  key: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  required_permission: string;
+  availability: ReportAvailability;
+}
+
+/** One category card on the Reports & Intelligence Center home. */
+export interface ReportCatalogCategory {
+  key: string;
+  name: string;
+  description: string;
+  icon: string;
+  sort_order: number;
+  required_permission: string;
+  availability: ReportAvailability;
+  target_route: string;
+  metric: ReportCatalogMetric;
+  alert_count: number;
+  reports: ReportCatalogReport[];
+}
+
+/** One hub-level data-quality warning aggregated across categories. */
+export interface ReportCatalogDataQuality {
+  category_key: string;
+  level: 'info' | 'warning';
+  message: string;
+}
+
+/**
+ * The Reports & Intelligence Center catalog: the permission-filtered blueprint
+ * categories (each with availability, a live key metric, an alert count and the
+ * reports under it) plus a hub-level data-quality band.
+ */
+export interface ReportCatalog {
+  generated_at: string;
+  categories: ReportCatalogCategory[];
+  data_quality: ReportCatalogDataQuality[];
+}
+
 /** The keys + formats accepted by the unified export endpoint. */
 export interface ReportExportRequest {
   report_key: string;

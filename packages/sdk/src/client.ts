@@ -87,6 +87,7 @@ import type {
   ReportSpec,
   ReportEnvelope,
   ReportsOverview,
+  ReportCatalog,
   ReportExportRequest,
   ReportExportResult,
   ExportJobRequest,
@@ -3320,6 +3321,18 @@ export class Client {
    */
   getReportsOverview(signal?: AbortSignal): Promise<ReportsOverview> {
     return this.request<ReportsOverview>('/api/v1/reports/overview', { signal });
+  }
+
+  /**
+   * Fetch the Reports & Intelligence Center catalog: the permission-filtered
+   * blueprint categories (each with availability, a live key metric, an alert
+   * count and the reports under it) plus a hub-level data-quality band. Gated by
+   * reports.read; each category is additionally filtered by its own permission,
+   * and sensitive figures (margin / supplier cost / credit exposure) are omitted
+   * for actors lacking margin.view.
+   */
+  getReportCatalog(signal?: AbortSignal): Promise<ReportCatalog> {
+    return this.request<ReportCatalog>('/api/v1/reports/catalog', { signal });
   }
 
   /**

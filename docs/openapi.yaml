@@ -2416,6 +2416,21 @@ paths:
       responses:
         '200': { description: Report categories, content: { application/json: { schema: { $ref: '#/components/schemas/ReportsOverview' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/catalog:
+    get:
+      tags: [Reports]
+      summary: Reports & Intelligence Center catalog — the 16 blueprint categories with availability, a live key metric and alert count
+      description: >-
+        Tenant-wide. Coarse-gated by reports.read; each category is additionally
+        filtered by its own required_permission so the catalog only lists
+        surfaces the actor can reach. Sensitive figures (margin / supplier cost /
+        credit exposure) are omitted (metric.value null, with an honest reason)
+        unless the actor holds margin.view. Monetary/litre metrics are exact
+        decimal strings; placeholder categories (Tank live-sensor, Custom,
+        Scheduled) return a null metric with an unavailable reason.
+      responses:
+        '200': { description: Report catalog, content: { application/json: { schema: { $ref: '#/components/schemas/ReportCatalog' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/reports/inventory/reconciliation:
     get:
       tags: [Reports]
@@ -5487,6 +5502,63 @@ components:
               href:          { type: string }
             required: [key, title, description, headline, headline_unit, alert_count, href]
       required: [generated_at, categories]
+    ReportCatalog:
+      type: object
+      description: >-
+        The Reports & Intelligence Center catalog (Phase 1): the blueprint
+        categories the actor may see, each with availability, a live key metric
+        (value is a decimal string for money/litres or a count, and is null when
+        no figure is genuinely computable or a sensitive figure is gated away),
+        an alert count, and the reports under it; plus a hub-level data-quality
+        band.
+      properties:
+        generated_at: { type: string, format: date-time }
+        categories:
+          type: array
+          items: { $ref: '#/components/schemas/ReportCategoryCard' }
+        data_quality:
+          type: array
+          items:
+            type: object
+            properties:
+              category_key: { type: string }
+              level:        { type: string, enum: [info, warning] }
+              message:      { type: string }
+            required: [category_key, level, message]
+      required: [generated_at, categories, data_quality]
+    ReportCategoryCard:
+      type: object
+      properties:
+        key:                 { type: string }
+        name:                { type: string }
+        description:         { type: string }
+        icon:                { type: string }
+        sort_order:          { type: integer }
+        required_permission: { type: string }
+        availability:        { type: string, enum: [live, partial, placeholder] }
+        target_route:        { type: string }
+        alert_count:         { type: integer }
+        metric:
+          type: object
+          properties:
+            label:  { type: string }
+            value:  { type: string, nullable: true, description: Decimal string (money/litres) or count; null when unavailable }
+            unit:   { type: string }
+            reason: { type: string, description: Honest explanation when value is null }
+          required: [label, value]
+        reports:
+          type: array
+          items:
+            type: object
+            properties:
+              key:                 { type: string }
+              name:                { type: string }
+              description:         { type: string }
+              endpoint:            { type: string }
+              required_permission: { type: string }
+              availability:        { type: string, enum: [live, partial, placeholder] }
+            required: [key, name, description, endpoint, required_permission, availability]
+      required: [key, name, description, icon, sort_order, required_permission, availability, target_route, metric, alert_count, reports]
     ReportExportRequest:
       type: object
       required: [report_key, format]

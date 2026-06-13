@@ -30,7 +30,20 @@ export { MetricCard } from './components/metric-card';
 export type { MetricCardProps } from './components/metric-card';
 
 export { ReportCategoryCard } from './components/report-category-card';
-export type { ReportCategoryCardProps } from './components/report-category-card';
+export type {
+  ReportCategoryCardProps,
+  ReportCardAvailability,
+} from './components/report-category-card';
+
+export {
+  ReportDateRangeFilterBar,
+  REPORT_RANGE_PRESETS,
+} from './components/report-date-range-filter-bar';
+export type {
+  ReportDateRangeFilterBarProps,
+  ReportDateRange,
+  ReportRangePreset,
+} from './components/report-date-range-filter-bar';
 
 export { DataQualityCard, DataQualityBanner } from './components/data-quality';
 export type {
