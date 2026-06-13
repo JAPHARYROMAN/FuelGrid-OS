@@ -1546,6 +1546,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Shift or user not found }
         '409': { description: Already on the shift }
+        '422': { description: 'The user is not part of this shift''s station workforce — no active employee record for the shift''s station is linked to that user (code attendant_not_station_member). The station is derived server-side from the shift. An active station employee who is not on today''s rotation team (ad-hoc substitute) is still allowed.' }
 
   /api/v1/shifts/{id}/attendants/{userID}:
     delete:

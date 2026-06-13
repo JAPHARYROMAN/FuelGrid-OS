@@ -544,6 +544,25 @@ func (s *Server) handleAssignAttendant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	// Authorization: the assigned user must belong to the shift's station
+	// workforce. The station is derived server-side from the shift row — never
+	// from client input — so a supervisor cannot roster-add an arbitrary
+	// same-tenant user (e.g. a head-office account) onto a station they are not
+	// an employee of. The ad-hoc SUBSTITUTE case is preserved: an active station
+	// employee who is not on today's rotation team is still a member and remains
+	// assignable. Only non-station-members are rejected.
+	member, err := s.operations.IsStationMemberForShift(ctx, actor.TenantID, shift.ID, req.UserID)
+	if err != nil {
+		s.logger.Error("assign attendant: station membership check", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !member {
+		writeErrorCode(w, http.StatusUnprocessableEntity, "attendant_not_station_member",
+			"user is not an employee of this shift's station")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
