@@ -735,6 +735,19 @@ func (s *Server) handleUnassignNozzle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	// Load the assignment before deleting it: the audit trail and the outbox
+	// payload need the affected nozzle + attendant (the notification
+	// subscriber targets that attendant's feed — Mobile Attendant Phase 7).
+	assignment, err := s.operations.GetNozzleAssignment(ctx, actor.TenantID, shift.ID, assignmentID)
+	if err != nil {
+		if errors.Is(err, operations.ErrAssignmentNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
 	tx, err := s.deps.DB.Begin(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -750,12 +763,21 @@ func (s *Server) handleUnassignNozzle(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	unassigned := map[string]any{
+		"shift_id":      shift.ID,
+		"assignment_id": assignmentID,
+		"nozzle_id":     assignment.NozzleID,
+		"attendant_id":  assignment.AttendantID,
+	}
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "shift.nozzle_unassigned", EventType: "ShiftNozzleUnassigned",
 		EntityType: "shift", EntityID: shift.ID.String(),
-		PreviousValue: map[string]any{"shift_id": shift.ID, "assignment_id": assignmentID},
-		IP:            clientIP(r), UserAgent: r.UserAgent(),
+		PreviousValue: unassigned,
+		// Deletes have no NewValue; publish the same snapshot as the event
+		// payload so the subscriber can resolve the affected attendant.
+		EventPayload: unassigned,
+		IP:           clientIP(r), UserAgent: r.UserAgent(),
 		RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")

@@ -44,6 +44,7 @@ import type {
   Expense,
   ExpenseCategory,
   Incident,
+  IncidentReportRequest,
   InventoryOverview,
   JobRunList,
   LoginRequest,
@@ -1426,6 +1427,22 @@ export class Client {
     signal?: AbortSignal,
   ): Promise<Incident> {
     return this.request<Incident>('/api/v1/incidents', { method: 'POST', body: req, signal });
+  }
+
+  /**
+   * Report an operational issue from the caller's CURRENT SHIFT (attendant
+   * self-service, incidents.report). The station is derived server-side from
+   * the caller's shift — `station_id` in the body is only an assertion (403 on
+   * mismatch) and 409 (code `no_active_shift`) when the caller is not on a
+   * shift. Supply a `dedupe_key` (one UUID per queued action) so an offline
+   * replay returns the existing incident (200) instead of duplicating (201).
+   */
+  reportIncident(req: IncidentReportRequest, signal?: AbortSignal): Promise<Incident> {
+    return this.request<Incident>('/api/v1/incidents/report', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
   }
 
   updateIncidentStatus(id: string, status: string, signal?: AbortSignal): Promise<Incident> {
@@ -3345,6 +3362,48 @@ export class Client {
   ): Promise<ReportEnvelope> {
     return this.request<ReportEnvelope>(
       `/api/v1/reports/credit-cashflow${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Fetch the attendance report (roster vs check-in/out with late / no-show
+   * derivation) for a station over an inclusive date window as a structured
+   * {@link ReportEnvelope}. Station-scoped (gated by station.read); `from`/`to`
+   * are YYYY-MM-DD and default to the last 30 days.
+   */
+  getAttendanceReport(
+    stationID: string,
+    opts?: { from?: string; to?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    const params = new URLSearchParams({ station_id: stationID });
+    if (opts?.from) params.set('from', opts.from);
+    if (opts?.to) params.set('to', opts.to);
+    return this.request<ReportEnvelope>(`/api/v1/reports/attendance?${params.toString()}`, {
+      signal,
+    });
+  }
+
+  /**
+   * Fetch the corrections & variances report (attendant-submitted vs final
+   * approved closing readings + reason; expected vs received collections +
+   * difference + reason) for a station over an inclusive date window as a
+   * structured {@link ReportEnvelope}. All meter/money figures are exact
+   * decimal strings; `chart_data` carries `{corrections: [], collections: []}`.
+   * Station-scoped (gated by station.read); `from`/`to` are YYYY-MM-DD and
+   * default to the last 30 days.
+   */
+  getCorrectionsVariancesReport(
+    stationID: string,
+    opts?: { from?: string; to?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    const params = new URLSearchParams({ station_id: stationID });
+    if (opts?.from) params.set('from', opts.from);
+    if (opts?.to) params.set('to', opts.to);
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/corrections-variances?${params.toString()}`,
       { signal },
     );
   }

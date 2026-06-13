@@ -23,10 +23,14 @@ type TxRecord struct {
 	AggregateType string // outbox-side; usually same as EntityType
 	PreviousValue any    // marshalled to jsonb
 	NewValue      any    // marshalled to jsonb
-	Reason        string
-	IP            string
-	UserAgent     string
-	RequestID     string
+	// EventPayload, when non-nil, overrides the outbox event payload (which
+	// otherwise mirrors NewValue). Delete-style actions use it to publish a
+	// meaningful payload while keeping the audit row's new_value NULL.
+	EventPayload any
+	Reason       string
+	IP           string
+	UserAgent    string
+	RequestID    string
 }
 
 // WriteWithOutbox writes both audit_logs and outbox_events from a single
@@ -63,13 +67,21 @@ func WriteWithOutbox(ctx context.Context, tx pgx.Tx, r TxRecord) error {
 		aggregateType = r.EntityType
 	}
 
+	payload := next
+	if r.EventPayload != nil {
+		payload, err = marshalJSON(r.EventPayload)
+		if err != nil {
+			return err
+		}
+	}
+
 	return events.WriteOutbox(ctx, tx, events.Event{
 		TenantID:      &r.TenantID,
 		Type:          r.EventType,
 		AggregateType: aggregateType,
 		AggregateID:   r.EntityID,
 		ActorID:       &r.ActorID,
-		Payload:       next,
+		Payload:       payload,
 		CorrelationID: r.RequestID,
 	})
 }

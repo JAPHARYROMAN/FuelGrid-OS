@@ -170,11 +170,31 @@ func (s *Server) handleApproveShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The ShiftApproved payload carries, additively, every attendant who
+	// checked in to the shift — the notification subscriber fans the
+	// "shift approved/finalized" notice out to each of their feeds (Phase 7).
+	// Attendance rows are committed long before approval, so the pool read is
+	// consistent with what this tx is freezing.
+	attendance, err := s.operations.ListAttendanceForShift(ctx, actor.TenantID, before.ID)
+	if err != nil {
+		s.logger.Error("approve shift: list attendance", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	checkedIn := make([]uuid.UUID, 0, len(attendance))
+	for i := range attendance {
+		checkedIn = append(checkedIn, attendance[i].AttendantID)
+	}
+	approvedPayload := struct {
+		shiftDTO
+		CheckedInAttendantIDs []uuid.UUID `json:"checked_in_attendant_ids"`
+	}{toShiftDTO(after), checkedIn}
+
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "shift.approved", EventType: "ShiftApproved",
 		EntityType: "shift", EntityID: after.ID.String(),
-		PreviousValue: toShiftDTO(before), NewValue: toShiftDTO(after),
+		PreviousValue: toShiftDTO(before), NewValue: approvedPayload,
 		IP: clientIP(r), UserAgent: r.UserAgent(),
 		RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {

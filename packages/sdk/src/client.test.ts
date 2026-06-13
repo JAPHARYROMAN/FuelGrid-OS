@@ -631,3 +631,108 @@ describe('Client mobile attendant phase-1 methods', () => {
     expect(res.blocking_code).toBe('awaiting_nozzle_assignment');
   });
 });
+
+describe('Client mobile attendant phase-7 methods', () => {
+  it('reportIncident POSTs the self-service path with the dedupe key', async () => {
+    const f = jsonFetch(201, {
+      id: 'inc-1',
+      station_id: 'st-1',
+      type: 'pump',
+      severity: 'medium',
+      status: 'open',
+      opened_by: 'att-1',
+      dedupe_key: 'queue-key-1',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.reportIncident({
+      type: 'pump',
+      description: 'Pump 1 display flickers',
+      dedupe_key: 'queue-key-1',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/incidents/report');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(
+      JSON.stringify({
+        type: 'pump',
+        description: 'Pump 1 display flickers',
+        dedupe_key: 'queue-key-1',
+      }),
+    );
+    expect(res.dedupe_key).toBe('queue-key-1');
+    expect(res.status).toBe('open');
+  });
+
+  it('reportIncident replay resolves with the existing incident (200 body)', async () => {
+    // The server answers a replayed dedupe_key with 200 + the ORIGINAL row;
+    // the client treats it like any other success.
+    const f = jsonFetch(200, { id: 'inc-1', status: 'open', dedupe_key: 'queue-key-1' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.reportIncident({
+      type: 'meter',
+      description: 'Meter sticks at 9s',
+      dedupe_key: 'queue-key-1',
+    });
+    expect(res.id).toBe('inc-1');
+  });
+
+  it('reportIncident surfaces the no_active_shift 409 for offline-queue branching', async () => {
+    const f = jsonFetch(409, {
+      error: 'you are not on an active shift; issues are reported from your current shift',
+      code: 'no_active_shift',
+      status: 409,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    try {
+      await client.reportIncident({ type: 'other', description: 'x' });
+      expect.unreachable('expected SdkError');
+    } catch (err) {
+      const e = err as SdkError;
+      expect(e.status).toBe(409);
+      expect((e.body as { code?: string }).code).toBe('no_active_shift');
+    }
+  });
+
+  it('getAttendanceReport GETs the station/date-range envelope', async () => {
+    const f = jsonFetch(200, {
+      metadata: { report_key: 'attendance' },
+      summary: [{ label: 'Present', value: '3', unit: 'count' }],
+      table: { columns: [], rows: [] },
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getAttendanceReport('st-1', { from: '2026-06-01', to: '2026-06-12' });
+    const { url, init } = callArgs(f);
+    expect(url).toBe(
+      'http://api.test/api/v1/reports/attendance?station_id=st-1&from=2026-06-01&to=2026-06-12',
+    );
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(res.metadata.report_key).toBe('attendance');
+  });
+
+  it('getCorrectionsVariancesReport keeps decimal-string figures intact', async () => {
+    const f = jsonFetch(200, {
+      metadata: { report_key: 'corrections-variances' },
+      summary: [{ label: 'Total shortage', value: '5000.00', unit: 'TZS' }],
+      chart_data: {
+        corrections: [
+          { submitted_reading: '1500.000', final_reading: '1490.000', delta_litres: '-10.000' },
+        ],
+        collections: [
+          { expected_amount: '1445500.00', received_total: '1440500.00', difference: '-5000.00' },
+        ],
+      },
+      table: { columns: [], rows: [] },
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getCorrectionsVariancesReport('st-1');
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/corrections-variances?station_id=st-1');
+    const chart = res.chart_data as {
+      corrections: Array<{ delta_litres: string }>;
+      collections: Array<{ difference: string }>;
+    };
+    expect(chart.corrections[0]!.delta_litres).toBe('-10.000');
+    expect(chart.collections[0]!.difference).toBe('-5000.00');
+    expect(res.summary[0]!.value).toBe('5000.00');
+  });
+});

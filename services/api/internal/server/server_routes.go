@@ -925,6 +925,11 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 		Get("/incidents", s.handleListIncidents)
 	r.With(s.requirePermissionHeld("incidents.manage")).Post("/incidents", s.handleCreateIncident)
 	r.With(s.requirePermissionHeld("incidents.manage")).Patch("/incidents/{id}/status", s.handleUpdateIncidentStatus)
+	// Attendant self-service issue reporting (Mobile Attendant Phase 7,
+	// PRD §6.12): incidents.report holders open an incident at the station
+	// of their OWN current shift, derived server-side in-handler. Accepts a
+	// client dedupe_key so the mobile offline queue can replay safely.
+	r.With(s.requirePermissionHeld("incidents.report")).Post("/incidents/report", s.handleReportIncident)
 
 	// Operating days (Phase 3, Stage 1). Open/list are
 	// station-nested and gated by the URL station; close/lock

@@ -34,6 +34,7 @@ type incidentDTO struct {
 	OpenedBy          uuid.UUID  `json:"opened_by"`
 	ResolvedAt        *string    `json:"resolved_at,omitempty"`
 	ResolvedBy        *uuid.UUID `json:"resolved_by,omitempty"`
+	DedupeKey         *string    `json:"dedupe_key,omitempty"`
 }
 
 func toIncidentDTO(i *incidents.Incident) incidentDTO {
@@ -43,6 +44,7 @@ func toIncidentDTO(i *incidents.Incident) incidentDTO {
 		Type: i.Type, Severity: i.Severity, Description: i.Description, Status: i.Status,
 		OpenedAt: i.OpenedAt.Format(time.RFC3339), OpenedBy: i.OpenedBy,
 		ResolvedAt: fmtTime(i.ResolvedAt), ResolvedBy: i.ResolvedBy,
+		DedupeKey: i.DedupeKey,
 	}
 }
 

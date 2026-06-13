@@ -186,6 +186,70 @@ func (r *Repo) FinalClosingOverridesForShift(ctx context.Context, tenantID, shif
 	return out, rows.Err()
 }
 
+// CorrectionReportRow is one non-approved (corrected/rejected) verification in
+// a station/date window, denormalized for the Corrections & Variances report:
+// who submitted what, what the supervisor finalized, the SQL-computed delta,
+// and the mandatory reason. All meter figures are exact decimal strings.
+type CorrectionReportRow struct {
+	ShiftID          uuid.UUID
+	ShiftName        string
+	PumpNumber       int
+	NozzleNumber     int
+	AttendantID      uuid.UUID
+	AttendantName    string
+	SubmittedReading string
+	FinalReading     string
+	DeltaLitres      string // final - submitted, computed in SQL numeric
+	Status           string
+	Reason           *string
+	VerifiedBy       uuid.UUID
+	VerifiedByName   string
+	VerifiedAt       time.Time
+}
+
+// CorrectionReportRows returns the station's corrected/rejected closing-reading
+// verifications for shifts opened in [from, to] (dates, inclusive), newest
+// decision first (Mobile Attendant Phase 7 report feed).
+func (r *Repo) CorrectionReportRows(ctx context.Context, tenantID, stationID uuid.UUID, from, to time.Time) ([]CorrectionReportRow, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT v.shift_id, s.name, p.number, n.number,
+		       m.recorded_by, rec.full_name,
+		       v.attendant_submitted_reading::text,
+		       v.final_approved_reading::text,
+		       (v.final_approved_reading - v.attendant_submitted_reading)::text,
+		       v.status, v.reason,
+		       v.verified_by, ver.full_name, v.verified_at
+		FROM reading_verifications v
+		JOIN meter_readings m ON m.tenant_id = v.tenant_id AND m.id = v.reading_id
+		JOIN shifts s         ON s.tenant_id = v.tenant_id AND s.id = v.shift_id
+		JOIN nozzles n        ON n.tenant_id = v.tenant_id AND n.id = v.nozzle_id
+		JOIN pumps p          ON p.tenant_id = v.tenant_id AND p.id = n.pump_id
+		JOIN users rec        ON rec.tenant_id = v.tenant_id AND rec.id = m.recorded_by
+		JOIN users ver        ON ver.tenant_id = v.tenant_id AND ver.id = v.verified_by
+		WHERE v.tenant_id = $1 AND v.station_id = $2
+		  AND v.status <> 'approved'
+		  AND s.opened_at::date BETWEEN $3::date AND $4::date
+		ORDER BY v.verified_at DESC, v.id
+	`, tenantID, stationID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CorrectionReportRow
+	for rows.Next() {
+		var c CorrectionReportRow
+		if err := rows.Scan(&c.ShiftID, &c.ShiftName, &c.PumpNumber, &c.NozzleNumber,
+			&c.AttendantID, &c.AttendantName,
+			&c.SubmittedReading, &c.FinalReading, &c.DeltaLitres,
+			&c.Status, &c.Reason,
+			&c.VerifiedBy, &c.VerifiedByName, &c.VerifiedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // UnverifiedClosingCountForShift counts the shift's ACTIVE closing readings
 // without a verification row — the shift-approval gate. It runs through any
 // Querier so the approval handler can re-check inside the tx that holds the
