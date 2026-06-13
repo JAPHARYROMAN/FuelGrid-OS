@@ -312,6 +312,12 @@ func grantRole(t *testing.T, ctx context.Context, pool *database.Pool, tenantID,
 func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID) {
 	// Delete children before parents to satisfy RESTRICT FKs.
 	stmts := []string{
+		// opening_stock_requests (migration 0093) has ON DELETE RESTRICT FKs to
+		// stock_movements, tanks, users and tenants. It MUST be purged before any
+		// of those parents, otherwise the parent DELETEs silently fail (their
+		// errors are swallowed below) and the whole tenant tree leaks — every
+		// opening-stock test would orphan its tanks, movements, users and tenant.
+		`DELETE FROM opening_stock_requests WHERE tenant_id = $1`,
 		`DELETE FROM outbox_events WHERE tenant_id = $1`,
 		`DELETE FROM audit_logs WHERE tenant_id = $1`,
 		`DELETE FROM investigation_case_actions WHERE tenant_id = $1`,
