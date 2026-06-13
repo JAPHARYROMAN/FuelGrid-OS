@@ -35,7 +35,14 @@ func TestSRL4_GrantScopeRejectsCrossTenantScopeID(t *testing.T) {
 
 	// Seed a SEPARATE tenant with its own company + station; clean it up after.
 	otherTenant, otherCompany, otherStation := h.seedForeignTenant(t, ctx)
-	t.Cleanup(func() { cleanupTenant(context.Background(), h.pool, otherTenant) })
+	// Purge the foreign tenant via the now-generic cleanupTenant (and assert zero
+	// residual). This MUST run while the pool is still open: a t.Cleanup here would
+	// fire AFTER the test's own `defer cleanup()` has already closed the pool
+	// (t.Cleanup runs after all deferred calls return), making the purge a silent
+	// no-op and leaking the whole foreign tenant tree. A defer registered AFTER
+	// `defer cleanup()` runs LIFO — i.e. BEFORE cleanup() closes the pool — so the
+	// purge actually lands; cleanupTenantNoResidual then proves nothing survived.
+	defer cleanupTenantNoResidual(t, context.Background(), h.pool, otherTenant)
 
 	// 1) A company scope_id owned by another tenant is rejected with 400.
 	if code, body := h.invPostJSON(t, "/api/v1/enterprise/scope-grants", admin, map[string]any{

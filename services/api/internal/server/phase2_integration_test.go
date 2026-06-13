@@ -527,6 +527,41 @@ func residualTenantRows(ctx context.Context, pool *database.Pool, tenantID uuid.
 	return residual, nil
 }
 
+// cleanupTenantNoResidual purges tenantID via the generic cleanupTenant and then
+// asserts — with the pool still open — that ZERO rows survive in any
+// tenant-scoped table AND that the tenant row itself is gone. It is the same
+// guard TestCleanupTenant_LeavesNoResidual applies, packaged so the OTHER
+// teardown paths (the enterprise foreign tenant, the rls_blast tenants) can be
+// routed through cleanupTenant and provably leave nothing behind. Register it as
+// a defer AFTER the harness `defer cleanup()` so it runs (LIFO) while the pool is
+// still open — never via t.Cleanup, which fires after cleanup() has closed the
+// pool and would make both the purge and this check silent no-ops.
+func cleanupTenantNoResidual(t *testing.T, ctx context.Context, pool *database.Pool, tenantID uuid.UUID) {
+	t.Helper()
+	cleanupTenant(ctx, pool, tenantID)
+	residual, err := residualTenantRows(ctx, pool, tenantID)
+	if err != nil {
+		t.Errorf("residual scan for tenant %s: %v", tenantID, err)
+		return
+	}
+	if len(residual) > 0 {
+		total := 0
+		for _, n := range residual {
+			total += n
+		}
+		t.Errorf("cleanupTenant left %d residual rows across %d tables for tenant %s: %v "+
+			"(a tenant-scoped table is not being torn down)", total, len(residual), tenantID, residual)
+	}
+	var tenantRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM tenants WHERE id = $1`, tenantID).Scan(&tenantRows); err != nil {
+		t.Errorf("count tenant row %s: %v", tenantID, err)
+		return
+	}
+	if tenantRows != 0 {
+		t.Errorf("tenant row %s survived cleanupTenant: %d rows", tenantID, tenantRows)
+	}
+}
+
 // --- HTTP helpers ---
 
 func (h *harness) login(t *testing.T, slug, email string) string {
