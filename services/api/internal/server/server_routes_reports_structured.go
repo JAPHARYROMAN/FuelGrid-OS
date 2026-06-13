@@ -16,6 +16,14 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("finance.read")).
 		Get("/reports/overview", s.handleReportsOverview)
 
+	// Reports & Intelligence Center catalog (Phase 1): the 16 blueprint
+	// categories as data, each permission-filtered, with a live key metric +
+	// alert count and a hub-level data-quality band. Coarse-gated by
+	// reports.read; each category is additionally filtered by its own
+	// required_permission inside the handler.
+	r.With(s.requirePermissionHeld("reports.read")).
+		Get("/reports/catalog", s.handleReportCatalog)
+
 	// Inventory reconciliation waterfall (station-scoped via ?station_id).
 	r.With(s.requirePermissionHeld("reconciliation.read")).
 		Get("/reports/inventory/reconciliation", s.handleReconciliationReport)

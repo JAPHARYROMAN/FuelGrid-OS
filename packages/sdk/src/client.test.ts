@@ -400,6 +400,60 @@ describe('Client audit log endpoints', () => {
   });
 });
 
+describe('Client report catalog endpoint', () => {
+  it('getReportCatalog GETs /reports/catalog and returns the typed catalog', async () => {
+    const f = jsonFetch(200, {
+      generated_at: '2026-06-13T00:00:00Z',
+      categories: [
+        {
+          key: 'sales',
+          name: 'Sales',
+          description: 'Revenue and litres.',
+          icon: 'trending-up',
+          sort_order: 20,
+          required_permission: 'revenue.read',
+          availability: 'partial',
+          target_route: '/reports/sales-summary',
+          metric: { label: 'Gross revenue (30d)', value: '1234567.89', unit: 'TZS' },
+          alert_count: 0,
+          reports: [],
+        },
+        {
+          key: 'tank',
+          name: 'Tank',
+          description: 'Live tank telemetry.',
+          icon: 'database',
+          sort_order: 40,
+          required_permission: 'inventory.read',
+          availability: 'placeholder',
+          target_route: '/reports/tank',
+          metric: {
+            label: 'Live tank telemetry',
+            value: null,
+            reason: 'No ATG / sensor feed connected — live tank telemetry is not available.',
+          },
+          alert_count: 0,
+          reports: [],
+        },
+      ],
+      data_quality: [{ category_key: 'tank', level: 'info', message: 'Tank: not available yet.' }],
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getReportCatalog();
+    const { url, init } = callArgs(f);
+    expect(init.method ?? 'GET').toBe('GET');
+    expect(new URL(url).pathname).toBe('/api/v1/reports/catalog');
+    // Monetary metric is carried as an exact decimal string, never a number.
+    expect(res.categories[0]?.metric.value).toBe('1234567.89');
+    expect(typeof res.categories[0]?.metric.value).toBe('string');
+    // A placeholder category carries a null metric and an honest reason.
+    expect(res.categories[1]?.availability).toBe('placeholder');
+    expect(res.categories[1]?.metric.value).toBeNull();
+    expect(res.categories[1]?.metric.reason).toContain('sensor feed');
+    expect(res.data_quality[0]?.category_key).toBe('tank');
+  });
+});
+
 describe('Client mobile attendant phase-0 methods', () => {
   it('checkInToShift POSTs the check-in path with optional device info', async () => {
     const f = jsonFetch(201, { id: 'a1', status: 'checked_in' });

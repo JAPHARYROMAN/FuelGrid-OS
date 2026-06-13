@@ -48,6 +48,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/receivables"
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
+	"github.com/japharyroman/fuelgrid-os/internal/reportcatalog"
 	"github.com/japharyroman/fuelgrid-os/internal/retention"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 	"github.com/japharyroman/fuelgrid-os/internal/risk"
@@ -130,6 +131,7 @@ type Server struct {
 	procurement    *procurement.Repo
 	receivables    *receivables.Repo
 	reconciliation *reconciliation.Repo
+	reportCatalog  *reportcatalog.Repo
 	retention      *retention.Repo
 	revenue        *revenue.Repo
 	risk           *risk.Repo
@@ -235,6 +237,7 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.procurement = procurement.New(deps.DB)
 		s.receivables = receivables.New(deps.DB)
 		s.reconciliation = reconciliation.New(deps.DB)
+		s.reportCatalog = reportcatalog.New(deps.DB)
 		s.retention = retention.New(deps.DB)
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
