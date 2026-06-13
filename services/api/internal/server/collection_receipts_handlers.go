@@ -251,11 +251,18 @@ func (s *Server) handleConfirmCashSubmission(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// The outbox payload is the receipt DTO plus, additively, the cash
+	// submission's submitter — the notification subscriber targets that
+	// attendant's feed with the received-vs-expected outcome (Phase 7).
+	receiptPayload := struct {
+		collectionReceiptDTO
+		SubmittedBy uuid.UUID `json:"submitted_by"`
+	}{toCollectionReceiptDTO(receipt), sub.SubmittedBy}
 	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 		TenantID: actor.TenantID, ActorID: actor.UserID,
 		Action: "cash.collection_confirmed", EventType: "CashCollectionConfirmed",
 		EntityType: "collection_receipt", EntityID: receipt.ID.String(),
-		PreviousValue: toCashSubmissionDTO(sub), NewValue: toCollectionReceiptDTO(receipt),
+		PreviousValue: toCashSubmissionDTO(sub), NewValue: receiptPayload,
 		IP: clientIP(r), UserAgent: r.UserAgent(),
 		RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {

@@ -7,6 +7,7 @@ import {
   ArrowRight,
   BarChart3,
   CalendarClock,
+  ClipboardCheck,
   Droplet,
   FileSpreadsheet,
   Gauge,
@@ -15,6 +16,7 @@ import {
   ShieldCheck,
   TrendingUp,
   Trophy,
+  UserCheck,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -138,6 +140,50 @@ export default function ReportsPage() {
                   />
                 );
               })}
+
+          {/* Operations · attendance — rostered vs check-in/out with late and
+              no-show derivation (Mobile Attendant Phase 7). Station-scoped. */}
+          {!overview.isPending ? (
+            <ReportCategoryCard
+              icon={<UserCheck />}
+              title="Attendance"
+              description="Rostered attendants vs check-in / check-out per shift, with late and no-show derivation over a date window."
+              metricLabel="Dataset"
+              metricValue="Roster vs attendance"
+              href="/reports/attendance"
+              linkComponent={Link}
+              actions={
+                <Button size="sm" asChild>
+                  <Link href="/reports/attendance">
+                    View report
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              }
+            />
+          ) : null}
+
+          {/* Operations · corrections & variances — submitted vs final approved
+              readings + reason, expected vs received collections (Phase 7). */}
+          {!overview.isPending ? (
+            <ReportCategoryCard
+              icon={<ClipboardCheck />}
+              title="Corrections & Variances"
+              description="Supervisor-corrected readings with both figures and the reason, and expected vs received collections with shortage or excess."
+              metricLabel="Dataset"
+              metricValue="Readings & cash"
+              href="/reports/corrections-variances"
+              linkComponent={Link}
+              actions={
+                <Button size="sm" asChild>
+                  <Link href="/reports/corrections-variances">
+                    View report
+                    <ArrowRight className="size-4" />
+                  </Link>
+                </Button>
+              }
+            />
+          ) : null}
 
           {/* Finance & accounting — accountant-ready exports live on their own page. */}
           {!overview.isPending ? (

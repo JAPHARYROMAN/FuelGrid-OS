@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, Check, CircleDashed, Loader2 } from 'lucide-react';
+import { ArrowRight, Check, CircleDashed, Loader2, Megaphone } from 'lucide-react';
 
 import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
 import {
@@ -529,6 +529,16 @@ export default function AttendantHomePage() {
           </CardContent>
         </Card>
       ) : null}
+
+      {/* Always-available secondary action: report a problem at the pump
+          (PRD §6.12). Low emphasis so it never competes with the one primary
+          next-action button. Shift-linked — only offered while on a shift. */}
+      <Button asChild variant="ghost" className="h-12 text-base text-muted-foreground">
+        <Link href="/attendant/report-issue">
+          <Megaphone className="size-5" aria-hidden />
+          {t.home.reportIssue}
+        </Link>
+      </Button>
     </div>
   );
 }

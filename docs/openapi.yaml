@@ -1243,6 +1243,23 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Station not found }
 
+  /api/v1/incidents/report:
+    post:
+      tags: [Incidents]
+      summary: Report an operational issue from the caller's current shift (attendant self-service)
+      description: >-
+        Gated by incidents.report (station-scoped). SELF-SCOPED: the incident's
+        station is the station of the caller's current shift, derived
+        server-side — never trusted from the body. Supports an offline-replay
+        dedupe_key; a replayed create returns the existing incident with 200.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/IncidentReport' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Incident' } } } }
+        '200': { description: Replayed — the dedupe_key matched an existing incident, content: { application/json: { schema: { $ref: '#/components/schemas/Incident' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Forbidden, or the asserted station_id is not the caller's current-shift station }
+        '409': { description: 'The caller has no current shift (code: no_active_shift), or the dedupe_key already maps to an incident at a different station (code: dedupe_key_conflict)' }
+
   /api/v1/incidents/{id}/status:
     patch:
       tags: [Incidents]
@@ -2361,6 +2378,44 @@ paths:
       parameters:
         - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/attendance:
+    get:
+      tags: [Reports]
+      summary: Structured attendance report (roster vs check-in/out with late / no-show derivation) as a drillable envelope
+      description: >-
+        Station-scoped via station_id. Gated by station.read; an out-of-scope
+        station 403s, a cross-tenant one 404s. from/to select the inclusive
+        date window (default the last 30 days). Late = checked in more than 15
+        minutes after the shift opened; no_show = rostered with no attendance
+        record on a shift past open.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: from, required: false, schema: { type: string, format: date } }
+        - { in: query, name: to, required: false, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/corrections-variances:
+    get:
+      tags: [Reports]
+      summary: Structured corrections & variances report (submitted vs final approved readings + reason; expected vs received collections + difference + reason) as a drillable envelope
+      description: >-
+        Station-scoped via station_id. Gated by station.read. from/to select
+        the inclusive date window (default the last 30 days). All meter and
+        money figures are exact decimal strings; shortage/excess totals are
+        summed in SQL numeric. chart_data carries the two datasets structured
+        as {corrections: [], collections: []}.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: from, required: false, schema: { type: string, format: date } }
+        - { in: query, name: to, required: false, schema: { type: string, format: date } }
       responses:
         '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -6109,7 +6164,7 @@ components:
         station_id:          { type: string, format: uuid }
         related_entity_type: { type: string }
         related_entity_id:   { type: string, format: uuid }
-        type:                { type: string, enum: [equipment, leak, variance, safety, calibration, other] }
+        type:                { type: string, enum: [equipment, leak, variance, safety, calibration, other, pump, nozzle, meter, payment] }
         severity:            { type: string, enum: [low, medium, high, critical] }
         description:         { type: string }
         status:              { type: string, enum: [open, investigating, resolved, closed] }
@@ -6117,6 +6172,7 @@ components:
         opened_by:           { type: string, format: uuid }
         resolved_at:         { type: string, format: date-time }
         resolved_by:         { type: string, format: uuid }
+        dedupe_key:          { type: string, description: Client-supplied offline-replay key, when the create carried one. }
     IncidentCreate:
       type: object
       required: [station_id, description]
@@ -6127,6 +6183,24 @@ components:
         type:                { type: string }
         severity:            { type: string }
         description:         { type: string }
+    IncidentReport:
+      type: object
+      required: [type, description]
+      description: >-
+        Attendant self-service issue report (incidents.report). The incident's
+        station is ALWAYS the station of the caller's current shift, derived
+        server-side; station_id is an optional client assertion that must match
+        it (403 otherwise). dedupe_key makes the create idempotent for the
+        mobile offline queue: a replay carrying the same key returns the
+        existing incident with 200 instead of creating a duplicate.
+      properties:
+        type:                { type: string, enum: [pump, nozzle, meter, payment, safety, other] }
+        severity:            { type: string, enum: [low, medium, high, critical] }
+        description:         { type: string }
+        station_id:          { type: string, format: uuid }
+        related_entity_type: { type: string }
+        related_entity_id:   { type: string, format: uuid }
+        dedupe_key:          { type: string, minLength: 1, maxLength: 255 }
     IncidentList:
       type: object
       properties:

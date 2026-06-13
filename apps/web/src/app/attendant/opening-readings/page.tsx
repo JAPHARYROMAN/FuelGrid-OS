@@ -44,6 +44,17 @@ import {
 
 const QUERY_KEY = ['attendant-current-shift'];
 
+/** A symbol the report mutation returns when the issue was queued offline. */
+const REPORT_QUEUED = Symbol('report-queued-offline');
+
+/** A uuid for the issue-report dedupe_key, with an old-WebView fallback. */
+function newReportDedupeKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `issue-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 /** Per-nozzle live verification status, always conveyed as text + colour. */
 type RowStatus =
   | { kind: 'recorded' } // an opening already exists server-side
@@ -102,7 +113,10 @@ export default function OpeningReadingsPage() {
   const [results, setResults] = useState<Record<string, RowResult>>({});
   const [confirming, setConfirming] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<string | null>(null);
-  const [reported, setReported] = useState(false);
+  const [reported, setReported] = useState<false | 'reported' | 'queued'>(false);
+  // One dedupe_key per blocked-low report attempt, reused across retries so an
+  // offline replay returns the original incident (200) instead of a duplicate.
+  const [reportDedupeKey] = useState(newReportDedupeKey);
 
   const snapshot = useAttendantSnapshot();
   const engineState = useSyncEngineState();
@@ -131,10 +145,12 @@ export default function OpeningReadingsPage() {
       ]),
   );
 
-  // Whether THIS user may open an incident (incidents.manage is a
-  // supervisor-tier permission today; attendants normally fall back to the
-  // call-your-supervisor message). UX hint only — the backend re-checks.
-  const canReportIncident = usePermission('incidents.manage', { stationID });
+  // Attendants now hold incidents.report (Phase 7), so they get the direct
+  // self-service "report to supervisor" action here — the incident's station
+  // is derived server-side from their current shift. UX hint only; the backend
+  // re-checks. The rare actor without the permission falls back to the
+  // call-your-supervisor message.
+  const canReportIncident = usePermission('incidents.report', { stationID });
 
   const submit = useMutation({
     mutationFn: async (rows: Array<{ assignment: AttendantAssignment; reading: string }>) => {
@@ -193,19 +209,34 @@ export default function OpeningReadingsPage() {
   });
 
   const reportIssue = useMutation({
-    // The incident description is SERVER data read by supervisors/audit —
-    // deliberately not localized (English keeps the operational record
-    // uniform across the tenant).
-    mutationFn: (description: string) =>
-      api.createIncident({
-        station_id: stationID ?? '',
-        type: 'variance',
-        severity: 'high',
-        related_entity_type: 'shift',
-        related_entity_id: shiftID,
+    // Self-service issue report (incidents.report): the station is derived
+    // SERVER-SIDE from the actor's current shift, so we never send one. The
+    // description is SERVER data read by supervisors/audit — deliberately NOT
+    // localized (English keeps the operational record uniform across the
+    // tenant). A meter mismatch maps to the 'meter' issue type. Offline, the
+    // report is queued with the SAME dedupe_key so the replay is idempotent.
+    mutationFn: async (description: string) => {
+      const req = {
+        type: 'meter' as const,
         description,
-      }),
-    onSuccess: () => setReported(true),
+        severity: 'high',
+        dedupe_key: reportDedupeKey,
+      };
+      try {
+        return await api.reportIncident(req);
+      } catch (e) {
+        if (isOfflineError(e)) {
+          await getSyncEngine().enqueue({
+            action_type: 'report_issue',
+            shift_id: shiftID,
+            payload: req,
+          });
+          return REPORT_QUEUED;
+        }
+        throw e;
+      }
+    },
+    onSuccess: (result) => setReported(result === REPORT_QUEUED ? 'queued' : 'reported'),
     onError: (e) =>
       toast.error(
         t.opening.errReportTitle,
@@ -440,8 +471,11 @@ export default function OpeningReadingsPage() {
             {t.opening.lowerBlocked}
           </p>
           {reported ? (
-            <p className="text-base text-danger" role="status">
-              {t.opening.issueReported}
+            <p
+              className={'text-base ' + (reported === 'queued' ? 'text-warning' : 'text-danger')}
+              role="status"
+            >
+              {reported === 'queued' ? t.opening.issueQueued : t.opening.issueReported}
             </p>
           ) : canReportIncident ? (
             <Button

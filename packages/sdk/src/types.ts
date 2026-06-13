@@ -577,6 +577,29 @@ export interface Incident {
   opened_by: string;
   resolved_at?: string;
   resolved_by?: string;
+  /** Client-supplied offline-replay key, when the create carried one. */
+  dedupe_key?: string;
+}
+
+/** PRD §6.12 attendant issue types accepted by the self-service report path. */
+export type IncidentReportType = 'pump' | 'nozzle' | 'meter' | 'payment' | 'safety' | 'other';
+
+/**
+ * Attendant self-service issue report (incidents.report). The incident's
+ * station is ALWAYS the station of the caller's current shift, derived
+ * server-side; `station_id` is an optional client assertion that must match it
+ * (403 otherwise). `dedupe_key` makes the create idempotent for the offline
+ * queue: a replay carrying the same key returns the existing incident (200)
+ * instead of creating a duplicate (201).
+ */
+export interface IncidentReportRequest {
+  type: IncidentReportType;
+  description: string;
+  severity?: string;
+  station_id?: string;
+  related_entity_type?: string;
+  related_entity_id?: string;
+  dedupe_key?: string;
 }
 
 export interface PumpWithNozzles extends Pump {

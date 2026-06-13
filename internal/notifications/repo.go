@@ -29,7 +29,9 @@ const (
 
 // Notification is one feed entry. UserID is nil for a tenant-wide notification
 // (every user in the tenant sees it); set for a private one. ReadAt is nil
-// until the owner marks it read.
+// until the owner marks it read. SourceEventID is the outbox event that
+// produced the row (nil for rows not raised by the event subscriber); it backs
+// the redelivery dedupe (0103).
 type Notification struct {
 	ID                uuid.UUID
 	TenantID          uuid.UUID
@@ -40,6 +42,7 @@ type Notification struct {
 	Severity          string
 	RelatedEntityType *string
 	RelatedEntityID   *string
+	SourceEventID     *uuid.UUID
 	ReadAt            *time.Time
 	CreatedAt         time.Time
 }
@@ -62,12 +65,13 @@ type Repo struct{ pool *database.Pool }
 func New(pool *database.Pool) *Repo { return &Repo{pool: pool} }
 
 const notificationColumns = `id, tenant_id, user_id, type, title, body, severity,
-	related_entity_type, related_entity_id, read_at, created_at`
+	related_entity_type, related_entity_id, source_event_id, read_at, created_at`
 
 func scanNotification(row pgx.Row) (Notification, error) {
 	var n Notification
 	err := row.Scan(&n.ID, &n.TenantID, &n.UserID, &n.Type, &n.Title, &n.Body,
-		&n.Severity, &n.RelatedEntityType, &n.RelatedEntityID, &n.ReadAt, &n.CreatedAt)
+		&n.Severity, &n.RelatedEntityType, &n.RelatedEntityID, &n.SourceEventID,
+		&n.ReadAt, &n.CreatedAt)
 	return n, err
 }
 
@@ -86,6 +90,52 @@ func (r *Repo) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput) (
 		tenantID, in.UserID, in.Type, in.Title, in.Body, severity,
 		in.RelatedEntityType, in.RelatedEntityID)
 	return scanNotification(row)
+}
+
+// CreateFromEvent inserts a notification raised by an outbox event,
+// deduplicated on (tenant, source event, target user) so the at-least-once
+// subscriber never double-creates on redelivery. It mirrors payments.Record
+// (0096): INSERT ... ON CONFLICT DO NOTHING against the partial unique index
+// uq_notifications_event_target (0103), then on conflict the existing row is
+// returned with created=false — the dedupe is enforced by the database under
+// concurrency, not by a check-then-insert race. Severity defaults to "info"
+// when blank; a nil in.UserID makes the notification tenant-wide.
+func (r *Repo) CreateFromEvent(ctx context.Context, tenantID, sourceEventID uuid.UUID, in CreateInput) (Notification, bool, error) {
+	severity := in.Severity
+	if severity == "" {
+		severity = SeverityInfo
+	}
+	n, err := scanNotification(r.pool.QueryRow(ctx, `
+		INSERT INTO notifications
+			(tenant_id, user_id, type, title, body, severity,
+			 related_entity_type, related_entity_id, source_event_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (tenant_id, source_event_id,
+		             COALESCE(user_id, '00000000-0000-0000-0000-000000000000'::uuid))
+			WHERE source_event_id IS NOT NULL
+		DO NOTHING
+		RETURNING `+notificationColumns,
+		tenantID, in.UserID, in.Type, in.Title, in.Body, severity,
+		in.RelatedEntityType, in.RelatedEntityID, sourceEventID))
+	if err == nil {
+		return n, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Notification{}, false, err
+	}
+
+	// Conflict: this event already produced a row for this target (an outbox
+	// redelivery). Return the original so the caller can skip side effects.
+	existing, err := scanNotification(r.pool.QueryRow(ctx, `
+		SELECT `+notificationColumns+`
+		FROM notifications
+		WHERE tenant_id = $1 AND source_event_id = $2
+		  AND user_id IS NOT DISTINCT FROM $3`,
+		tenantID, sourceEventID, in.UserID))
+	if err != nil {
+		return Notification{}, false, err
+	}
+	return existing, false, nil
 }
 
 // ListForUser returns the caller's feed: their own notifications plus the

@@ -5,6 +5,7 @@ import { Fuel } from 'lucide-react';
 import { useAttendantPrefs, useT } from '@/lib/i18n';
 
 import { DisplaySettingsButton } from './display-settings';
+import { AttendantNotificationBell } from './notification-bell';
 import { ServiceWorkerManager } from './sw-register';
 import { OfflineHint, SyncStatusChip } from './sync-status';
 
@@ -38,6 +39,7 @@ export function AttendantShell({ children }: { children: React.ReactNode }) {
           </span>
           <div className="flex items-center gap-1">
             <SyncStatusChip />
+            <AttendantNotificationBell />
             <DisplaySettingsButton />
           </div>
         </div>

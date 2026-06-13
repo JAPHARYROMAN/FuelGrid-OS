@@ -45,6 +45,18 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/station-comparison", s.handleStationComparisonReport)
 
+	// Attendance dataset (station-scoped via ?station_id + ?from/?to window;
+	// Mobile Attendant Phase 7): roster vs check-in/out with late / no-show
+	// derivation. Rides station.read, the operations-domain read permission.
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/reports/attendance", s.handleAttendanceReport)
+
+	// Corrections & variances dataset (station-scoped via ?station_id +
+	// ?from/?to window; Mobile Attendant Phase 7): submitted vs final approved
+	// readings + reason, and expected vs received collections + difference.
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/reports/corrections-variances", s.handleCorrectionsVariancesReport)
+
 	// Unified export entry point — delegates to the existing export endpoints.
 	r.With(s.requirePermissionHeld("finance.read")).
 		Post("/reports/export", s.handleExportReport)

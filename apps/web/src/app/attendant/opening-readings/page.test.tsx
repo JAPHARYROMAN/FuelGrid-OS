@@ -13,13 +13,13 @@ import {
 const attendantCurrentShift = vi.fn();
 const listExpectedOpeningReadings = vi.fn();
 const captureMeterReading = vi.fn();
-const createIncident = vi.fn();
+const reportIncident = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     attendantCurrentShift: (...args: unknown[]) => attendantCurrentShift(...args),
     listExpectedOpeningReadings: (...args: unknown[]) => listExpectedOpeningReadings(...args),
     captureMeterReading: (...args: unknown[]) => captureMeterReading(...args),
-    createIncident: (...args: unknown[]) => createIncident(...args),
+    reportIncident: (...args: unknown[]) => reportIncident(...args),
   },
 }));
 
@@ -28,6 +28,8 @@ vi.mock('@/hooks/use-permissions', () => ({ usePermission: () => incidentsPermit
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
+import { resetSyncEngineForTests } from '@/lib/offline';
 
 import OpeningReadingsPage from './page';
 
@@ -115,8 +117,10 @@ describe('OpeningReadingsPage', () => {
     attendantCurrentShift.mockReset();
     listExpectedOpeningReadings.mockReset();
     captureMeterReading.mockReset();
-    createIncident.mockReset();
+    reportIncident.mockReset();
     push.mockReset();
+    resetSyncEngineForTests();
+    localStorage.clear();
     incidentsPermitted = false;
     attendantCurrentShift.mockResolvedValue(snapshot);
     listExpectedOpeningReadings.mockResolvedValue(expectedList);
@@ -264,9 +268,9 @@ describe('OpeningReadingsPage', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('files an incident one-tap when the actor holds incidents.manage', async () => {
+  it('files a self-service incident one-tap when the actor holds incidents.report (no station_id, with dedupe_key)', async () => {
     incidentsPermitted = true;
-    createIncident.mockResolvedValue({ id: 'inc-1' });
+    reportIncident.mockResolvedValue({ id: 'inc-1', dedupe_key: 'k1' });
     renderPage();
 
     const input = await premiumInput();
@@ -275,17 +279,16 @@ describe('OpeningReadingsPage', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /report issue to supervisor/i }));
 
-    await waitFor(() => expect(createIncident).toHaveBeenCalledTimes(1));
-    expect(createIncident).toHaveBeenCalledWith(
-      expect.objectContaining({
-        station_id: 'st-1',
-        type: 'variance',
-        severity: 'high',
-        related_entity_type: 'shift',
-        related_entity_id: 'shift-1',
-        description: expect.stringContaining('pump 1 nozzle 1'),
-      }),
-    );
+    await waitFor(() => expect(reportIncident).toHaveBeenCalledTimes(1));
+    const sent = reportIncident.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sent).toMatchObject({
+      type: 'meter',
+      severity: 'high',
+      description: expect.stringContaining('pump 1 nozzle 1'),
+    });
+    expect(typeof sent.dedupe_key).toBe('string');
+    // Station is derived server-side from the actor's current shift.
+    expect(sent).not.toHaveProperty('station_id');
     expect(await screen.findByText(/issue reported/i)).toBeInTheDocument();
   });
 

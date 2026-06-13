@@ -27,8 +27,11 @@ type Incident struct {
 	OpenedBy          uuid.UUID
 	ResolvedAt        *time.Time
 	ResolvedBy        *uuid.UUID
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// DedupeKey is the client-supplied offline-replay key (0103); nil when the
+	// create carried none.
+	DedupeKey *string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type CreateInput struct {
@@ -39,6 +42,12 @@ type CreateInput struct {
 	Severity          string
 	Description       string
 	OpenedBy          uuid.UUID
+	// DedupeKey is an optional client-supplied key (Mobile Attendant Phase 7).
+	// When set, a replayed create carrying the same key for the same tenant
+	// returns the already-opened incident instead of inserting a duplicate —
+	// the mobile offline queue replays creations, which are otherwise
+	// non-idempotent. When nil, the prior always-insert behaviour is preserved.
+	DedupeKey *string
 }
 
 // ListFilter narrows the incident queue. Nil/empty fields are ignored.
@@ -58,14 +67,14 @@ var ErrNotFound = errors.New("incidents: not found")
 const columns = `
     id, tenant_id, station_id, related_entity_type, related_entity_id,
     type, severity, description, status, opened_at, opened_by,
-    resolved_at, resolved_by, created_at, updated_at
+    resolved_at, resolved_by, dedupe_key, created_at, updated_at
 `
 
 func scan(row pgx.Row, i *Incident) error {
 	return row.Scan(
 		&i.ID, &i.TenantID, &i.StationID, &i.RelatedEntityType, &i.RelatedEntityID,
 		&i.Type, &i.Severity, &i.Description, &i.Status, &i.OpenedAt, &i.OpenedBy,
-		&i.ResolvedAt, &i.ResolvedBy, &i.CreatedAt, &i.UpdatedAt,
+		&i.ResolvedAt, &i.ResolvedBy, &i.DedupeKey, &i.CreatedAt, &i.UpdatedAt,
 	)
 }
 
@@ -184,6 +193,80 @@ func (r *Repo) Create(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in Cre
 		return nil, err
 	}
 	return &i, nil
+}
+
+// CreateResult is the outcome of CreateDeduped. Replayed reports whether the
+// returned incident is a pre-existing row matched by dedupe key (true) rather
+// than a freshly inserted one (false). The handler uses it to skip side
+// effects (audit event, outbox notification) on a replay so a replayed
+// offline create cannot double-report.
+type CreateResult struct {
+	Incident *Incident
+	Replayed bool
+}
+
+// CreateDeduped inserts an incident. When in.DedupeKey is supplied and an
+// incident already exists for (tenant_id, dedupe_key), the existing row is
+// returned with Replayed=true instead of inserting a duplicate (Mobile
+// Attendant Phase 7 offline replay). The dedup is tenant-scoped: the same key
+// under a different tenant inserts normally.
+//
+// It relies on the partial unique index uq_incidents_tenant_dedupe_key
+// (migration 0103) via INSERT ... ON CONFLICT, so the dedup is enforced by the
+// database under concurrency, not by a check-then-insert race — exactly the
+// payments idempotency pattern (0096).
+func (r *Repo) CreateDeduped(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CreateInput) (*CreateResult, error) {
+	// No key supplied: preserve the prior always-insert behaviour.
+	if in.DedupeKey == nil {
+		i, err := r.Create(ctx, tx, tenantID, in)
+		if err != nil {
+			return nil, err
+		}
+		return &CreateResult{Incident: i, Replayed: false}, nil
+	}
+
+	typ := in.Type
+	if typ == "" {
+		typ = "other"
+	}
+	sev := in.Severity
+	if sev == "" {
+		sev = "medium"
+	}
+
+	// Key supplied: insert, but on a (tenant_id, dedupe_key) conflict do
+	// nothing so we can return the already-opened row unchanged. ON CONFLICT
+	// DO NOTHING yields no RETURNING row, so an empty result means the key
+	// already existed — we then SELECT the original.
+	var i Incident
+	err := scan(tx.QueryRow(ctx, `
+		INSERT INTO incidents
+		    (tenant_id, station_id, related_entity_type, related_entity_id,
+		     type, severity, description, opened_by, dedupe_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (tenant_id, dedupe_key) WHERE dedupe_key IS NOT NULL
+		DO NOTHING
+		RETURNING `+columns,
+		tenantID, in.StationID, in.RelatedEntityType, in.RelatedEntityID,
+		typ, sev, in.Description, in.OpenedBy, *in.DedupeKey,
+	), &i)
+	if err == nil {
+		return &CreateResult{Incident: &i, Replayed: false}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	// Conflict: an incident with this key already exists for the tenant.
+	// Return it so the caller responds idempotently rather than erroring.
+	var existing Incident
+	if err := scan(tx.QueryRow(ctx, `
+		SELECT `+columns+` FROM incidents
+		WHERE tenant_id = $1 AND dedupe_key = $2
+	`, tenantID, *in.DedupeKey), &existing); err != nil {
+		return nil, err
+	}
+	return &CreateResult{Incident: &existing, Replayed: true}, nil
 }
 
 // UpdateStatus transitions an incident. When the target status is resolved

@@ -125,6 +125,77 @@ export const sw: Messages = {
     ctaFinishShift: 'Maliza zamu yako',
     errCheckIn: 'Imeshindikana kuingia kazini. Jaribu tena.',
     errConfirm: 'Imeshindikana kuthibitisha nozeli. Jaribu tena.',
+    notificationsLink: 'Arifa',
+    bellUnread: (n) => `Arifa, ${n} hazijasomwa`,
+    bellNoUnread: 'Arifa',
+    reportIssue: 'Ripoti tatizo',
+  },
+
+  notifications: {
+    title: 'Arifa',
+    subtitle: 'Taarifa kutoka kwa msimamizi wako kuhusu zamu hii.',
+    markAllRead: 'Weka zote kuwa zimesomwa',
+    markRead: 'Weka kuwa imesomwa',
+    markedRead: 'Imesomwa',
+    unread: 'Haijasomwa',
+    emptyTitle: 'Bado hakuna arifa',
+    emptyBody: 'Taarifa kuhusu mpangilio wako, usomaji, pesa na zamu zitaonekana hapa.',
+    errLoadTitle: 'Imeshindikana kupakia arifa zako',
+    loadMore: 'Onyesha zaidi',
+    severityInfo: 'Taarifa',
+    severitySuccess: 'Imekamilika',
+    severityWarning: 'Angalia',
+    severityCritical: 'Haraka',
+  },
+
+  report: {
+    title: 'Ripoti tatizo',
+    subtitle: 'Mwambie msimamizi wako kuhusu tatizo kwenye pampu yako. Anajulishwa mara moja.',
+    typeLabel: 'Tatizo ni nini?',
+    types: {
+      pump: 'Pampu',
+      nozzle: 'Nozeli',
+      meter: 'Mita',
+      payment: 'Malipo',
+      safety: 'Usalama',
+      other: 'Jambo lingine',
+    },
+    typeHints: {
+      pump: 'Pampu haifanyi kazi vizuri',
+      nozzle: 'Nozeli ina hitilafu au inavuja',
+      meter: 'Usomaji wa mita unaonekana si sahihi',
+      payment: 'Tatizo la kupokea malipo',
+      safety: 'Wasiwasi wa usalama au kumwagika',
+      other: 'Tatizo lingine lolote',
+    },
+    urgencyLabel: 'Ni la dharura kiasi gani?',
+    urgencyLow: 'Chini',
+    urgencyMedium: 'Kawaida',
+    urgencyHigh: 'Dharura',
+    descriptionLabel: 'Eleza tatizo',
+    descriptionPlaceholder: 'Nini kilitokea? Ongeza chochote msimamizi wako anapaswa kujua.',
+    descriptionMissing: 'Andika maelezo mafupi kabla ya kutuma.',
+    typeMissing: 'Chagua tatizo ni nini kwanza.',
+    submitButton: 'Tuma kwa msimamizi',
+    confirmTitle: 'Tuma hii kwa msimamizi wako?',
+    confirmType: 'Tatizo',
+    confirmUrgency: 'Udharura',
+    confirmSend: 'Tuma sasa',
+    onceNote: 'Msimamizi wako anajulishwa mara tu hii inapotumwa.',
+    sentTitle: 'Imetumwa kwa msimamizi wako',
+    sentBody: 'Msimamizi wako amejulishwa na atafuatilia.',
+    queuedTitle: 'Imehifadhiwa kwenye simu hii',
+    queuedBody: 'Itatumwa kwa msimamizi wako mtandao ukirudi.',
+    backHome: 'Rudi kwenye zamu yangu',
+    reportAnother: 'Ripoti tatizo lingine',
+    errNoShiftTitle: 'Huko kwenye zamu',
+    errNoShiftBody:
+      'Ripoti za matatizo zinaunganishwa na zamu yako ya sasa. Ingia kwenye zamu kwanza, au mpigie msimamizi wako.',
+    errGeneric: 'Imeshindikana kutuma ripoti. Angalia mtandao wako kisha ujaribu tena.',
+    toastSentTitle: 'Tatizo limeripotiwa',
+    toastSentBody: 'Msimamizi wako amejulishwa.',
+    toastQueuedTitle: 'Tatizo limehifadhiwa kwenye simu hii',
+    toastQueuedBody: 'Litatumwa mtandao ukirudi.',
   },
 
   opening: {
@@ -149,6 +220,8 @@ export const sw: Messages = {
     statusEmpty: 'Weka usomaji unaoonekana kwenye mita.',
     notSaved: (message) => `Haukuhifadhiwa: ${message}`,
     issueReported: 'Tatizo limeripotiwa. Msimamizi wako amejulishwa.',
+    issueQueued:
+      'Tatizo limehifadhiwa kwenye simu hii — litamfikia msimamizi wako mtandao ukirudi.',
     reportIssue: 'Ripoti tatizo kwa msimamizi',
     cannotReport:
       'Huwezi kuripoti kutoka hapa kwa sasa — mpigie msimamizi wako ili kutatua hili kabla zamu haijaendelea.',
@@ -387,6 +460,7 @@ export const sw: Messages = {
       `Usomaji wa kufunga ${reading} — pampu ${pump} · nozeli ${nozzle}`,
     actionClosingReadingGeneric: (reading) => `Usomaji wa kufunga ${reading}`,
     actionCollection: 'Wasilisha makusanyo',
+    actionReportIssue: (issueType) => `Ripoti tatizo la ${issueType.toLowerCase()}`,
     errOpeningBelowExpected:
       'Usomaji uko chini ya kufunga kulikoidhinishwa kwa zamu iliyopita. Mpigie msimamizi wako.',
     errAssignmentChanged:
@@ -400,6 +474,9 @@ export const sw: Messages = {
     errCollectionConflict: (serverTotal) =>
       `Makusanyo yalishawasilishwa kwa zamu hii kwa jumla tofauti (${serverTotal}). Kiasi chako kimehifadhiwa hapa — mwonyeshe msimamizi wako.`,
     errVerifyUnavailable: 'Imeshindikana kuthibitisha na seva — itajaribiwa tena.',
+    errNoActiveShift:
+      'Huko tena kwenye zamu, kwa hivyo tatizo hili halikuweza kutumwa. Ingia kwenye zamu kwanza, au mpigie msimamizi wako.',
+    errIssueInvalid: 'Ripoti hii ya tatizo haikuweza kutumwa. Irekebishe ujaribu tena, au uifute.',
   },
 
   settings: {

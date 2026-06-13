@@ -12,7 +12,8 @@ export type OfflineActionType =
   | 'confirm_assignment'
   | 'opening_reading'
   | 'closing_reading'
-  | 'collection';
+  | 'collection'
+  | 'report_issue';
 
 /**
  * Per-action lifecycle (PRD §9.7):
@@ -40,7 +41,9 @@ export type QueueMessageCode =
   | 'assignment_changed'
   | 'reading_conflict'
   | 'collection_conflict'
-  | 'verify_unavailable';
+  | 'verify_unavailable'
+  | 'no_active_shift'
+  | 'issue_invalid';
 
 /** Parameters for coded queue messages (JSON-serializable, stored verbatim). */
 export interface QueueMessageParams {
@@ -76,6 +79,21 @@ export interface CollectionPayload {
   card_amount: string;
   credit_amount: string;
   notes?: string;
+}
+
+/**
+ * An attendant self-service issue report (PRD §6.12). The station is derived
+ * SERVER-SIDE from the actor's current shift, so it is never carried here.
+ * `dedupe_key` is the per-submission UUID generated once at capture time and
+ * reused on every replay so the server returns the original incident (200)
+ * rather than creating a duplicate (201) — the offline idempotency contract.
+ */
+export interface IssuePayload {
+  type: 'pump' | 'nozzle' | 'meter' | 'payment' | 'safety' | 'other';
+  description: string;
+  severity?: string;
+  /** Per-submission idempotency key (uuid), reused across retries. */
+  dedupe_key: string;
 }
 
 interface QueuedActionBase {
@@ -117,6 +135,7 @@ export type QueuedAction = QueuedActionBase &
     | { action_type: 'opening_reading'; payload: ReadingPayload }
     | { action_type: 'closing_reading'; payload: ReadingPayload }
     | { action_type: 'collection'; payload: CollectionPayload }
+    | { action_type: 'report_issue'; payload: IssuePayload }
   );
 
 /** What the caller provides at capture time; identity/order/status are filled in. */

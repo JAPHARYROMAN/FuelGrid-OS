@@ -382,7 +382,13 @@ func (s *Server) handleVerifyCorrectReading(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	auditNew := map[string]any{"verification": toReadingVerificationDTO(v)}
+	// recorded_by (the attendant who submitted the reading) rides the payload
+	// additively so the notification subscriber can target the recorder's feed
+	// (Mobile Attendant Phase 7) without re-reading the meter row.
+	auditNew := map[string]any{
+		"verification": toReadingVerificationDTO(v),
+		"recorded_by":  reading.RecordedBy,
+	}
 	// A closed shift has a frozen close line for the nozzle; rewrite it from
 	// the corrected closing so expected collection follows the approved
 	// figure. The pre-correction line stays derivable: opening is unchanged

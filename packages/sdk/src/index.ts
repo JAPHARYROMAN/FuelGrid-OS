@@ -72,6 +72,8 @@ export type {
   Expense,
   ExpenseCategory,
   Incident,
+  IncidentReportRequest,
+  IncidentReportType,
   InventoryOverview,
   InventoryOverviewTank,
   JournalEntry,
