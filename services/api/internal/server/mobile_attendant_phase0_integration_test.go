@@ -124,8 +124,11 @@ func TestMobileAttendant_AssignmentConfirm(t *testing.T) {
 	confirmPath := "/api/v1/shifts/" + shiftID + "/nozzle-assignments/" + assignmentID.String() + "/confirm"
 
 	// A different attendant ON the shift still cannot confirm A's assignment.
+	// B is an active station employee (so the assign guard admits them) added as
+	// an ad-hoc substitute, not on the rotation team.
 	emailB := fmt.Sprintf("att-confirm-b-%d@it.local", suffix)
 	attBID := seedAttendant(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, emailB)
+	seedStationEmployee(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, attBID, "Attendant B")
 	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/attendants", admin,
 		fmt.Sprintf(`{"user_id":%q}`, attBID)); code != http.StatusCreated {
 		t.Fatalf("assign B to shift: %d %v", code, b)

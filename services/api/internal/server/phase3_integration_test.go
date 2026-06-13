@@ -307,9 +307,13 @@ func TestPhase3_AttendantSelfScope(t *testing.T) {
 	_, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, emailA)
 	attA := h.login(t, tenantSlug, emailA)
 
-	// A second attendant, not assigned to the shift.
+	// A second attendant, not assigned to the shift. They are an active station
+	// employee (so the assign guard admits them as an ad-hoc substitute) but are
+	// not on the rotation team — the self-scope check below proves they still
+	// cannot write a nozzle they do not own.
 	emailB := fmt.Sprintf("att-b-%d@it.local", suffix)
 	attBID := seedAttendant(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, emailB)
+	seedStationEmployee(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, attBID, "Attendant B")
 	attB := h.login(t, tenantSlug, emailB)
 
 	noz := nozzleID.String()

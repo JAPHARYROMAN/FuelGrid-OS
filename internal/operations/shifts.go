@@ -367,6 +367,51 @@ func (r *Repo) IsAttendantOnShift(ctx context.Context, tenantID, shiftID, userID
 	return exists, err
 }
 
+// IsStationMemberForShift reports whether a user may work the given shift's
+// station — i.e. the user is part of that station's workforce. The station is
+// derived from the shift row server-side (never from client input): a user is a
+// member when there is an ACTIVE employees row for the shift's station linked to
+// that user. This deliberately admits the ad-hoc SUBSTITUTE case (a station
+// employee who is NOT on today's rotation team), while rejecting any user with
+// no employee record at the station (e.g. a head-office user). A user already
+// on the shift's rostered team is, by construction, such an active station
+// employee, so the team-membership case is covered by the same check; it is
+// spelled out in the second EXISTS arm for clarity and defence in depth.
+//
+// shiftID must already be tenant-scoped by the caller (it is loaded via
+// shiftForWrite). Returns false (not an error) when the shift does not exist.
+func (r *Repo) IsStationMemberForShift(ctx context.Context, tenantID, shiftID, userID uuid.UUID) (bool, error) {
+	var member bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			-- Active employee at the shift's station, linked to this user.
+			SELECT 1
+			FROM shifts s
+			JOIN employees e
+			  ON e.tenant_id  = s.tenant_id
+			 AND e.station_id = s.station_id
+			 AND e.user_id    = $3
+			 AND e.status     = 'active'
+			WHERE s.tenant_id = $1 AND s.id = $2
+		) OR EXISTS (
+			-- Already a member of the shift's rostered team via an active
+			-- employee record linked to this user.
+			SELECT 1
+			FROM shifts s
+			JOIN shift_team_members m
+			  ON m.tenant_id = s.tenant_id
+			 AND m.team_id   = s.team_id
+			JOIN employees e
+			  ON e.tenant_id  = m.tenant_id
+			 AND e.id         = m.employee_id
+			 AND e.user_id    = $3
+			 AND e.status     = 'active'
+			WHERE s.tenant_id = $1 AND s.id = $2 AND s.team_id IS NOT NULL
+		)
+	`, tenantID, shiftID, userID).Scan(&member)
+	return member, err
+}
+
 // NozzleAssignedOnShift reports whether the nozzle is assigned on the shift.
 // When attendantID is non-nil, it further requires the assignment to be to
 // that attendant — the self-scope check for attendant meter writes.
