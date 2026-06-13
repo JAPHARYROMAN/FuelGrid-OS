@@ -370,6 +370,7 @@ export const en = {
     badgeApproved: 'Approved',
     badgeCorrected: 'Corrected by supervisor',
     badgeRejected: 'Rejected',
+    badgeFlagged: 'Flagged for investigation',
     badgePending: 'Pending supervisor review',
     submitPrompt: "Submit this nozzle's closing reading to start the review.",
     youSubmitted: 'You submitted',
@@ -379,6 +380,12 @@ export const en = {
     reasonLabel: 'Reason:',
     notReviewedYet: 'Your supervisor has not reviewed this reading yet.',
     finishClosings: 'Finish closing readings',
+    // A rejected reading is sent back to the attendant to re-capture.
+    rejectedTitle: 'Your supervisor rejected this reading',
+    rejectedHelp: 'Take a fresh closing reading for this nozzle and submit it again.',
+    resubmitCta: 'Resubmit your closing reading',
+    // A flagged reading is under supervisor investigation — no attendant action.
+    flaggedHelp: 'Your supervisor is investigating this reading. No action is needed from you yet.',
   },
 
   complete: {

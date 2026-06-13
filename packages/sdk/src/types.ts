@@ -1005,18 +1005,20 @@ export interface AttendantAssignment {
  * The actor's own meter progress on one nozzle. Reading figures are exact
  * decimal STRINGS (numeric 14,3). verification_status appears once a closing
  * exists: "pending" until a reading verification lands, then that row's status.
- * Once verified, final_reading carries the final approved figure (the
- * supervisor's value when corrected) and verification_reason the supervisor's
- * reason where one was required (Phase 3 review-status screen).
+ * rejected/flagged (PRD §7.8/§9.5) are non-terminal holds — a rejected reading
+ * means the attendant must re-capture; a flagged reading is under supervisor
+ * investigation. Once verified, final_reading carries the final approved figure
+ * (the supervisor's value when corrected) and verification_reason the
+ * supervisor's reason where one was required (Phase 3 review-status screen).
  */
 export interface AttendantReading {
   nozzle_id: string;
   opening_reading?: string;
   closing_reading?: string;
-  verification_status?: 'pending' | 'approved' | 'corrected' | 'rejected';
+  verification_status?: 'pending' | 'approved' | 'corrected' | 'rejected' | 'flagged';
   /** The verification's final approved reading (exact decimal string), present once verified. */
   final_reading?: string;
-  /** The supervisor's reason, present when the verification required one. */
+  /** The supervisor's reason, present when the verification required one (corrected/rejected/flagged). */
   verification_reason?: string;
 }
 

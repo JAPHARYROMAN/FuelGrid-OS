@@ -132,6 +132,40 @@ describe('ReviewStatusPage', () => {
     expect(screen.getByText(/photo does not match the meter/i)).toBeInTheDocument();
   });
 
+  it('offers a resubmit CTA back to closing readings on a rejected reading', async () => {
+    renderPage();
+
+    await screen.findByText('Rejected');
+    expect(screen.getByText('Your supervisor rejected this reading')).toBeInTheDocument();
+    const cta = screen.getByRole('link', { name: /resubmit your closing reading/i });
+    expect(cta).toHaveAttribute('href', '/attendant/closing-readings');
+  });
+
+  it('renders a flagged badge, its reason, and an investigation note (no resubmit CTA)', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...snapshot,
+      readings: [
+        {
+          nozzle_id: 'noz-1',
+          opening_reading: '1000.000',
+          closing_reading: '1500.000',
+          verification_status: 'flagged',
+          verification_reason: 'Figure looks tampered — escalating',
+        },
+      ],
+      assignments: [assignment(1, 'Premium')],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    expect(await screen.findByText('Flagged for investigation')).toBeInTheDocument();
+    expect(screen.getByText(/figure looks tampered/i)).toBeInTheDocument();
+    expect(screen.getByText(/your supervisor is investigating this reading/i)).toBeInTheDocument();
+    // A flag is the supervisor's own hold — the attendant gets no re-capture path.
+    expect(
+      screen.queryByRole('link', { name: /resubmit your closing reading/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('marks an unsubmitted nozzle and offers the native path back to closing readings', async () => {
     attendantCurrentShift.mockResolvedValue({
       ...snapshot,

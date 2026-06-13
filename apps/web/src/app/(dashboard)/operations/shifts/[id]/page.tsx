@@ -12,8 +12,11 @@ import {
   Gauge,
   Lock,
   PlayCircle,
+  Plus,
   ShieldCheck,
+  Trash2,
   UserCheck,
+  UserPlus,
   Wallet,
   XCircle,
 } from 'lucide-react';
@@ -23,7 +26,9 @@ import {
   type AuditLogEntry,
   type CashSubmission,
   type CollectionReceipt,
+  type Employee,
   type MeterReading,
+  type NozzleAssignment,
   type ReadingVerification,
   type Shift,
   type ShiftAttendance,
@@ -422,6 +427,21 @@ export default function ShiftReviewPage() {
             nameByUserID={nameByUserID}
           />
 
+          {shift.data.status === 'open' ? (
+            <AdHocAssignmentPanel
+              shift={shift.data}
+              stationID={stationID}
+              nozzleMeta={nozzleMeta}
+              nozzleMetaPending={stationOverview.isPending}
+              employees={employees.data?.items ?? []}
+              nameByUserID={nameByUserID}
+              onChanged={() => {
+                qc.invalidateQueries({ queryKey: ['shift', shiftID] });
+                qc.invalidateQueries({ queryKey: ['shift-attendance', shiftID] });
+              }}
+            />
+          ) : null}
+
           <VerificationQueue
             shift={shift.data}
             stationID={stationID}
@@ -455,6 +475,7 @@ export default function ShiftReviewPage() {
                 readings.data?.items ?? [],
                 verifications.data?.items ?? [],
               )}
+              verifications={verifications.data?.items ?? []}
               cashSubmission={closeSummary.data?.cash_submission ?? null}
               receipt={receipt.data ?? null}
               openExceptions={
@@ -610,6 +631,256 @@ function AttendancePanel({
   );
 }
 
+// --- Ad-hoc attendant assignment (PRD gap #5) ---------------------------------
+
+/**
+ * Assign or unassign an attendant to a nozzle OUTSIDE the rotation — the
+ * supervisor's escape hatch for substitutes who aren't on the rostered team
+ * (PRD gap #5). The assign/unassign API + SDK already exist; this is the only
+ * surface that calls them for ad-hoc cover.
+ *
+ * A substitute may not be on the shift roster yet, so assigning chains
+ * assignAttendant (idempotent on the roster) → assignNozzle. Unassign only
+ * removes the nozzle link and is guarded by a confirm dialog. Gated on
+ * shift.assign; the backend stays authoritative.
+ */
+function AdHocAssignmentPanel({
+  shift,
+  stationID,
+  nozzleMeta,
+  nozzleMetaPending,
+  employees,
+  nameByUserID,
+  onChanged,
+}: {
+  shift: ShiftDetail;
+  stationID: string;
+  nozzleMeta: Map<string, NozzleMeta>;
+  nozzleMetaPending: boolean;
+  employees: Employee[];
+  nameByUserID: Map<string, string>;
+  onChanged: () => void;
+}) {
+  const [nozzleID, setNozzleID] = useState('');
+  const [attendantID, setAttendantID] = useState('');
+  const [unassigning, setUnassigning] = useState<NozzleAssignment | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const canAssign = usePermission('shift.assign', { stationID });
+
+  const rosterIDs = new Set(shift.attendants.map((a) => a.user_id));
+  const assignedNozzleIDs = new Set(shift.nozzle_assignments.map((a) => a.nozzle_id));
+  // Every nozzle the station knows about, minus those already assigned.
+  const availableNozzles = Array.from(nozzleMeta.entries())
+    .filter(([id]) => !assignedNozzleIDs.has(id))
+    .map(([id, meta]) => ({ id, label: nozzleLabel(id, meta) }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  // Any active station employee with a user account can stand in — including
+  // attendants who are NOT on the rostered team (the whole point of gap #5).
+  const candidates = employees
+    .filter((e) => e.user_id && e.status === 'active')
+    .map((e) => ({ userID: e.user_id as string, name: e.full_name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const assign = useMutation({
+    mutationFn: async () => {
+      // A substitute outside the rotation isn't on the roster yet — add them
+      // first (the roster add is the prerequisite the assign API expects).
+      if (!rosterIDs.has(attendantID)) {
+        await api.assignAttendant(shift.id, attendantID);
+      }
+      return api.assignNozzle(shift.id, { nozzle_id: nozzleID, attendant_id: attendantID });
+    },
+    onSuccess: () => {
+      setActionError(null);
+      setNozzleID('');
+      setAttendantID('');
+      onChanged();
+    },
+    onError: (e) =>
+      setActionError(
+        e instanceof SdkError && e.status === 403
+          ? apiErrorMessage(e, 'You cannot assign attendants on this shift.')
+          : apiErrorMessage(e, "Couldn't assign the attendant. Try again."),
+      ),
+  });
+
+  const unassign = useMutation({
+    mutationFn: (assignmentID: string) => api.unassignNozzle(shift.id, assignmentID),
+    onSuccess: () => {
+      setActionError(null);
+      setUnassigning(null);
+      onChanged();
+    },
+    onError: (e) => {
+      setUnassigning(null);
+      setActionError(
+        e instanceof SdkError && e.status === 403
+          ? apiErrorMessage(e, 'You cannot unassign attendants on this shift.')
+          : apiErrorMessage(e, "Couldn't unassign the attendant. Try again."),
+      );
+    },
+  });
+
+  const submittable = nozzleID !== '' && attendantID !== '';
+
+  return (
+    <Card data-testid="adhoc-assignment-panel">
+      <CardHeader className="gap-1">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <UserPlus className="size-4 text-accent" />
+          Attendant assignment
+        </CardTitle>
+        <CardDescription>
+          Assign an attendant to a nozzle for this shift — including substitutes who aren&apos;t on
+          the rostered team. Unassigning a nozzle removes that attendant from it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {actionError ? (
+          <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+            {actionError}
+          </p>
+        ) : null}
+
+        {shift.nozzle_assignments.length > 0 ? (
+          <ul className="flex flex-col gap-1.5">
+            {shift.nozzle_assignments.map((a) => (
+              <li
+                key={a.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm"
+                data-testid="adhoc-assignment-row"
+              >
+                <span>
+                  <span className="font-medium">
+                    {nozzleLabel(a.nozzle_id, nozzleMeta.get(a.nozzle_id))}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {' · '}
+                    {nameByUserID.get(a.attendant_id) ?? `Attendant ${a.attendant_id.slice(0, 8)}`}
+                  </span>
+                </span>
+                <PermissionGate permission="shift.assign" stationId={stationID}>
+                  <Button
+                    aria-label={`Unassign ${nozzleLabel(a.nozzle_id, nozzleMeta.get(a.nozzle_id))}`}
+                    size="sm"
+                    variant="ghost"
+                    disabled={unassign.isPending}
+                    onClick={() => {
+                      setActionError(null);
+                      setUnassigning(a);
+                    }}
+                  >
+                    <Trash2 className="size-4" />
+                    Unassign
+                  </Button>
+                </PermissionGate>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">No nozzles assigned on this shift yet.</p>
+        )}
+
+        {canAssign !== false ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-3">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Assign a nozzle
+            </span>
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+              <select
+                aria-label="Nozzle"
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={nozzleID}
+                onChange={(e) => setNozzleID(e.target.value)}
+                disabled={availableNozzles.length === 0 || nozzleMetaPending}
+              >
+                <option value="">
+                  {nozzleMetaPending
+                    ? 'Loading nozzles…'
+                    : availableNozzles.length === 0
+                      ? 'All nozzles assigned'
+                      : 'Nozzle'}
+                </option>
+                {availableNozzles.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                aria-label="Attendant"
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={attendantID}
+                onChange={(e) => setAttendantID(e.target.value)}
+                disabled={candidates.length === 0}
+              >
+                <option value="">{candidates.length === 0 ? 'No attendants' : 'Attendant'}</option>
+                {candidates.map((c) => (
+                  <option key={c.userID} value={c.userID}>
+                    {c.name}
+                    {rosterIDs.has(c.userID) ? '' : ' (substitute)'}
+                  </option>
+                ))}
+              </select>
+              <PermissionGate permission="shift.assign" stationId={stationID}>
+                <Button
+                  size="sm"
+                  disabled={!submittable || assign.isPending}
+                  onClick={() => assign.mutate()}
+                >
+                  <Plus className="size-4" />
+                  {assign.isPending ? 'Assigning…' : 'Assign'}
+                </Button>
+              </PermissionGate>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+
+      {/* Confirm-before-unassign */}
+      <Dialog
+        open={!!unassigning}
+        onOpenChange={(open) => (!open ? setUnassigning(null) : undefined)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Unassign this nozzle?</DialogTitle>
+            <DialogDescription>
+              {unassigning ? (
+                <>
+                  This removes{' '}
+                  <span className="font-medium">
+                    {nameByUserID.get(unassigning.attendant_id) ??
+                      `attendant ${unassigning.attendant_id.slice(0, 8)}`}
+                  </span>{' '}
+                  from{' '}
+                  <span className="font-medium">
+                    {nozzleLabel(unassigning.nozzle_id, nozzleMeta.get(unassigning.nozzle_id))}
+                  </span>
+                  . You can reassign the nozzle afterwards.
+                </>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnassigning(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              disabled={unassign.isPending}
+              onClick={() => (unassigning ? unassign.mutate(unassigning.id) : undefined)}
+            >
+              {unassign.isPending ? 'Unassigning…' : 'Unassign'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 // --- Readings verification queue ----------------------------------------------
 
 /** The shift's ACTIVE closing readings that have no verification row yet. */
@@ -646,6 +917,8 @@ function VerificationQueue({
 }) {
   const [approveAllOpen, setApproveAllOpen] = useState(false);
   const [correcting, setCorrecting] = useState<MeterReading | null>(null);
+  const [rejecting, setRejecting] = useState<MeterReading | null>(null);
+  const [flagging, setFlagging] = useState<MeterReading | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const canVerify = usePermission('reading.override', { stationID });
@@ -697,9 +970,9 @@ function VerificationQueue({
           ) : null}
         </div>
         <CardDescription>
-          Each submitted closing reading awaits your verification: approve it as submitted, or
-          correct it with a reason. Separation of duties — you cannot verify readings you recorded
-          yourself.
+          Each submitted closing reading awaits your verification: approve it as submitted, correct
+          it with a reason, reject it back to the attendant to re-capture, or flag it for
+          investigation. Separation of duties — you cannot verify readings you recorded yourself.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">
@@ -771,10 +1044,20 @@ function VerificationQueue({
                     </p>
                   ) : null}
                   {verification?.status === 'rejected' && verification.reason ? (
-                    <p className="text-sm text-danger">Rejected — {verification.reason}</p>
+                    <p className="text-sm text-danger">
+                      Rejected — {verification.reason}
+                      <span className="block text-muted-foreground">
+                        Sent back to the attendant to re-capture this closing reading.
+                      </span>
+                    </p>
+                  ) : null}
+                  {verification?.status === 'flagged' && verification.reason ? (
+                    <p className="text-sm text-warning">
+                      Flagged for investigation — {verification.reason}
+                    </p>
                   ) : null}
                   {!verification && canVerify ? (
-                    <div>
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
@@ -784,6 +1067,26 @@ function VerificationQueue({
                         }}
                       >
                         Correct…
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setActionError(null);
+                          setRejecting(reading);
+                        }}
+                      >
+                        Reject…
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setActionError(null);
+                          setFlagging(reading);
+                        }}
+                      >
+                        Flag for investigation…
                       </Button>
                     </div>
                   ) : null}
@@ -830,7 +1133,137 @@ function VerificationQueue({
           }}
         />
       ) : null}
+
+      {/* Per-reading reject — sends the closing back to the attendant to re-capture. */}
+      {rejecting ? (
+        <ReadingHoldDialog
+          kind="reject"
+          shiftID={shift.id}
+          reading={rejecting}
+          meta={nozzleMeta.get(rejecting.nozzle_id)}
+          onClose={() => setRejecting(null)}
+          onDone={() => {
+            setRejecting(null);
+            onChanged();
+          }}
+        />
+      ) : null}
+
+      {/* Per-reading flag — opens a supervisor investigation hold. */}
+      {flagging ? (
+        <ReadingHoldDialog
+          kind="flag"
+          shiftID={shift.id}
+          reading={flagging}
+          meta={nozzleMeta.get(flagging.nozzle_id)}
+          onClose={() => setFlagging(null)}
+          onDone={() => {
+            setFlagging(null);
+            onChanged();
+          }}
+        />
+      ) : null}
     </Card>
+  );
+}
+
+/**
+ * Reject or flag a single closing reading. Both are non-terminal HOLDS that
+ * block shift approval and require a reason (server 400 if absent). A REJECT
+ * sends the closing back to the attendant to re-capture; a FLAG opens a
+ * supervisor investigation that the attendant cannot resolve. Separation of
+ * duties is enforced server-side — a 403 surfaces verbatim.
+ */
+function ReadingHoldDialog({
+  kind,
+  shiftID,
+  reading,
+  meta,
+  onClose,
+  onDone,
+}: {
+  kind: 'reject' | 'flag';
+  shiftID: string;
+  reading: MeterReading;
+  meta?: NozzleMeta;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const reasonMissing = reason.trim() === '';
+
+  const hold = useMutation({
+    mutationFn: () =>
+      kind === 'reject'
+        ? api.rejectReading(shiftID, reading.id, { reason: reason.trim() })
+        : api.flagReading(shiftID, reading.id, { reason: reason.trim() }),
+    onSuccess: onDone,
+  });
+
+  const title = kind === 'reject' ? 'Reject closing reading' : 'Flag reading for investigation';
+  const description =
+    kind === 'reject'
+      ? "The attendant's submitted figure is sent back to them to re-capture — the original stays stored as history, and the shift cannot be approved until they resubmit and you re-verify."
+      : 'This opens an investigation hold on the reading. The shift cannot be approved while a flag is open; clear it by correcting the reading and re-verifying.';
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>
+            {nozzleLabel(reading.nozzle_id, meta)} — the attendant submitted{' '}
+            <span className="font-mono tabular-nums">{reading.reading}</span>. {description}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <label className="flex flex-col gap-1 text-sm">
+            <span className="text-muted-foreground">Reason (required)</span>
+            <Input
+              aria-label={kind === 'reject' ? 'Rejection reason' : 'Flag reason'}
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={
+                kind === 'reject'
+                  ? 'e.g. photo does not match the meter — please re-capture'
+                  : 'e.g. figure looks tampered — escalating to the manager'
+              }
+            />
+          </label>
+          {hold.isError ? (
+            <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+              {hold.error instanceof SdkError && hold.error.status === 403
+                ? apiErrorMessage(hold.error, 'You cannot verify a reading you recorded yourself.')
+                : apiErrorMessage(
+                    hold.error,
+                    kind === 'reject'
+                      ? "Couldn't reject the reading."
+                      : "Couldn't flag the reading.",
+                  )}
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant={kind === 'reject' ? 'danger' : 'primary'}
+            disabled={reasonMissing || hold.isPending}
+            onClick={() => hold.mutate()}
+          >
+            {hold.isPending
+              ? kind === 'reject'
+                ? 'Rejecting…'
+                : 'Flagging…'
+              : kind === 'reject'
+                ? 'Reject reading'
+                : 'Flag reading'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -843,6 +1276,8 @@ function VerificationBadge({ verification }: { verification?: ReadingVerificatio
       return <Badge tone="warning">Corrected</Badge>;
     case 'rejected':
       return <Badge tone="danger">Rejected</Badge>;
+    case 'flagged':
+      return <Badge tone="warning">Flagged for investigation</Badge>;
     default:
       return <Badge tone="neutral">{verification.status}</Badge>;
   }
@@ -989,7 +1424,10 @@ function CollectionReceiptPanel({
   const [received, setReceived] = useState('');
   const [reason, setReason] = useState('');
   const [comment, setComment] = useState('');
-  const [rejecting, setRejecting] = useState(false);
+  // The supervisor's verdict on the handover. received (default) clears the
+  // gate; rejected sends it back to the attendant; flagged opens an
+  // investigation. rejected and flagged are non-terminal HOLDS.
+  const [mode, setMode] = useState<'received' | 'rejected' | 'flagged'>('received');
 
   const canConfirm = usePermission('cash.confirm', { stationID });
 
@@ -998,15 +1436,15 @@ function CollectionReceiptPanel({
   const validMoney = trimmed !== '' && isMeterDecimal(trimmed) && meterFractionDigits(trimmed) <= 2;
   const differs = validMoney && compareMeterDecimals(trimmed, expected) !== 0;
   // The server demands a reason when received ≠ expected, and always on a
-  // rejection — mirror it client-side so the 400 never has to fire.
-  const reasonRequired = differs || rejecting;
+  // rejection or flag — mirror it client-side so the 400 never has to fire.
+  const reasonRequired = differs || mode !== 'received';
   const submittable = validMoney && (!reasonRequired || reason.trim() !== '');
 
   const confirm = useMutation({
     mutationFn: () =>
       api.confirmCashSubmission(shiftID, {
         received_total: trimmed,
-        ...(rejecting ? { status: 'rejected' as const } : {}),
+        ...(mode !== 'received' ? { status: mode } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
         ...(comment.trim() ? { supervisor_comment: comment.trim() } : {}),
       }),
@@ -1014,7 +1452,7 @@ function CollectionReceiptPanel({
       setReceived('');
       setReason('');
       setComment('');
-      setRejecting(false);
+      setMode('received');
       onChanged();
     },
   });
@@ -1127,7 +1565,11 @@ function CollectionReceiptPanel({
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     placeholder={
-                      rejecting ? 'Why the handover is rejected' : 'Why the received amount differs'
+                      mode === 'rejected'
+                        ? 'Why the handover is rejected'
+                        : mode === 'flagged'
+                          ? 'Why the handover is flagged for investigation'
+                          : 'Why the received amount differs'
                     }
                   />
                 </label>
@@ -1140,33 +1582,64 @@ function CollectionReceiptPanel({
                     onChange={(e) => setComment(e.target.value)}
                   />
                 </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={rejecting}
-                    onChange={(e) => setRejecting(e.target.checked)}
-                    aria-label="Reject this handover"
-                  />
-                  Reject this handover (reason required; the attendant must resubmit)
-                </label>
+                <fieldset className="flex flex-col gap-1.5 text-sm">
+                  <legend className="text-muted-foreground">Verdict</legend>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="receipt-verdict"
+                      checked={mode === 'received'}
+                      onChange={() => setMode('received')}
+                      aria-label="Confirm the handover"
+                    />
+                    Confirm the cash received
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="receipt-verdict"
+                      checked={mode === 'rejected'}
+                      onChange={() => setMode('rejected')}
+                      aria-label="Reject this handover"
+                    />
+                    Reject — send back to the attendant to resubmit (reason required)
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="receipt-verdict"
+                      checked={mode === 'flagged'}
+                      onChange={() => setMode('flagged')}
+                      aria-label="Flag this handover for investigation"
+                    />
+                    Flag for investigation — hold the cash review (reason required)
+                  </label>
+                </fieldset>
                 {confirm.isError ? (
                   <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
-                    {apiErrorMessage(confirm.error, "Couldn't record the receipt.")}
+                    {confirm.error instanceof SdkError && confirm.error.status === 403
+                      ? apiErrorMessage(
+                          confirm.error,
+                          'You cannot confirm a submission you made yourself.',
+                        )
+                      : apiErrorMessage(confirm.error, "Couldn't record the receipt.")}
                   </p>
                 ) : null}
                 <PermissionGate permission="cash.confirm" stationId={stationID}>
                   <Button
                     className="self-start"
                     size="sm"
-                    variant={rejecting ? 'danger' : 'primary'}
+                    variant={mode === 'rejected' ? 'danger' : 'primary'}
                     disabled={!submittable || confirm.isPending}
                     onClick={() => confirm.mutate()}
                   >
                     {confirm.isPending
                       ? 'Recording…'
-                      : rejecting
+                      : mode === 'rejected'
                         ? 'Reject handover'
-                        : 'Confirm receipt'}
+                        : mode === 'flagged'
+                          ? 'Flag handover'
+                          : 'Confirm receipt'}
                   </Button>
                 </PermissionGate>
               </div>
@@ -1216,6 +1689,8 @@ function ReceiptStatus({
       <Badge tone="success">Received — balanced</Badge>
     ) : receipt.status === 'approved_with_difference' ? (
       <Badge tone="warning">Approved with difference</Badge>
+    ) : receipt.status === 'flagged' ? (
+      <Badge tone="warning">Flagged for investigation</Badge>
     ) : (
       <Badge tone="danger">Rejected</Badge>
     );
@@ -1280,6 +1755,7 @@ function ApprovalReadiness({
   shift,
   stationID,
   pendingReadings,
+  verifications,
   cashSubmission,
   receipt,
   openExceptions,
@@ -1289,6 +1765,7 @@ function ApprovalReadiness({
   shift: ShiftDetail;
   stationID: string;
   pendingReadings: MeterReading[];
+  verifications: ReadingVerification[];
   cashSubmission: CashSubmission | null;
   receipt: CollectionReceipt | null;
   openExceptions: number;
@@ -1296,6 +1773,11 @@ function ApprovalReadiness({
   onChanged: () => void;
 }) {
   const [gateError, setGateError] = useState<string | null>(null);
+
+  // Rejected/flagged are non-terminal HOLDS the server gates approval on,
+  // distinct from a reading that simply has no verification row yet.
+  const rejectedCount = verifications.filter((v) => v.status === 'rejected').length;
+  const flaggedCount = verifications.filter((v) => v.status === 'flagged').length;
 
   const approve = useMutation({
     mutationFn: () => api.approveShift(shift.id),
@@ -1307,7 +1789,19 @@ function ApprovalReadiness({
       // The server's 409 gates carry machine-readable codes — translate them
       // into the same language as the checklist instead of a raw error.
       const code = apiErrorCode(e);
-      if (code === 'readings_unverified') {
+      if (code === 'readings_rejected_pending') {
+        const raw = apiErrorBody(e)?.rejected_count;
+        const n = typeof raw === 'number' ? raw : null;
+        setGateError(
+          `${n ?? 'Some'} reading${n === 1 ? '' : 's'} rejected — the attendant must resubmit the closing reading${n === 1 ? '' : 's'}, then re-verify before approving.`,
+        );
+      } else if (code === 'readings_flagged_pending') {
+        const raw = apiErrorBody(e)?.flagged_count;
+        const n = typeof raw === 'number' ? raw : null;
+        setGateError(
+          `${n ?? 'Some'} reading${n === 1 ? ' is' : 's are'} flagged for investigation — resolve the flag${n === 1 ? '' : 's'} (correct and re-verify) before approving.`,
+        );
+      } else if (code === 'readings_unverified') {
         const raw = apiErrorBody(e)?.unverified_count;
         const n = typeof raw === 'number' ? raw : null;
         setGateError(
@@ -1337,25 +1831,38 @@ function ApprovalReadiness({
     );
   }
 
+  const readingsBlocked = pendingReadings.length + rejectedCount + flaggedCount;
   const items: ChecklistItem[] = [
     {
       key: 'readings',
-      ok: pendingReadings.length === 0,
+      ok: readingsBlocked === 0,
+      // Holds are reported ahead of unverified readings so the supervisor sees
+      // the actionable blocker first, matching the server's gate precedence.
       label:
-        pendingReadings.length === 0
+        readingsBlocked === 0
           ? 'All closing readings verified'
-          : `${pendingReadings.length} reading${pendingReadings.length === 1 ? '' : 's'} awaiting verification`,
+          : rejectedCount > 0
+            ? `${rejectedCount} reading${rejectedCount === 1 ? '' : 's'} rejected — attendant must resubmit`
+            : flaggedCount > 0
+              ? `${flaggedCount} reading${flaggedCount === 1 ? '' : 's'} flagged for investigation`
+              : `${pendingReadings.length} reading${pendingReadings.length === 1 ? '' : 's'} awaiting verification`,
     },
     {
       key: 'collection',
-      ok: !!cashSubmission && !!receipt && receipt.status !== 'rejected',
+      // Only a TERMINAL-GOOD receipt clears the gate; rejected/flagged are holds.
+      ok:
+        !!cashSubmission &&
+        !!receipt &&
+        (receipt.status === 'received' || receipt.status === 'approved_with_difference'),
       label: !cashSubmission
         ? 'Cash not submitted yet'
         : !receipt
           ? 'Collection not confirmed'
           : receipt.status === 'rejected'
             ? 'Collection rejected — awaiting resubmission and a fresh receipt'
-            : 'Collection receipt recorded',
+            : receipt.status === 'flagged'
+              ? 'Collection flagged for investigation — resolve before approving'
+              : 'Collection receipt recorded',
     },
     {
       key: 'exceptions',

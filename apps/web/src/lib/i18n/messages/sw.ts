@@ -381,6 +381,7 @@ export const sw: Messages = {
     badgeApproved: 'Umeidhinishwa',
     badgeCorrected: 'Umesahihishwa na msimamizi',
     badgeRejected: 'Umekataliwa',
+    badgeFlagged: 'Umewekewa alama ya uchunguzi',
     badgePending: 'Unasubiri uhakiki wa msimamizi',
     submitPrompt: 'Wasilisha usomaji wa kufunga wa nozeli hii ili uhakiki uanze.',
     youSubmitted: 'Uliwasilisha',
@@ -390,6 +391,12 @@ export const sw: Messages = {
     reasonLabel: 'Sababu:',
     notReviewedYet: 'Msimamizi wako bado hajauhakiki usomaji huu.',
     finishClosings: 'Maliza usomaji wa kufunga',
+    // Usomaji uliokataliwa hurudishwa kwa mhudumu ili asome upya.
+    rejectedTitle: 'Msimamizi wako amekataa usomaji huu',
+    rejectedHelp: 'Soma upya kipimo cha kufunga cha nozeli hii kisha uwasilishe tena.',
+    resubmitCta: 'Wasilisha tena usomaji wako wa kufunga',
+    // Usomaji uliowekewa alama uko kwenye uchunguzi wa msimamizi — hakuna hatua.
+    flaggedHelp: 'Msimamizi wako anachunguza usomaji huu. Hakuna hatua inayohitajika kwako bado.',
   },
 
   complete: {
