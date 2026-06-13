@@ -170,6 +170,69 @@ func TestOpeningStock_NonAdminNoSelfApprove(t *testing.T) {
 	}
 }
 
+// TestOpeningStock_CleanupTearsDownTenant guards the test harness itself: an
+// approved opening-stock request links a stock_movements row and references the
+// tank, the requester and the tenant via ON DELETE RESTRICT FKs (migration
+// 0093). cleanupTenant therefore MUST purge opening_stock_requests before those
+// parents, or the parent DELETEs silently fail (cleanupTenant swallows their
+// errors) and every opening-stock test leaks its whole tenant tree.
+//
+// This drives a full draft -> approve lifecycle, runs cleanupTenant, and proves
+// the tenant (and its tank, movement and request) is actually gone. It fails if
+// opening_stock_requests is ever dropped from the cleanup ordering again.
+func TestOpeningStock_CleanupTearsDownTenant(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	// The deferred harness cleanup is the same teardown under test; calling it
+	// again after we have already purged the tenant is a harmless no-op.
+	defer cleanup()
+	ctx := context.Background()
+	_, slug, admin := h.adminContext(t, ctx)
+	approver := h.secondApprover(t, ctx, slug)
+
+	code, body := h.invPostJSON(t, "/api/v1/opening-stock-requests", admin, map[string]any{
+		"tank_id": h.ids.tankAGO.String(), "litres": "7000",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("draft: %d: %v", code, body)
+	}
+	reqID := body["id"].(string)
+	if code, _ := h.invPostJSON(t, "/api/v1/opening-stock-requests/"+reqID+"/approve", approver, map[string]any{}); code != http.StatusOK {
+		t.Fatalf("approve: status %d", code)
+	}
+
+	// Sanity: the approved request, its genesis movement and the tank exist.
+	var osr, mvts int
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM opening_stock_requests WHERE tenant_id = $1`, h.ids.tenantID).Scan(&osr); err != nil {
+		t.Fatalf("count osr: %v", err)
+	}
+	if osr != 1 {
+		t.Fatalf("opening_stock_requests = %d, want 1 before cleanup", osr)
+	}
+
+	cleanupTenant(ctx, h.pool, h.ids.tenantID)
+
+	// After teardown the tenant tree must be fully gone. A leaked
+	// opening_stock_requests row would have blocked the stock_movements / tank /
+	// tenant deletes via ON DELETE RESTRICT.
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM opening_stock_requests WHERE tenant_id = $1`, h.ids.tenantID).Scan(&osr); err != nil {
+		t.Fatalf("count osr after cleanup: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM stock_movements WHERE tenant_id = $1`, h.ids.tenantID).Scan(&mvts); err != nil {
+		t.Fatalf("count movements after cleanup: %v", err)
+	}
+	var tanks, tenants int
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM tanks WHERE tenant_id = $1`, h.ids.tenantID).Scan(&tanks); err != nil {
+		t.Fatalf("count tanks after cleanup: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM tenants WHERE id = $1`, h.ids.tenantID).Scan(&tenants); err != nil {
+		t.Fatalf("count tenants after cleanup: %v", err)
+	}
+	if osr != 0 || mvts != 0 || tanks != 0 || tenants != 0 {
+		t.Fatalf("cleanup left a leaked tenant tree: opening_stock_requests=%d stock_movements=%d tanks=%d tenants=%d (want 0,0,0,0)",
+			osr, mvts, tanks, tenants)
+	}
+}
+
 func (h *harness) stationManager(t *testing.T, ctx context.Context, slug, email string) string {
 	t.Helper()
 	var id uuid.UUID
