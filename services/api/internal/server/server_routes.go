@@ -1003,6 +1003,15 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 		Post("/shifts/{id}/readings/verify", s.handleVerifyShiftReadings)
 	r.With(s.requirePermissionHeld("reading.override")).
 		Post("/shifts/{id}/readings/{readingID}/verify-correct", s.handleVerifyCorrectReading)
+	// PRD §7.8/§9.5 closeout: a supervisor may also REJECT a closing reading
+	// (sends it back to the attendant to re-capture — unlocks the Phase 3
+	// submission lock for that nozzle) or FLAG it for investigation. Both are
+	// non-terminal holds that block shift approval; both require a reason and
+	// enforce SoD (verifier != recorder) in-handler, like verify-correct.
+	r.With(s.requirePermissionHeld("reading.override")).
+		Post("/shifts/{id}/readings/{readingID}/reject", s.handleRejectReading)
+	r.With(s.requirePermissionHeld("reading.override")).
+		Post("/shifts/{id}/readings/{readingID}/flag", s.handleFlagReading)
 
 	// Collection receipts + the handover chain (Mobile Attendant
 	// App, Phase 0). Confirm is station-scoped via cash.confirm,

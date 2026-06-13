@@ -103,9 +103,12 @@ func (r *Repo) GetCollectionReceiptForShift(ctx context.Context, tenantID, shift
 }
 
 // CashSubmissionAwaitingReceipt reports whether the shift has a cash
-// submission with no non-rejected collection receipt — the shift-approval
-// gate. It runs through any Querier so the approval handler can re-check
-// inside the tx that holds the shift's FOR UPDATE lock.
+// submission with no TERMINAL-GOOD collection receipt — the shift-approval
+// gate. A receipt counts only when its status is 'received' or
+// 'approved_with_difference'; a 'rejected' (refused) or 'flagged' (under
+// investigation, PRD §9.6) receipt leaves the submission awaiting. It runs
+// through any Querier so the approval handler can re-check inside the tx that
+// holds the shift's FOR UPDATE lock.
 func (r *Repo) CashSubmissionAwaitingReceipt(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (bool, error) {
 	var awaiting bool
 	err := q.QueryRow(ctx, `
@@ -116,7 +119,7 @@ func (r *Repo) CashSubmissionAwaitingReceipt(ctx context.Context, q database.Que
 			      SELECT 1 FROM collection_receipts cr
 			      WHERE cr.tenant_id = cs.tenant_id
 			        AND cr.cash_submission_id = cs.id
-			        AND cr.status <> 'rejected'
+			        AND cr.status IN ('received', 'approved_with_difference')
 			  )
 		)
 	`, tenantID, shiftID).Scan(&awaiting)

@@ -854,7 +854,13 @@ export interface ReadingVerification {
   attendant_submitted_reading: string;
   supervisor_verified_reading?: string;
   final_approved_reading: string;
-  status: 'approved' | 'corrected' | 'rejected';
+  /**
+   * approved/corrected are terminal-good; rejected/flagged are non-terminal
+   * HOLDS that block shift approval (PRD §7.8/§9.5). A rejected reading is
+   * sent back to the attendant to re-capture; a flagged reading is under
+   * supervisor investigation.
+   */
+  status: 'approved' | 'corrected' | 'rejected' | 'flagged';
   reason?: string;
   verified_by: string;
   verified_at: string;
@@ -889,7 +895,11 @@ export interface CollectionReceipt {
   attendant_submitted_total: string;
   supervisor_received_total: string;
   difference: string;
-  status: 'received' | 'approved_with_difference' | 'rejected';
+  /**
+   * received/approved_with_difference are terminal-good; rejected and flagged
+   * (PRD §9.6) are HOLDS that block shift approval.
+   */
+  status: 'received' | 'approved_with_difference' | 'rejected' | 'flagged';
   reason?: string;
   supervisor_comment?: string;
   received_by: string;
@@ -899,9 +909,14 @@ export interface CollectionReceipt {
 export interface ConfirmCashSubmissionRequest {
   /** Exact decimal string of the cash physically received. */
   received_total: string;
-  /** "received" (default) or "rejected"; a non-zero difference upgrades to approved_with_difference server-side. */
-  status?: 'received' | 'rejected';
-  /** Required when the received total differs from expected or the handover is rejected. */
+  /**
+   * "received" (default), "rejected", or "flagged" (under investigation, PRD
+   * §9.6); a non-zero difference upgrades an accepted handover to
+   * approved_with_difference server-side. rejected and flagged both block
+   * shift approval and require a reason.
+   */
+  status?: 'received' | 'rejected' | 'flagged';
+  /** Required when the received total differs from expected or the handover is rejected or flagged. */
   reason?: string;
   supervisor_comment?: string;
 }

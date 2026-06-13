@@ -181,6 +181,67 @@ func TestNotificationSubscriber_PerAttendantMappings(t *testing.T) {
 		}
 	})
 
+	t.Run("reading approved targets the recorder, deduped on redelivery", func(t *testing.T) {
+		e := events.Event{
+			ID: uuid.New(), TenantID: &tenant, Type: "ReadingVerificationApproved",
+			AggregateType: "reading_verification", AggregateID: uuid.NewString(),
+			Payload: json.RawMessage(`{"recorded_by":"` + att.String() + `",
+				"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1500.000"}}`),
+		}
+		env.publishTwice(t, e)
+		rows := env.rowsForEvent(t, e.ID)
+		if len(rows) != 1 || rows[0].UserID == nil || *rows[0].UserID != att {
+			t.Fatalf("rows = %+v, want one row targeted at recorder (deduped)", rows)
+		}
+		if rows[0].Type != "reading.approved" || rows[0].Severity != "success" {
+			t.Fatalf("row = %+v, want reading.approved/success", rows[0])
+		}
+	})
+
+	t.Run("reading rejected targets the recorder with reason", func(t *testing.T) {
+		e := events.Event{
+			ID: uuid.New(), TenantID: &tenant, Type: "ReadingVerificationRejected",
+			AggregateType: "reading_verification", AggregateID: uuid.NewString(),
+			Payload: json.RawMessage(`{"recorded_by":"` + att.String() + `",
+				"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1500.000","reason":"meter photo unreadable"}}`),
+		}
+		env.publishTwice(t, e)
+		rows := env.rowsForEvent(t, e.ID)
+		if len(rows) != 1 || rows[0].UserID == nil || *rows[0].UserID != att {
+			t.Fatalf("rows = %+v, want one row targeted at recorder", rows)
+		}
+		if rows[0].Type != "reading.rejected" || rows[0].Severity != "warning" {
+			t.Fatalf("row = %+v, want reading.rejected/warning", rows[0])
+		}
+		for _, want := range []string{"re-capture", "meter photo unreadable"} {
+			if !strings.Contains(rows[0].Body, want) {
+				t.Errorf("body %q missing %q", rows[0].Body, want)
+			}
+		}
+	})
+
+	t.Run("reading flagged targets the recorder with reason", func(t *testing.T) {
+		e := events.Event{
+			ID: uuid.New(), TenantID: &tenant, Type: "ReadingVerificationFlagged",
+			AggregateType: "reading_verification", AggregateID: uuid.NewString(),
+			Payload: json.RawMessage(`{"recorded_by":"` + att.String() + `",
+				"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1500.000","reason":"possible tampering"}}`),
+		}
+		env.publishTwice(t, e)
+		rows := env.rowsForEvent(t, e.ID)
+		if len(rows) != 1 || rows[0].UserID == nil || *rows[0].UserID != att {
+			t.Fatalf("rows = %+v, want one row targeted at recorder", rows)
+		}
+		if rows[0].Type != "reading.flagged" || rows[0].Severity != "warning" {
+			t.Fatalf("row = %+v, want reading.flagged/warning", rows[0])
+		}
+		for _, want := range []string{"investigation", "possible tampering"} {
+			if !strings.Contains(rows[0].Body, want) {
+				t.Errorf("body %q missing %q", rows[0].Body, want)
+			}
+		}
+	})
+
 	t.Run("reading corrected targets the recorder", func(t *testing.T) {
 		e := events.Event{
 			ID: uuid.New(), TenantID: &tenant, Type: "ReadingVerificationCorrected",
