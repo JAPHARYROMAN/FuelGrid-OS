@@ -81,3 +81,29 @@ func (r *Repo) ExportCount(ctx context.Context, tenantID uuid.UUID) (int, error)
 	`, tenantID).Scan(&n)
 	return n, err
 }
+
+// ReceivablesExposure is the tenant's outstanding credit-customer exposure: the
+// sum of POSITIVE customer balances (customers in arrears), mirroring the
+// overview's "receivables" headline (customers in credit are excluded). The sum
+// is computed in SQL as an exact numeric::text — no float accumulation on money.
+// HasData is false when no customer carries a positive balance, so the handler
+// can emit an honest "no outstanding balances" reason rather than "0".
+func (r *Repo) ReceivablesExposure(ctx context.Context, tenantID uuid.UUID) (value string, hasData bool, err error) {
+	var positives int
+	err = r.pool.QueryRow(ctx, `
+		WITH balances AS (
+			SELECT COALESCE(SUM(e.amount), 0) AS bal
+			FROM customers c
+			LEFT JOIN ar_entries e ON e.customer_id = c.id AND e.tenant_id = c.tenant_id
+			WHERE c.tenant_id = $1 AND c.status <> 'deleted'
+			GROUP BY c.id
+		)
+		SELECT COALESCE(SUM(bal) FILTER (WHERE bal > 0), 0)::text,
+		       count(*)          FILTER (WHERE bal > 0)
+		FROM balances
+	`, tenantID).Scan(&value, &positives)
+	if err != nil {
+		return "", false, err
+	}
+	return value, positives > 0, nil
+}

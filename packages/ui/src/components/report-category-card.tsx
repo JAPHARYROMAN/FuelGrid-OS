@@ -98,13 +98,22 @@ export function ReportCategoryCard({
   );
 
   return (
+    // A placeholder card reads as unavailable via its "Coming soon" badge and a
+    // dimmed icon — NOT by dropping the opacity of the whole card, which would
+    // push the muted reason text below WCAG AA contrast. The explanatory reason
+    // text stays at full contrast so it remains readable.
     <Card
-      className={cn('group relative flex flex-col', isPlaceholder && 'opacity-75', className)}
+      className={cn('group relative flex flex-col', isPlaceholder && 'bg-muted/30', className)}
       aria-disabled={isPlaceholder || undefined}
     >
       <CardHeader className="flex-row items-start gap-3 space-y-0">
         {icon ? (
-          <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted/60 text-accent [&_svg]:size-4">
+          <span
+            className={cn(
+              'mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted/60 text-accent [&_svg]:size-4',
+              isPlaceholder && 'opacity-60',
+            )}
+          >
             {icon}
           </span>
         ) : null}

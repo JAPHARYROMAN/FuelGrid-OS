@@ -134,14 +134,19 @@ CREATE POLICY tenant_isolation ON reports
 --
 -- availability is GROUNDED IN THE ACTUAL ROUTES registered on main
 -- (server_routes_reports*.go), not in any prose claim:
---   live        — a structured report endpoint exists and returns data:
+--   live        — a structured report endpoint exists and returns data AND is
+--                 reachable by holders of the category's required_permission:
 --                 Inventory (/reports/inventory/reconciliation), Shift &
---                 Delivery via station-close, Procurement/Finance via payables
---                 aging + financials, Customer Credit via ar-aging/credit-
---                 cashflow, Risk & Loss via fuel-loss + risk alerts, Audit via
---                 audit_logs, Export History via export_jobs + /reports/exports.
---   partial     — data present, tenant-wide metric/endpoint not yet wired:
---                 Executive rollup, Sales (revenue_days is station-scoped today),
+--                 Delivery via station-close, Finance via financials/
+--                 profitability, Customer Credit via ar-aging/credit-cashflow,
+--                 Risk & Loss via fuel-loss + risk alerts, Audit via audit_logs,
+--                 Export History via export_jobs + /reports/exports.
+--   partial     — data present but no tenant-wide report page reachable by the
+--                 category's own permission holders yet: Executive rollup, Sales
+--                 (revenue_days is station-scoped today), Procurement (payables
+--                 aging exists, but no payable.read-gated report page —
+--                 /reports/credit-cashflow needs revenue.read, which a
+--                 procurement_officer lacks; never advertise a 403-bound link),
 --                 Pump throughput, Fleet consumption (per-customer only).
 --   placeholder — no backing domain: Tank live-sensor (no ATG feed), Custom
 --                 builder (not built), Scheduled (per-tenant scheduling absent).
@@ -156,7 +161,7 @@ VALUES
     (NULL, 'pump', 'Pump', 'Pump and nozzle throughput, utilisation and meter movement.', 50, 'gauge', 'revenue.read', 'partial', '/reports/pump'),
     (NULL, 'shift', 'Shift', 'Shift close summaries: sales, cash, variance and approval status per shift.', 60, 'clock', 'station.read', 'live', '/reports/station-close'),
     (NULL, 'delivery', 'Delivery', 'Fuel deliveries: ordered vs received, dip-before/after variance and supplier shortfalls.', 70, 'truck', 'station.read', 'live', '/reports/station-close'),
-    (NULL, 'procurement', 'Procurement', 'Suppliers, purchase orders, goods receipts, invoices and payables aging.', 80, 'shopping-cart', 'payable.read', 'live', '/reports/credit-cashflow'),
+    (NULL, 'procurement', 'Procurement', 'Suppliers, purchase orders, goods receipts, invoices and payables aging.', 80, 'shopping-cart', 'payable.read', 'partial', '/reports/procurement'),
     (NULL, 'finance', 'Finance', 'Profit & loss, trial balance, expenses and the financial statement.', 90, 'banknote', 'finance.read', 'live', '/reports/profitability'),
     (NULL, 'customer-credit', 'Customer Credit', 'Receivables aging, credit exposure, statements and overdue balances.', 100, 'credit-card', 'customer.read', 'live', '/reports/credit-cashflow'),
     (NULL, 'fleet', 'Fleet', 'Credit-customer vehicle fuelling: consumption, odometer and per-vehicle limits.', 110, 'car', 'fleet_report.read', 'partial', '/reports/fleet'),

@@ -151,17 +151,20 @@ func (s *Server) handleReportCatalog(w http.ResponseWriter, r *http.Request) {
 			Availability: c.Availability, TargetRoute: c.TargetRoute,
 			Metric: metric, AlertCount: alerts, Reports: reports,
 		})
-		// Hub data-quality: surface an honest warning per non-live category the
-		// actor can see, plus a real open-alerts warning where alerts exist.
-		out.DataQuality = append(out.DataQuality, categoryDataQuality(c, alerts)...)
+		// Hub data-quality: surface an honest note per non-live category the actor
+		// can see, plus a real open-alerts warning where alerts exist.
+		out.DataQuality = append(out.DataQuality, categoryDataQuality(c, metric, figs)...)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// canViewPermission reports whether the actor may see a surface gated by perm.
-// A system admin sees everything; otherwise the actor must hold the permission
-// (scope is not demanded here — the catalog is a tenant-wide listing, and the
-// per-report endpoints re-check station scope on access).
+// canViewPermission reports whether the actor may see a CARD/REPORT gated by
+// perm. A system admin sees everything; otherwise the actor must hold the
+// permission. This is the coarse listing gate: scope is not demanded here, since
+// the per-report endpoints re-check station scope on access (an out-of-scope
+// station 403s in-handler). It governs only *whether a card is listed*, never
+// whether a tenant-wide metric value is attached to it — that is the stricter
+// canSeeTenantWideMetric gate below.
 func canViewPermission(ps policy.PermissionSet, perm string) bool {
 	if ps.IsSystemAdmin {
 		return true
@@ -169,30 +172,78 @@ func canViewPermission(ps policy.PermissionSet, perm string) bool {
 	return ps.HasPermission(perm)
 }
 
+// canSeeTenantWideMetric reports whether the actor may see a TENANT-WIDE
+// aggregate figure gated by perm — a strictly stronger test than
+// canViewPermission. A metric on a hub card sums data across every station; a
+// station-scoped actor who only holds perm for their own stations must not see
+// the tenant-wide total (that would leak other stations' revenue / deliveries /
+// alerts they cannot otherwise read). So a tenant-wide value is shown only when:
+//
+//   - the actor is a system admin; or
+//   - perm is a tenant-wide permission (scope is irrelevant — every holder sees
+//     the whole tenant by definition); or
+//   - perm is station-scoped but the actor has tenant-wide reach (TenantWide).
+//
+// A station-scoped actor holding a station-scoped perm gets a null metric with
+// an honest reason instead of a cross-station total.
+func canSeeTenantWideMetric(ps policy.PermissionSet, perm string) bool {
+	if ps.IsSystemAdmin {
+		return true
+	}
+	if !ps.HasPermission(perm) {
+		return false
+	}
+	if !ps.StationScoped[perm] {
+		// Tenant-wide permission: every holder has tenant-wide reach.
+		return true
+	}
+	// Station-scoped permission: only a tenant-wide actor sees the whole tenant.
+	return ps.TenantWide
+}
+
 // catalogFigures holds the tenant-wide aggregates the hub cards draw on, fetched
-// once per request. Sensitive figures are only populated when the actor is
-// permitted to see them; marginAllowed records that decision so each card can
-// decide whether to attach a margin/exposure figure.
+// once per request, plus the per-metric scope decisions made once when the
+// figures were computed. A tenant-wide aggregate is only ATTACHED to a card when
+// the actor has tenant-wide authority over the gating permission (see
+// canSeeTenantWideMetric); the *Visible flags record that decision so each card
+// can suppress a cross-station total for a station-scoped actor with a null +
+// honest reason rather than leak other stations' figures.
 type catalogFigures struct {
-	openAlerts    int
-	arExposure    string // receivables outstanding (decimal string) — sensitive
-	arHasData     bool
-	salesGross    string // revenue_days gross over window (decimal string)
-	salesMargin   string // revenue_days margin (decimal string) — sensitive
-	salesHasData  bool
-	payablesTotal string // payables outstanding (decimal string) — sensitive
-	payablesOpen  int
-	deliveryCount int
-	auditEvents   int
-	exportCount   int
-	marginAllowed bool
+	openAlerts     int
+	inventoryAlert int    // open fuel-variance (inventory) alerts only
+	arExposure     string // receivables outstanding (decimal string) — sensitive
+	arHasData      bool
+	salesGross     string // revenue_days gross over window (decimal string)
+	salesMargin    string // revenue_days margin (decimal string) — sensitive
+	salesHasData   bool
+	payablesTotal  string // payables outstanding (decimal string) — sensitive
+	payablesOpen   int
+	deliveryCount  int
+	auditEvents    int
+	exportCount    int
+
+	marginAllowed bool // holds margin.view with tenant-wide reach over it
+
+	// Tenant-wide metric visibility per station-scoped gating permission. False
+	// for a station-scoped actor → the card shows a null metric + honest reason
+	// instead of a cross-station total.
+	salesVisible     bool // revenue.read (sales / executive gross)
+	deliveryVisible  bool // station.read (delivery count)
+	inventoryVisible bool // reconciliation.read (inventory alert count)
 }
 
 // computeCatalogFigures gathers every tenant-wide aggregate the cards may need,
 // in one pass. A failed aggregate logs and leaves its field at the zero value
 // (an honest "no data") rather than failing the whole catalog.
 func (s *Server) computeCatalogFigures(ctx context.Context, tenantID uuid.UUID, ps policy.PermissionSet) catalogFigures {
-	figs := catalogFigures{marginAllowed: canViewPermission(ps, "margin.view")}
+	figs := catalogFigures{
+		// margin.view is itself station-scoped; a sensitive tenant-wide money
+		// figure is only honest for an actor with tenant-wide reach over it.
+		marginAllowed:    canSeeTenantWideMetric(ps, "margin.view"),
+		salesVisible:     canSeeTenantWideMetric(ps, "revenue.read"),
+		deliveryVisible:  canSeeTenantWideMetric(ps, "station.read"),
+		inventoryVisible: canSeeTenantWideMetric(ps, "reconciliation.read"),
+	}
 
 	if alerts, err := s.risk.ListAlerts(ctx, tenantID, "open", ""); err == nil {
 		figs.openAlerts = len(alerts)
@@ -200,17 +251,20 @@ func (s *Server) computeCatalogFigures(ctx context.Context, tenantID uuid.UUID, 
 		s.logger.Error("report catalog: risk alerts", "error", err)
 	}
 
-	if rows, err := s.receivables.Aging(ctx, tenantID); err == nil {
-		var sum float64
-		for i := range rows {
-			if v, ok := parseFloatSafe(rows[i].Balance); ok && v > 0 {
-				sum += v
-				figs.arHasData = true
-			}
-		}
-		figs.arExposure = strconv.FormatFloat(sum, 'f', 2, 64)
+	// Inventory alerts are ONLY the fuel-variance (tank reconciliation) alert
+	// type — not attendant / supplier / stockout alerts that ListAlerts("") also
+	// returns. The inventory card and its DQ warning must reflect inventory only.
+	if alerts, err := s.risk.ListAlerts(ctx, tenantID, "open", "fuel_variance_over_tolerance"); err == nil {
+		figs.inventoryAlert = len(alerts)
 	} else {
-		s.logger.Error("report catalog: receivables aging", "error", err)
+		s.logger.Error("report catalog: inventory alerts", "error", err)
+	}
+
+	if v, hasData, err := s.reportCatalog.ReceivablesExposure(ctx, tenantID); err == nil {
+		figs.arExposure = v
+		figs.arHasData = hasData
+	} else {
+		s.logger.Error("report catalog: receivables exposure", "error", err)
 	}
 
 	now := time.Now().UTC()
@@ -248,11 +302,30 @@ func (s *Server) computeCatalogFigures(ctx context.Context, tenantID uuid.UUID, 
 	return figs
 }
 
-// categoryMetric resolves the live key metric + alert count for a category,
-// honouring availability and sensitive-metric gating. A placeholder category is
-// always (null, reason). A sensitive figure (margin / supplier cost / credit
-// exposure) is omitted with an honest reason when margin.view is absent (carried
-// on f.marginAllowed, decided once when the figures were computed).
+// stationScopedReason explains, honestly, why a tenant-wide figure is withheld
+// from a station-scoped actor. The figure exists but summing it across the whole
+// tenant would disclose stations the actor cannot read; the per-station report is
+// the right place for them to see their own station's number.
+const stationScopedReason = "Tenant-wide figure is hidden for a station-scoped role — open a station report for your own stations."
+
+// categoryMetric resolves the live key metric + the alert count a category
+// CONTRIBUTES TO THE HERO for a category, honouring availability, sensitive-metric
+// gating, and station scope.
+//
+//   - A placeholder category is always (null, reason).
+//   - A sensitive figure (margin / supplier cost / credit exposure) is omitted
+//     with an honest reason when the actor lacks tenant-wide margin.view
+//     (f.marginAllowed, decided once when the figures were computed).
+//   - A tenant-wide aggregate gated by a STATION-SCOPED permission (sales /
+//     executive gross via revenue.read; delivery count via station.read;
+//     inventory alerts via reconciliation.read) is withheld from a station-scoped
+//     actor (the *Visible flags) — the tenant-wide total would leak other
+//     stations' figures. Such an actor gets a null metric + honest reason.
+//   - The returned int is what the category contributes to the hero "open report
+//     alerts" total. Only risk-loss OWNS that total (it is the tenant-wide open
+//     risk-alert count); every other category returns 0 so the hero is not
+//     double/triple-counted. The inventory card still surfaces its own
+//     (inventory-only) alert count as its METRIC VALUE, just not in the hero sum.
 func categoryMetric(c reportcatalog.Category, f catalogFigures) (catalogMetric, int) {
 	if c.Availability == "placeholder" {
 		return catalogMetric{Label: placeholderLabel(c.Key), Value: nil, Reason: placeholderReason(c.Key)}, 0
@@ -260,15 +333,25 @@ func categoryMetric(c reportcatalog.Category, f catalogFigures) (catalogMetric, 
 
 	switch c.Key {
 	case "executive":
-		// Executive rollup: gross revenue (last 30d) with open-alert context.
+		// Executive rollup: gross revenue (last 30d). Gated by revenue.read,
+		// which is station-scoped — withhold the tenant-wide total from a
+		// station-scoped actor.
+		if !f.salesVisible {
+			return catalogMetric{Label: "Gross revenue (30d)", Value: nil, Unit: "TZS",
+				Reason: stationScopedReason}, 0
+		}
 		if !f.salesHasData {
 			return catalogMetric{Label: "Gross revenue (30d)", Value: nil, Unit: "TZS",
-				Reason: "No locked or draft revenue days in the last 30 days yet."}, f.openAlerts
+				Reason: "No locked or draft revenue days in the last 30 days yet."}, 0
 		}
 		v := f.salesGross
-		return catalogMetric{Label: "Gross revenue (30d)", Value: &v, Unit: "TZS"}, f.openAlerts
+		return catalogMetric{Label: "Gross revenue (30d)", Value: &v, Unit: "TZS"}, 0
 
 	case "sales":
+		if !f.salesVisible {
+			return catalogMetric{Label: "Gross revenue (30d)", Value: nil, Unit: "TZS",
+				Reason: stationScopedReason}, 0
+		}
 		if !f.salesHasData {
 			return catalogMetric{Label: "Gross revenue (30d)", Value: nil, Unit: "TZS",
 				Reason: "No revenue days recorded in the last 30 days yet."}, 0
@@ -278,6 +361,7 @@ func categoryMetric(c reportcatalog.Category, f catalogFigures) (catalogMetric, 
 
 	case "finance":
 		// Finance headline is supplier-cost-sensitive (payables outstanding).
+		// finance.read is tenant-wide, so the only gate here is margin.view.
 		if !f.marginAllowed {
 			return catalogMetric{Label: "Outstanding payables", Value: nil, Unit: "TZS",
 				Reason: "Requires margin.view to see supplier cost / payables exposure."}, 0
@@ -308,14 +392,31 @@ func categoryMetric(c reportcatalog.Category, f catalogFigures) (catalogMetric, 
 		return catalogMetric{Label: "Credit exposure", Value: &v, Unit: "TZS"}, 0
 
 	case "risk-loss":
+		// risk.read is tenant-wide, so the tenant-wide open-alert count is honest
+		// for every holder. This is the ONE category that owns the hero alert
+		// total.
 		v := strconv.Itoa(f.openAlerts)
 		return catalogMetric{Label: "Open risk alerts", Value: &v, Unit: "count"}, f.openAlerts
 
 	case "inventory":
-		v := strconv.Itoa(f.openAlerts)
-		return catalogMetric{Label: "Open alerts", Value: &v, Unit: "count"}, f.openAlerts
+		// Inventory's metric is the INVENTORY-ONLY open-alert count (fuel
+		// variance), gated by reconciliation.read which is station-scoped — a
+		// station-scoped actor gets a null metric. The count is NOT added to the
+		// hero total (risk-loss owns that) to avoid double counting.
+		if !f.inventoryVisible {
+			return catalogMetric{Label: "Open inventory alerts", Value: nil, Unit: "count",
+				Reason: stationScopedReason}, 0
+		}
+		v := strconv.Itoa(f.inventoryAlert)
+		return catalogMetric{Label: "Open inventory alerts", Value: &v, Unit: "count"}, 0
 
 	case "delivery":
+		// Delivery count is gated by station.read (station-scoped); withhold the
+		// tenant-wide total from a station-scoped actor.
+		if !f.deliveryVisible {
+			return catalogMetric{Label: "Deliveries (30d)", Value: nil, Unit: "count",
+				Reason: stationScopedReason}, 0
+		}
 		v := strconv.Itoa(f.deliveryCount)
 		return catalogMetric{Label: "Deliveries (30d)", Value: &v, Unit: "count"}, 0
 
@@ -344,10 +445,14 @@ func categoryMetric(c reportcatalog.Category, f catalogFigures) (catalogMetric, 
 	return catalogMetric{Label: "Metric", Value: nil, Reason: "No tenant-wide metric for this category yet."}, 0
 }
 
-// categoryDataQuality emits the hub-level data-quality warnings for a category:
-// an honest note for any non-live category, and an open-alerts warning where the
-// category carries open risk alerts.
-func categoryDataQuality(c reportcatalog.Category, alerts int) []catalogDataQuality {
+// categoryDataQuality emits the hub-level data-quality notes for a category:
+//   - an honest "coming soon" note for any placeholder category;
+//   - a "not yet wired" note for a partial category ONLY when no metric value is
+//     actually shown (a partial category that returns a live value — executive /
+//     sales — must not contradict itself with a "not wired" note);
+//   - an inventory-alert warning when the category carries open inventory alerts
+//     (scoped to the inventory-only count, only when the actor may see it).
+func categoryDataQuality(c reportcatalog.Category, m catalogMetric, f catalogFigures) []catalogDataQuality {
 	var out []catalogDataQuality
 	switch c.Availability {
 	case "placeholder":
@@ -355,15 +460,27 @@ func categoryDataQuality(c reportcatalog.Category, alerts int) []catalogDataQual
 			CategoryKey: c.Key, Level: "info", Message: c.Name + ": " + placeholderReason(c.Key),
 		})
 	case "partial":
-		out = append(out, catalogDataQuality{
-			CategoryKey: c.Key, Level: "info",
-			Message: c.Name + ": tenant-wide metric not yet wired — open the report for full figures.",
-		})
+		if m.Value == nil {
+			out = append(out, catalogDataQuality{
+				CategoryKey: c.Key, Level: "info",
+				Message: c.Name + ": tenant-wide metric not yet wired — open the report for full figures.",
+			})
+		}
 	}
-	if alerts > 0 && (c.Key == "risk-loss" || c.Key == "inventory") {
+	// Open-alert warnings: risk-loss owns the tenant-wide open-alert count;
+	// inventory warns only on its own (inventory) alerts and only when the actor
+	// may see that count (otherwise the warning would itself leak a cross-station
+	// total to a station-scoped role).
+	if c.Key == "risk-loss" && f.openAlerts > 0 {
 		out = append(out, catalogDataQuality{
 			CategoryKey: c.Key, Level: "warning",
-			Message: c.Name + ": " + strconv.Itoa(alerts) + " open risk alert(s) need review.",
+			Message: c.Name + ": " + strconv.Itoa(f.openAlerts) + " open risk alert(s) need review.",
+		})
+	}
+	if c.Key == "inventory" && f.inventoryVisible && f.inventoryAlert > 0 {
+		out = append(out, catalogDataQuality{
+			CategoryKey: c.Key, Level: "warning",
+			Message: c.Name + ": " + strconv.Itoa(f.inventoryAlert) + " open inventory alert(s) need review.",
 		})
 	}
 	return out

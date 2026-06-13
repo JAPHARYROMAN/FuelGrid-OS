@@ -3,7 +3,6 @@
 import * as React from 'react';
 import {
   Banknote,
-  Calendar,
   CalendarClock,
   Car,
   Clock,
@@ -23,14 +22,12 @@ import {
 } from 'lucide-react';
 
 import type { ReportCatalogCategory } from '@fuelgrid/sdk';
-import { formatMoney, formatLitres, type ReportDateRange } from '@fuelgrid/ui';
+import { formatMoney, formatLitres } from '@fuelgrid/ui';
 
 /**
  * Hub helpers for the Reports & Intelligence Center home: mapping the catalog's
  * server-chosen icon string onto a lucide glyph, resolving whether a category
- * card is actually navigable, formatting its live key metric honestly, and
- * carrying the hub's global context (station/region/date range) into a report
- * as querystring defaults.
+ * card is actually navigable, and formatting its live key metric honestly.
  */
 
 /** Map the backend icon key (catalog `icon`) onto a lucide component. */
@@ -57,8 +54,6 @@ export function categoryIcon(key: string): React.ReactNode {
   const Icon = ICON_MAP[key] ?? FileSpreadsheet;
   return <Icon />;
 }
-
-export const RANGE_ICON = Calendar;
 
 /**
  * The set of catalog target routes that have a real page in this app today.
@@ -106,61 +101,4 @@ export function formatMetricValue(value: string | null, unit?: string): React.Re
   if (unit === 'TZS') return formatMoney(value);
   if (unit === 'L') return formatLitres(value);
   return value;
-}
-
-/**
- * The hub's global selection, carried as querystring defaults into a report so
- * the report opens pre-scoped to what the user was looking at on the hub. Each
- * report page reads only the params it understands (station/from/to), matching
- * the existing station-scoped report contract; unknown params are ignored.
- */
-export interface HubContext {
-  stationId: string;
-  regionId: string;
-  range: ReportDateRange;
-}
-
-/**
- * Resolve a relative preset into an inclusive ISO from/to window so the hub can
- * always pass a concrete range downstream. Mirrors the backend's relative
- * windows; deterministic (no AI) and parse-safe.
- */
-export function resolveRange(range: ReportDateRange): { from: string; to: string } {
-  if (range.preset === 'custom') return { from: range.from, to: range.to };
-  const now = new Date();
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  const startOfMonth = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-  const endOfMonth = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
-  switch (range.preset) {
-    case 'this-month':
-      return { from: iso(startOfMonth(now)), to: iso(now) };
-    case 'last-month': {
-      const lm = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
-      return { from: iso(startOfMonth(lm)), to: iso(endOfMonth(lm)) };
-    }
-    case 'ytd':
-      return { from: `${now.getUTCFullYear()}-01-01`, to: iso(now) };
-    case 'last-30': {
-      const start = new Date(now);
-      start.setUTCDate(start.getUTCDate() - 30);
-      return { from: iso(start), to: iso(now) };
-    }
-    default:
-      return { from: '', to: '' };
-  }
-}
-
-/**
- * Append the hub's current context to a report href as querystring defaults.
- * Only emits params that carry a value, so a report with no station/date scope
- * opens clean. Reports that take `?station_id`/`?from`/`?to` will pick these up.
- */
-export function withHubContext(href: string, ctx: HubContext): string {
-  const params = new URLSearchParams();
-  if (ctx.stationId) params.set('station_id', ctx.stationId);
-  const { from, to } = resolveRange(ctx.range);
-  if (from) params.set('from', from);
-  if (to) params.set('to', to);
-  const qs = params.toString();
-  return qs ? `${href}?${qs}` : href;
 }

@@ -87,9 +87,12 @@ describe('ReportCategoryCard', () => {
       <ReportCategoryCard title="Tank" availability="placeholder" />,
     );
     expect(html).toContain('Coming soon');
-    // The whole card is muted and flagged disabled for assistive tech.
+    // The card is flagged disabled for assistive tech and visually muted via a
+    // tinted surface + dimmed ICON — NOT a whole-card opacity drop, which would
+    // push the muted reason text below WCAG AA contrast.
     expect(html).toContain('aria-disabled="true"');
-    expect(html).toContain('opacity-75');
+    expect(html).toContain('bg-muted/30');
+    expect(html).not.toContain('opacity-75');
   });
 
   it('shows the honest reason instead of a value when there is no metric', () => {

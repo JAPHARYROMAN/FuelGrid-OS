@@ -11,42 +11,35 @@ import {
   Button,
   DataQualityBanner,
   ErrorState,
+  FilterBar,
   Input,
   MetricCard,
   PageHeader,
   ReportCategoryCard,
-  ReportDateRangeFilterBar,
-  type ReportDateRange,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
 
 import { ReportRails } from './_components/rails';
-import {
-  categoryHref,
-  categoryIcon,
-  formatMetricValue,
-  withHubContext,
-  type HubContext,
-} from './_components/hub';
-import {
-  RegionSelectField,
-  StationSelectField,
-  useStationRegionSelection,
-} from './_components/station-region-select';
+import { categoryHref, categoryIcon, formatMetricValue } from './_components/hub';
 
 /**
  * Reports & Intelligence Center — the premium home (blueprint §4). Driven by
  * getReportCatalog: the 16 blueprint categories as DATA, each permission-
  * filtered server-side, with a live key metric, an honest availability state
  * (live / partial / placeholder), an alert pill where present, and a hub-level
- * data-quality band. The top bar carries a global search, a station/region
- * selector and a free date-range picker; those selections flow into a report as
- * default context when a card is opened. Bottom rails surface recent/scheduled/
- * locked/exports, empty-state aware. Money/litres are exact decimal strings.
+ * data-quality band. The top bar carries a global catalog search (the one
+ * control that does real work in Phase 1). Bottom rails surface recent/
+ * scheduled/locked/exports, empty-state aware. Money/litres are exact decimal
+ * strings.
+ *
+ * Phase 1 is the FOUNDATION: cards link to their existing report page on its own
+ * route (no fabricated cross-context querystring — each report page owns its own
+ * station/period today). Hub-level station/region/date context that pre-scopes a
+ * report is a deliberately deferred follow-up (it requires the report pages to
+ * read those params, which they do not yet); the hub does not advertise behavior
+ * it cannot deliver.
  */
-
-const DEFAULT_RANGE: ReportDateRange = { preset: 'last-30', from: '', to: '' };
 
 /** A category card matches the search over its name + description. */
 function matchesSearch(c: ReportCatalogCategory, q: string): boolean {
@@ -67,15 +60,7 @@ export default function ReportsPage() {
     queryFn: ({ signal }) => api.getReportCatalog(signal),
   });
 
-  const sel = useStationRegionSelection();
   const [search, setSearch] = React.useState('');
-  const [range, setRange] = React.useState<ReportDateRange>(DEFAULT_RANGE);
-
-  const ctx: HubContext = {
-    stationId: sel.stationId,
-    regionId: sel.regionId,
-    range,
-  };
 
   const categories = catalog.data?.categories ?? [];
   const dataQuality = catalog.data?.data_quality ?? [];
@@ -111,32 +96,20 @@ export default function ReportsPage() {
         }
       />
 
-      {/* Top bar (§4.2): search + station/region + free date range. */}
-      <ReportDateRangeFilterBar
-        value={range}
-        onChange={setRange}
-        actions={
-          <div className="relative w-full sm:w-64">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search reports…"
-              aria-label="Search reports"
-              className="pl-8"
-            />
-          </div>
-        }
-      >
-        <RegionSelectField regions={sel.regions} value={sel.regionId} onChange={sel.setRegionId} />
-        <StationSelectField
-          stations={sel.visibleStations}
-          regions={sel.regions}
-          value={sel.stationId}
-          onChange={sel.setStationId}
-        />
-      </ReportDateRangeFilterBar>
+      {/* Top bar (§4.2): catalog search — the control that does real work today. */}
+      <FilterBar>
+        <div className="relative w-full sm:w-72">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search reports…"
+            aria-label="Search reports"
+            className="pl-8"
+          />
+        </div>
+      </FilterBar>
 
       {catalog.isError ? (
         <ErrorState
@@ -149,12 +122,14 @@ export default function ReportsPage() {
           {/* Hero / key report alerts band (§4.2). */}
           {!catalog.isPending ? (
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {/* State tiles: no `trend` — a directional arrow would misread as
+                  "alerts decreasing". The count is a state, not a trend; the
+                  hint carries the severity tone instead. */}
               <MetricCard
                 label="Open report alerts"
                 sublabel="Across your categories"
                 value={String(totalAlerts)}
                 icon={<AlertTriangle />}
-                trend={totalAlerts > 0 ? 'down' : 'flat'}
                 hint={totalAlerts > 0 ? 'Needs review' : 'All clear'}
               />
               <MetricCard
@@ -169,7 +144,6 @@ export default function ReportsPage() {
                 sublabel="Hub-wide"
                 value={String(dataQuality.length)}
                 icon={<ShieldCheck />}
-                trend={dqWarnings.length > 0 ? 'down' : 'flat'}
                 hint={dqWarnings.length > 0 ? `${dqWarnings.length} warning(s)` : 'Advisory only'}
               />
             </section>
@@ -196,7 +170,7 @@ export default function ReportsPage() {
                   ? Array.from({ length: 9 }).map((_, i) => (
                       <ReportCategoryCard key={i} title="Loading…" metricLabel="Metric" loading />
                     ))
-                  : filtered.map((c) => <CategoryCard key={c.key} category={c} ctx={ctx} />)}
+                  : filtered.map((c) => <CategoryCard key={c.key} category={c} />)}
               </div>
             )}
           </section>
@@ -224,10 +198,16 @@ export default function ReportsPage() {
 }
 
 /** One category tile, wiring the catalog row onto the design-system card. */
-function CategoryCard({ category: c, ctx }: { category: ReportCatalogCategory; ctx: HubContext }) {
-  const href = categoryHref(c);
-  const linkHref = href ? withHubContext(href, ctx) : undefined;
+function CategoryCard({ category: c }: { category: ReportCatalogCategory }) {
+  // Link to the report's own route, unadorned. Each report page owns its station
+  // and period today, so the hub does NOT fabricate a ?station_id/?from/?to the
+  // page would ignore — that cross-context pre-scoping is a deferred follow-up.
+  const linkHref = categoryHref(c);
   const value = formatMetricValue(c.metric.value, c.metric.unit);
+  // The catalog contractually carries an honest `reason` for every null metric.
+  // Render it directly; the fallback is intentionally distinct so a missing
+  // reason (a contract miss) is visible in QA rather than masked as intentional.
+  const reason = value == null ? (c.metric.reason ?? 'No reason provided.') : undefined;
 
   return (
     <ReportCategoryCard
@@ -237,7 +217,7 @@ function CategoryCard({ category: c, ctx }: { category: ReportCatalogCategory; c
       availability={c.availability}
       metricLabel={c.metric.label}
       metricValue={value}
-      metricReason={value == null ? (c.metric.reason ?? 'Not available yet.') : undefined}
+      metricReason={reason}
       alertCount={c.alert_count}
       href={linkHref}
       linkComponent={Link}

@@ -1,21 +1,17 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 
 import type { ReportCatalog } from '@fuelgrid/sdk';
 
-// The hub draws on the catalog, the station/region selectors and the exports
-// rail. Mock each SDK method the page (and its child components) call.
+// The hub draws on the catalog and the exports rail. Mock each SDK method the
+// page (and its child components) call.
 const getReportCatalog = vi.fn();
-const listStations = vi.fn();
-const listRegions = vi.fn();
 const listExportJobs = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     getReportCatalog: (...a: unknown[]) => getReportCatalog(...a),
-    listStations: (...a: unknown[]) => listStations(...a),
-    listRegions: (...a: unknown[]) => listRegions(...a),
     listExportJobs: (...a: unknown[]) => listExportJobs(...a),
   },
 }));
@@ -118,26 +114,9 @@ const catalog: ReportCatalog = {
   ],
 };
 
-const stations = {
-  items: [
-    { id: 'st-1', code: 'MIK-01', name: 'Mikocheni', region_id: 'rg-1' },
-    { id: 'st-2', code: 'MSA-01', name: 'Mombasa', region_id: 'rg-2' },
-  ],
-  count: 2,
-};
-const regions = {
-  items: [
-    { id: 'rg-1', code: 'DAR', name: 'Dar', status: 'active' },
-    { id: 'rg-2', code: 'CST', name: 'Coast', status: 'active' },
-  ],
-  count: 2,
-};
-
 beforeEach(() => {
   vi.clearAllMocks();
   getReportCatalog.mockResolvedValue(catalog);
-  listStations.mockResolvedValue(stations);
-  listRegions.mockResolvedValue(regions);
   listExportJobs.mockResolvedValue({ items: [], count: 0 });
 });
 
@@ -150,9 +129,10 @@ describe('Reports home', () => {
     expect(screen.getByText('Open risk alerts')).toBeInTheDocument();
     // Alert pill is present and pluralised.
     expect(screen.getByText('2 alerts')).toBeInTheDocument();
-    // The card links to its report (with hub context appended).
+    // The card links to its report on its own route, unadorned (Phase 1 does not
+    // fabricate a cross-context querystring the report page would ignore).
     const link = screen.getAllByRole('link', { name: /risk and loss/i })[0]!;
-    expect(link.getAttribute('href')).toContain('/reports/fuel-loss');
+    expect(link.getAttribute('href')).toBe('/reports/fuel-loss');
   });
 
   it('marks a placeholder category coming-soon and never links it', async () => {
@@ -192,20 +172,6 @@ describe('Reports home', () => {
     expect(screen.queryByText('Executive')).toBeNull();
   });
 
-  it('emits a custom date range from the date-range picker', async () => {
-    renderPage();
-    await screen.findByText('Risk and Loss');
-    const select = screen.getByLabelText('Date range');
-    fireEvent.change(select, { target: { value: 'custom' } });
-    // Custom from/to inputs appear once Custom is selected.
-    const from = screen.getByLabelText('From date');
-    const to = screen.getByLabelText('To date');
-    fireEvent.change(from, { target: { value: '2026-01-01' } });
-    fireEvent.change(to, { target: { value: '2026-01-31' } });
-    expect((from as HTMLInputElement).value).toBe('2026-01-01');
-    expect((to as HTMLInputElement).value).toBe('2026-01-31');
-  });
-
   it('renders the hub data-quality warnings band', async () => {
     renderPage();
     expect(await screen.findByText(/2 open risk alert\(s\) need review/)).toBeInTheDocument();
@@ -220,20 +186,15 @@ describe('Reports home', () => {
     expect(await screen.findByText(/No exports yet/)).toBeInTheDocument();
   });
 
-  it('carries the selected station into a report link as default context', async () => {
+  it('links a card to its report route without a fabricated context querystring', async () => {
     renderPage();
     await screen.findByText('Risk and Loss');
     const link = screen.getAllByRole('link', { name: /risk and loss/i })[0]!;
-    // Default station (first accessible) is appended as ?station_id=…
-    expect(link.getAttribute('href')).toContain('station_id=st-1');
-  });
-
-  it('shows a station/region grouped selector over accessible stations', async () => {
-    renderPage();
-    await screen.findByText('Risk and Loss');
-    // Two regions in scope → a Region selector appears alongside Station.
-    expect(await screen.findByLabelText('Region')).toBeInTheDocument();
-    const station = screen.getByLabelText('Station') as HTMLSelectElement;
-    expect(within(station).getByText('MIK-01 — Mikocheni')).toBeInTheDocument();
+    // Phase 1 links to the plain route — no ?station_id / ?from / ?to the
+    // destination report page would silently ignore.
+    const href = link.getAttribute('href') ?? '';
+    expect(href).toBe('/reports/fuel-loss');
+    expect(href).not.toContain('station_id');
+    expect(href).not.toContain('from=');
   });
 });

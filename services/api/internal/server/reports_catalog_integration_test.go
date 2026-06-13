@@ -49,24 +49,26 @@ func getCatalog(t *testing.T, h *harness, token string) (int, catalogBody) {
 	return code, body
 }
 
+type catalogCat struct {
+	Key                string `json:"key"`
+	Name               string `json:"name"`
+	Availability       string `json:"availability"`
+	RequiredPermission string `json:"required_permission"`
+	AlertCount         int    `json:"alert_count"`
+	Metric             struct {
+		Label  string           `json:"label"`
+		Value  *json.RawMessage `json:"value"`
+		Unit   string           `json:"unit"`
+		Reason string           `json:"reason"`
+	} `json:"metric"`
+	Reports []struct {
+		Key string `json:"key"`
+	} `json:"reports"`
+}
+
 type catalogBody struct {
-	GeneratedAt string `json:"generated_at"`
-	Categories  []struct {
-		Key                string `json:"key"`
-		Name               string `json:"name"`
-		Availability       string `json:"availability"`
-		RequiredPermission string `json:"required_permission"`
-		AlertCount         int    `json:"alert_count"`
-		Metric             struct {
-			Label  string           `json:"label"`
-			Value  *json.RawMessage `json:"value"`
-			Unit   string           `json:"unit"`
-			Reason string           `json:"reason"`
-		} `json:"metric"`
-		Reports []struct {
-			Key string `json:"key"`
-		} `json:"reports"`
-	} `json:"categories"`
+	GeneratedAt string       `json:"generated_at"`
+	Categories  []catalogCat `json:"categories"`
 	DataQuality []struct {
 		CategoryKey string `json:"category_key"`
 		Level       string `json:"level"`
@@ -80,6 +82,16 @@ func (b catalogBody) keys() map[string]bool {
 		m[b.Categories[i].Key] = true
 	}
 	return m
+}
+
+// find returns the category with the given key, or nil.
+func (b catalogBody) find(key string) *catalogCat {
+	for i := range b.Categories {
+		if b.Categories[i].Key == key {
+			return &b.Categories[i]
+		}
+	}
+	return nil
 }
 
 func TestReportCatalog_PermissionFilteringAndGating(t *testing.T) {
@@ -136,6 +148,18 @@ func TestReportCatalog_PermissionFilteringAndGating(t *testing.T) {
 		}
 	}
 
+	// (7) No triple-counted alerts in the hero band: only risk-loss contributes
+	// to the summed hero "open report alerts" total. executive and inventory must
+	// each contribute alert_count == 0, so the same underlying open-alert set is
+	// never counted two or three times. (The inventory card still surfaces its own
+	// inventory-only count as its metric VALUE, not in the hero sum.)
+	for _, key := range []string{"executive", "inventory"} {
+		if c := adminCat.find(key); c != nil && c.AlertCount != 0 {
+			t.Errorf("category %q contributes alert_count=%d to the hero total — only risk-loss may (triple-count regression)",
+				key, c.AlertCount)
+		}
+	}
+
 	// (2) Permission filtering: the operator (station_manager) lacks finance.read,
 	// payable.read, risk.read, audit.read, reconciliation.read, fleet_report.read,
 	// inventory.read — so it must see strictly FEWER categories, and never one it
@@ -161,6 +185,26 @@ func TestReportCatalog_PermissionFilteringAndGating(t *testing.T) {
 	for _, shown := range []string{"sales", "shift"} {
 		if !opKeys[shown] {
 			t.Errorf("operator (station_manager) should see %q", shown)
+		}
+	}
+
+	// (2b) Station-scope metric suppression: the operator is a station_manager
+	// scoped to ONE station (not a tenant-wide role). Its sales / delivery /
+	// inventory metrics are gated by STATION-SCOPED permissions (revenue.read /
+	// station.read / reconciliation.read). The card is listed, but the TENANT-WIDE
+	// figure must be withheld (null + honest reason) — surfacing the tenant-wide
+	// total would leak every other station's revenue / deliveries / alerts.
+	for _, key := range []string{"sales", "delivery"} {
+		c := opCat.find(key)
+		if c == nil {
+			continue // delivery requires station.read (held) — but tolerate absence
+		}
+		if c.Metric.Value != nil {
+			t.Errorf("operator (station-scoped) got a tenant-wide %q metric VALUE: %s — must be suppressed (null) for a station-scoped role",
+				key, *c.Metric.Value)
+		}
+		if c.Metric.Reason == "" {
+			t.Errorf("suppressed station-scoped %q metric has no honest reason", key)
 		}
 	}
 
