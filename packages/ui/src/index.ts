@@ -157,6 +157,8 @@ export {
   BarChart,
   CategoricalBarChart,
   Sparkline,
+  DonutChart,
+  TenderMixDonut,
 } from './components/charts';
-export type { ChartSeries } from './components/charts';
+export type { ChartSeries, DonutSlice, TenderMix } from './components/charts';
 export { chartColors } from './lib/chart-theme';

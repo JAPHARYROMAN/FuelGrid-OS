@@ -153,6 +153,7 @@ export type {
   ReportTable,
   ReportDrilldownLink,
   ReportExportOption,
+  ReportTenderMix,
   ReportCategory,
   ReportsOverview,
   ReportAvailability,

@@ -10,6 +10,8 @@ import {
   Cell,
   Line,
   LineChart as RLineChart,
+  Pie,
+  PieChart as RPieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -460,5 +462,214 @@ export function Sparkline<T extends Datum>({
         </RAreaChart>
       </ResponsiveContainer>
     </div>
+  );
+}
+
+/** One slice of a donut: a label, a decimal-string value, and a token color. */
+export interface DonutSlice {
+  /** Stable key, also the legend label when `label` is omitted. */
+  key: string;
+  /** Human label shown in the legend + tooltip. */
+  label: string;
+  /** Decimal STRING value (money/litre) — coerced to a number for geometry only. */
+  value: string;
+  /** Token color; defaults to walking the categorical palette by index. */
+  color?: string;
+}
+
+/**
+ * The categorical palette donut/pie slices walk when a slice has no explicit
+ * color. All token-driven (hsl(var(--…))) so the wheel tracks the live theme —
+ * the one confident indigo accent first, then the status + neutral tokens, so a
+ * tender/payment breakdown reads with distinct-but-calm hues.
+ */
+const DONUT_PALETTE = [
+  chartColors.accent,
+  chartColors.success,
+  chartColors.warning,
+  chartColors.danger,
+  chartColors.accentMuted,
+  chartColors.muted,
+] as const;
+
+/** Sum the decimal-string slice values to a finite number (geometry/total only). */
+function sumSlices(slices: DonutSlice[]): number {
+  let total = 0;
+  for (const s of slices) total += toNumber(s.value);
+  return total;
+}
+
+/**
+ * DonutChart — a token-themed recharts pie with a hollow center (donut). Slices
+ * arrive as decimal-STRING values (the numeric->text money/litre contract); the
+ * float coercion recharts needs for geometry never leaks into the displayed
+ * number — pass a `valueFormatter` (e.g. formatMoney) for the tooltip + legend.
+ * A slice list that sums to zero (or is empty) renders nothing, so callers must
+ * guard with their own empty state. Built as a clean shared primitive: later
+ * phases reuse it for payment-method / root-cause distribution donuts.
+ */
+export function DonutChart({
+  slices,
+  valueFormatter = identity,
+  height = 240,
+  thickness = 0.62,
+  showLegend = true,
+  centerLabel,
+  centerValue,
+  className,
+}: {
+  slices: DonutSlice[];
+  /** Format a slice value for the tooltip + legend (e.g. formatMoney). */
+  valueFormatter?: (value: unknown) => string;
+  /** Pixel height; defaults to 240. */
+  height?: number;
+  /** Inner-radius ratio (0..1); higher is a thinner ring. Defaults to 0.62. */
+  thickness?: number;
+  /** Render the slice legend beside the wheel. Defaults to true. */
+  showLegend?: boolean;
+  /** Optional caption rendered in the donut hole (e.g. "Total tendered"). */
+  centerLabel?: React.ReactNode;
+  /** Optional value rendered in the donut hole (already formatted by the caller). */
+  centerValue?: React.ReactNode;
+  className?: string;
+}) {
+  const total = sumSlices(slices);
+  // Honest empty state: an all-zero/empty breakdown has no geometry to draw.
+  if (slices.length === 0 || total <= 0) return null;
+
+  const colored = slices.map((s, i) => ({
+    ...s,
+    n: toNumber(s.value),
+    fill: s.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length],
+  }));
+  const inner = Math.max(0, Math.min(0.9, thickness));
+
+  return (
+    <div className={cn('flex flex-col items-center gap-4 sm:flex-row sm:gap-6', className)}>
+      <div className="relative w-full sm:w-1/2" style={{ height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <RPieChart>
+            <Pie
+              data={colored}
+              dataKey="n"
+              nameKey="label"
+              cx="50%"
+              cy="50%"
+              innerRadius={`${inner * 100}%`}
+              outerRadius="92%"
+              paddingAngle={1}
+              stroke={chartColors.surface}
+              strokeWidth={2}
+              isAnimationActive={false}
+            >
+              {colored.map((s) => (
+                <Cell key={s.key} fill={s.fill} />
+              ))}
+            </Pie>
+            <Tooltip cursor={false} content={renderTooltip(identity, valueFormatter)} />
+          </RPieChart>
+        </ResponsiveContainer>
+        {centerLabel != null || centerValue != null ? (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            {centerLabel != null ? (
+              <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {centerLabel}
+              </span>
+            ) : null}
+            {centerValue != null ? (
+              <span className="font-mono text-lg font-semibold tabular-nums text-foreground">
+                {centerValue}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {showLegend ? (
+        <ul className="flex w-full flex-col gap-1.5 sm:w-1/2">
+          {colored.map((s) => {
+            const pct = total > 0 ? (s.n / total) * 100 : 0;
+            return (
+              <li key={s.key} className="flex items-center justify-between gap-3 text-sm">
+                <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: s.fill }}
+                  />
+                  <span className="truncate">{s.label}</span>
+                </span>
+                <span className="flex shrink-0 items-baseline gap-2">
+                  <span className="font-mono font-medium tabular-nums text-foreground">
+                    {valueFormatter(s.value)}
+                  </span>
+                  <span className="w-10 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                    {pct.toFixed(0)}%
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/** A tender-mix breakdown (cash / mobile-money / card / credit / voucher). */
+export interface TenderMix {
+  cash: string;
+  mobile_money: string;
+  card: string;
+  credit: string;
+  voucher: string;
+  total: string;
+}
+
+/**
+ * TenderMixDonut — the signature payment-mix wheel for the Daily Station Close
+ * (and reused by Sales). It maps a ReportTenderMix onto DonutChart with stable,
+ * token-driven colors per tender type, dropping zero-value tenders so the wheel
+ * stays legible. Money figures are exact decimal strings; pass `valueFormatter`
+ * (formatMoney) for the tooltip + legend. Renders nothing when every tender is
+ * zero (the caller shows an empty state).
+ */
+export function TenderMixDonut({
+  mix,
+  valueFormatter,
+  height = 240,
+  centerLabel = 'Total tendered',
+  className,
+}: {
+  mix: TenderMix;
+  valueFormatter?: (value: unknown) => string;
+  height?: number;
+  centerLabel?: React.ReactNode;
+  className?: string;
+}) {
+  const all: DonutSlice[] = [
+    { key: 'cash', label: 'Cash', value: mix.cash, color: chartColors.accent },
+    {
+      key: 'mobile_money',
+      label: 'Mobile money',
+      value: mix.mobile_money,
+      color: chartColors.success,
+    },
+    { key: 'card', label: 'Card', value: mix.card, color: chartColors.warning },
+    { key: 'credit', label: 'Credit', value: mix.credit, color: chartColors.danger },
+    { key: 'voucher', label: 'Voucher', value: mix.voucher, color: chartColors.accentMuted },
+  ];
+  // Drop zero/blank tenders so the legend + wheel only show what was actually
+  // tendered (a station with no card terminal shouldn't render a card slice).
+  const slices = all.filter((s) => toNumber(s.value) > 0);
+  const fmt = valueFormatter ?? identity;
+  return (
+    <DonutChart
+      slices={slices}
+      valueFormatter={fmt}
+      height={height}
+      centerLabel={centerLabel}
+      centerValue={fmt(mix.total)}
+      className={className}
+    />
   );
 }

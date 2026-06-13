@@ -23,6 +23,63 @@ import (
 	"testing"
 )
 
+// TestReportsStationClose_EnvelopeShape asserts the Daily Station Close report
+// returns the signature envelope: a permission-gated 200 for an actor holding
+// revenue.read, with the close summary surfacing the expected KPI labels and the
+// always-present (even if empty) data_quality + summary slices. With no revenue
+// day seeded for the station, the additive tender_mix is omitted (omitempty) and
+// the close reads as an honest empty-but-valid envelope — exactly the partial
+// state the report is required to render.
+func TestReportsStationClose_EnvelopeShape(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	tenantSlug := slug(h)
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	// Admin holds revenue.read tenant-wide: the close report must succeed.
+	code, body := h.getJSON(t, "/api/v1/reports/station-close?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin station-close report = %d, want 200", code)
+	}
+
+	// metadata.report_key identifies the report.
+	meta, ok := body["metadata"].(map[string]any)
+	if !ok || meta["report_key"] != "station-close" {
+		t.Fatalf("metadata.report_key = %v, want station-close", body["metadata"])
+	}
+
+	// The canonical envelope slices are always present (never null), so the wire
+	// shape is stable for the typed SDK + the page.
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section: %v", key, body)
+		}
+	}
+
+	// The summary always carries the close's approval status (the headline state)
+	// — even with no revenue day, where it reads "no_data".
+	summary, ok := body["summary"].([]any)
+	if !ok || len(summary) == 0 {
+		t.Fatalf("summary = %v, want a non-empty headline summary", body["summary"])
+	}
+	var hasApproval bool
+	for _, m := range summary {
+		if row, ok := m.(map[string]any); ok && row["label"] == "Approval status" {
+			hasApproval = true
+		}
+	}
+	if !hasApproval {
+		t.Fatalf("summary is missing the Approval status metric: %v", summary)
+	}
+
+	// With no revenue day seeded, the additive tender_mix is omitted (omitempty),
+	// proving the field is genuinely optional and the report degrades honestly.
+	if _, present := body["tender_mix"]; present {
+		t.Fatalf("tender_mix should be omitted when no revenue day exists: %v", body["tender_mix"])
+	}
+}
+
 func TestReportsStructured_TenantScopingAndPermissions(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()

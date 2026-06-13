@@ -308,14 +308,32 @@ func (s *Server) handleStationCloseReport(w http.ResponseWriter, r *http.Request
 	if len(days) > 0 {
 		d := days[0]
 		env.FiltersUsed["business_date"] = d.BusinessDate.Format(dateLayout)
+		// Expected cash = recorded cash tender; submitted cash = recorded cash
+		// less the till variance (a positive variance is over, negative short).
+		// Both are exact decimal strings (the variance is string-safe-subtracted
+		// only for the display headline; the source figures are never mutated).
+		submittedCash := submittedCashFromVariance(d.CashTotal, cashVariance)
 		env.Summary = []summaryMetric{
-			{Label: "Gross revenue", Value: d.GrossRevenue, Unit: "TZS"},
+			{Label: "Sales value", Value: d.GrossRevenue, Unit: "TZS"},
 			{Label: "Net revenue", Value: d.NetRevenue, Unit: "TZS"},
 			{Label: "Margin", Value: d.MarginTotal, Unit: "TZS"},
 			{Label: "Total tendered", Value: d.TenderTotal, Unit: "TZS"},
-			{Label: "Cash variance", Value: d.CashVariance, Unit: "TZS"},
+			{Label: "Expected cash", Value: d.CashTotal, Unit: "TZS"},
+			{Label: "Submitted cash", Value: submittedCash, Unit: "TZS"},
+			{Label: "Cash variance", Value: cashVarianceDisplay(cashVariance, d.CashVariance), Unit: "TZS"},
 			{Label: "Open exceptions", Value: strconv.Itoa(unclosed), Unit: "count"},
 			{Label: "Approval status", Value: dayApprovalStatus(d.Status, unclosed)},
+		}
+		// Additive tender-mix breakdown (cash / mobile-money / card / credit /
+		// voucher) read straight from the revenue_days rollup — decimal strings,
+		// no recompute. Powers the signature donut.
+		env.TenderMix = &tenderMix{
+			Cash:        d.CashTotal,
+			MobileMoney: d.MobileMoneyTotal,
+			Card:        d.CardTotal,
+			Credit:      d.CreditTotal,
+			Voucher:     d.VoucherTotal,
+			Total:       d.TenderTotal,
 		}
 	} else {
 		env.Summary = []summaryMetric{
@@ -357,6 +375,22 @@ func (s *Server) handleStationCloseReport(w http.ResponseWriter, r *http.Request
 		GrossSeries: grossPts, CashVariance: cashVariance,
 		UnclosedShiftCount: unclosed, DayLocked: latestLocked,
 	}))
+
+	// Harden data-quality for the close-specific gaps the composer does not see:
+	// no revenue day at all, and no cash reconciliation submitted for the day.
+	// These are surfaced prominently so the report never reads as final when the
+	// close is incomplete.
+	if len(days) == 0 {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: "No revenue day has been computed for this station yet — close figures are unavailable.",
+		})
+	} else if cashVariance == "" {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: "Cash has not been submitted/reconciled for this station yet — the cash position is unverified.",
+		})
+	}
 
 	env.Drilldown = []drilldownLink{
 		{Label: "Operations overview", Href: fmt.Sprintf("/api/v1/stations/%s/operations/overview", sid)},
@@ -819,6 +853,31 @@ func parseFloatSafe(s string) (float64, bool) {
 		return 0, false
 	}
 	return v, true
+}
+
+// cashVarianceDisplay picks the till-drawer variance (from the cash
+// reconciliation) when one exists, else falls back to the revenue day's
+// tender-vs-revenue variance. Both are exact decimal strings, passed through.
+func cashVarianceDisplay(reconVariance, dayVariance string) string {
+	if strings.TrimSpace(reconVariance) != "" {
+		return reconVariance
+	}
+	return dayVariance
+}
+
+// submittedCashFromVariance derives the submitted (counted) cash from the
+// recorded cash tender (expected) and the signed till variance: submitted =
+// expected + variance (a positive variance is an over-count, negative a short).
+// Parsing to float here is DISPLAY math only (the headline figure); the source
+// expected/variance strings are never mutated. Returns the expected figure
+// verbatim when no variance was reconciled.
+func submittedCashFromVariance(expectedCash, variance string) string {
+	exp, okE := parseFloatSafe(expectedCash)
+	v, okV := parseFloatSafe(variance)
+	if !okE || !okV || strings.TrimSpace(variance) == "" {
+		return expectedCash
+	}
+	return strconv.FormatFloat(exp+v, 'f', 2, 64)
 }
 
 // dayApprovalStatus derives a coarse approval status for the close summary.
