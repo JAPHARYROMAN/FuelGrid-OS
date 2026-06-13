@@ -64,6 +64,12 @@ export type { RiskAlertCardProps } from './components/risk-alert-card';
 export { ReconciliationWaterfall } from './components/reconciliation-waterfall';
 export type { ReconciliationWaterfallProps } from './components/reconciliation-waterfall';
 
+export { Heatmap, heatmapToneColor } from './components/heatmap';
+export type { HeatmapProps, HeatmapRow, HeatmapCell, HeatmapTone } from './components/heatmap';
+
+export { StatusBoard, statusToneColor } from './components/status-board';
+export type { StatusBoardProps, StatusBoardItem, StatusTone } from './components/status-board';
+
 export { ShiftTimeline } from './components/shift-timeline';
 export type {
   ShiftTimelineProps,
@@ -157,6 +163,8 @@ export {
   BarChart,
   CategoricalBarChart,
   Sparkline,
+  DonutChart,
+  TenderMixDonut,
 } from './components/charts';
-export type { ChartSeries } from './components/charts';
+export type { ChartSeries, DonutSlice, TenderMix } from './components/charts';
 export { chartColors } from './lib/chart-theme';

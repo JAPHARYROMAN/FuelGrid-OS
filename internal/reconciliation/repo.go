@@ -88,13 +88,24 @@ const columns = `
     status, sealed_by, sealed_at, created_at, updated_at
 `
 
-func scan(row pgx.Row, r *Reconciliation) error {
-	return row.Scan(
+// scan reads the canonical reconciliation columns into r. `extra` lets callers
+// that SELECT additional trailing columns (e.g. the product-enriched
+// station-day projection) append their own destinations to the same Scan,
+// keeping the column order in lockstep with the query.
+func scan(row pgx.Row, r *Reconciliation, extra ...any) error {
+	base := [19]any{
 		&r.ID, &r.TenantID, &r.TankID, &r.OperatingDayID, &r.OpeningBook, &r.DeliveriesTotal,
 		&r.SalesTotal, &r.AdjustmentsTotal, &r.ClosingBook, &r.ClosingPhysical,
 		&r.VarianceLitres, &r.VariancePercent, &r.TolerancePercent, &r.ThroughSeq,
 		&r.Status, &r.SealedBy, &r.SealedAt, &r.CreatedAt, &r.UpdatedAt,
-	)
+	}
+	if len(extra) == 0 {
+		return row.Scan(base[:]...)
+	}
+	dest := make([]any, 0, len(base)+len(extra))
+	dest = append(dest, base[:]...)
+	dest = append(dest, extra...)
+	return row.Scan(dest...)
 }
 
 // Computed is the live book-vs-physical result for a (tank, day), computed
@@ -375,6 +386,61 @@ func (r *Repo) ListForStationDay(ctx context.Context, tenantID, stationID, dayID
 			return nil, err
 		}
 		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// StationDayReconLine is one tank's day reconciliation enriched, in SQL, with
+// the tank's product identity and the monetary value of the variance. Every
+// litre/percent/money figure is an exact decimal STRING read as ::text — the
+// variance value (|variance_litres| × the product's default price) is computed
+// in numeric in the same statement so no float64 ever materializes in Go.
+// Priced is false when the tank has no product price on record, so the report
+// can show the litre variance honestly and omit a misleading zero value.
+type StationDayReconLine struct {
+	Reconciliation
+	ProductCode   string
+	ProductName   string
+	ProductColor  string
+	VarianceValue string // |variance_litres| × default_price, decimal string
+	Priced        bool   // a non-null, positive product price was found
+}
+
+// ListForStationDayWithProduct returns the day's reconciliations for every tank
+// at a station, each enriched with its product code/name/color and the
+// monetary value of the litre variance (computed in SQL numeric from the
+// product's default price). Tank-code order, matching ListForStationDay. This
+// is the signature-report projection: it adds the product dimension (for the
+// variance heatmap) and the variance value (for the KPI hero) the bare
+// reconciliation row does not carry — never recomputing any persisted litre
+// figure, only multiplying the existing variance by the catalogue price in
+// exact numeric.
+func (r *Repo) ListForStationDayWithProduct(ctx context.Context, tenantID, stationID, dayID uuid.UUID) ([]StationDayReconLine, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+prefixedColumns+`,
+		       COALESCE(p.code, '')  AS product_code,
+		       COALESCE(p.name, '')  AS product_name,
+		       COALESCE(p.color, '') AS product_color,
+		       (abs(rec.variance_litres) * COALESCE(p.default_price, 0))::text AS variance_value,
+		       (p.default_price IS NOT NULL AND p.default_price > 0)           AS priced
+		FROM tank_reconciliations rec
+		JOIN tanks t ON t.id = rec.tank_id AND t.tenant_id = rec.tenant_id
+		LEFT JOIN products p ON p.id = t.product_id AND p.tenant_id = rec.tenant_id
+		WHERE rec.tenant_id = $1 AND t.station_id = $2 AND rec.operating_day_id = $3
+		ORDER BY t.code
+	`, tenantID, stationID, dayID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StationDayReconLine
+	for rows.Next() {
+		var line StationDayReconLine
+		if err := scan(rows, &line.Reconciliation, &line.ProductCode, &line.ProductName,
+			&line.ProductColor, &line.VarianceValue, &line.Priced); err != nil {
+			return nil, err
+		}
+		out = append(out, line)
 	}
 	return out, rows.Err()
 }

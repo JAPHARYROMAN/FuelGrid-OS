@@ -1992,9 +1992,27 @@ export interface ReportExportOption {
 }
 
 /**
+ * An additive, report-specific breakdown of a station-day's recorded tenders by
+ * type and their total. Every figure is an exact decimal STRING (numeric ->
+ * text), read straight from the revenue_days rollup — never recomputed. Present
+ * on reports that surface a tender split (e.g. Daily Station Close); the Sales
+ * report reuses the same shape for its payment-method donut.
+ */
+export interface ReportTenderMix {
+  cash: string;
+  mobile_money: string;
+  card: string;
+  credit: string;
+  voucher: string;
+  total: string;
+}
+
+/**
  * The shared, drillable structured-report payload. `chart_data` is
  * report-specific (always decimal strings, never float money) so it is typed as
  * `unknown` here — narrow it per `metadata.report_key` at the call site.
+ * `tender_mix` is an optional additive breakdown present on reports that
+ * surface a tender split.
  */
 export interface ReportEnvelope {
   metadata: ReportEnvelopeMetadata;
@@ -2002,6 +2020,7 @@ export interface ReportEnvelope {
   data_quality: ReportDataQualityItem[];
   summary: ReportSummaryMetric[];
   chart_data: unknown;
+  tender_mix?: ReportTenderMix;
   table: ReportTable;
   insights: ReportInsight[];
   recommended_actions: string[];

@@ -5452,6 +5452,22 @@ components:
             required: [label, value]
         chart_data:
           description: Report-specific chart payload; all numeric figures are decimal strings.
+        tender_mix:
+          description: >-
+            Additive, report-specific breakdown of a station-day's recorded
+            tenders by type (cash / mobile-money / card / credit / voucher) and
+            their total. Every figure is an exact decimal string (numeric ->
+            text). Optional — present on reports that surface a tender split
+            (e.g. Daily Station Close) and omitted otherwise.
+          type: object
+          properties:
+            cash:         { type: string }
+            mobile_money: { type: string }
+            card:         { type: string }
+            credit:       { type: string }
+            voucher:      { type: string }
+            total:        { type: string }
+          required: [cash, mobile_money, card, credit, voucher, total]
         table:
           type: object
           properties:

@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/japharyroman/fuelgrid-os/internal/banking"
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
 )
@@ -195,6 +196,27 @@ func (s *Server) latestCashVariance(ctx context.Context, tenantID, stationID uui
 		return ""
 	}
 	return rows[0].Variance
+}
+
+// cashReconForDay returns the cash reconciliation recorded for a specific
+// operating day (so the station-close headline reconciles the SAME day's tender
+// against the SAME day's counted drawer — never the global-latest recon, which
+// may belong to a different business day). Returns nil when no recon exists for
+// that day. The list is already tenant+station scoped by the repo.
+func (s *Server) cashReconForDay(ctx context.Context, tenantID, stationID, operatingDayID uuid.UUID) *banking.CashReconciliation {
+	if operatingDayID == uuid.Nil {
+		return nil
+	}
+	rows, err := s.banking.ListCashReconciliations(ctx, tenantID, stationID)
+	if err != nil {
+		return nil
+	}
+	for i := range rows {
+		if rows[i].OperatingDayID == operatingDayID {
+			return &rows[i]
+		}
+	}
+	return nil
 }
 
 // unclosedShiftCount returns the count of unapproved shifts for the station's

@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Gauge } from 'lucide-react';
 
 import type { ReportEnvelope } from '@fuelgrid/sdk';
 import {
@@ -10,10 +11,13 @@ import {
   CardHeader,
   CardTitle,
   EmptyState,
+  Heatmap,
   ReconciliationWaterfall,
+  type HeatmapRow,
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
+import { formatLitres, formatMoney } from '@/lib/money';
 import { usePermission } from '@/hooks/use-permissions';
 
 import { useStationSelection } from '../../_components/filters';
@@ -30,6 +34,8 @@ import {
 /** One tank's reconciliation row in the chart_data payload (decimal strings). */
 interface ReconChartTank {
   tank: string;
+  product: string;
+  product_color: string;
   opening: string;
   deliveries: string;
   sales: string;
@@ -38,8 +44,75 @@ interface ReconChartTank {
   actual_closing: string;
   variance: string;
   variance_pct: string;
+  variance_value: string;
+  priced: boolean;
   tolerance: string;
+  over_tolerance: boolean;
   sealed: boolean;
+}
+
+/** Coerce a decimal string to a finite number for cell/bar geometry only. */
+function num(v: string | undefined): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Build the variance heatmap rows from the tank lines. One row per tank. Each
+ * column's cell intensity is that tank's magnitude as a share of the worst in
+ * the SAME column — the % cell washes by |variance %| and the litre cell washes
+ * by |variance litres|, so the litre column's colour honestly encodes litre
+ * magnitude (not %), and a large-tank litre loss no longer reads faint just
+ * because its % is small. Over-tolerance cells are flagged (text chip + ring)
+ * and both cells append the breach state to their accessible label, so a
+ * screen-reader hears the breach the colour/ring conveys — colour is never the
+ * sole signal. The priced money sub-label carries the variance DIRECTION (a
+ * shortage shows negative), so it never reads like a gain on a loss. Values stay
+ * decimal strings; the float coercion is for the per-column intensity ratio only.
+ */
+function heatmapRows(tanks: ReconChartTank[]): HeatmapRow[] {
+  const worstPct = tanks.reduce((m, t) => Math.max(m, Math.abs(num(t.variance_pct))), 0);
+  const worstLitres = tanks.reduce((m, t) => Math.max(m, Math.abs(num(t.variance))), 0);
+  return tanks.map((t) => {
+    const pctIntensity = worstPct > 0 ? Math.abs(num(t.variance_pct)) / worstPct : 0;
+    const litreIntensity = worstLitres > 0 ? Math.abs(num(t.variance)) / worstLitres : 0;
+    const pct = num(t.variance_pct);
+    const signed = `${pct > 0 ? '+' : ''}${t.variance_pct || '0'}%`;
+    const breach = t.over_tolerance ? ' over tolerance' : ' within tolerance';
+    // The priced money value is unsigned from the API (abs litres × price); carry
+    // the litre variance's direction so a shortage's value reads negative.
+    const litres = num(t.variance);
+    const signedValue = t.priced
+      ? `${litres < 0 ? '-' : litres > 0 ? '+' : ''}${formatMoney(t.variance_value)}`
+      : 'no price';
+    return {
+      key: t.tank,
+      label: t.tank,
+      sublabel: t.product || undefined,
+      cells: [
+        {
+          key: 'variance_pct',
+          display: signed,
+          intensity: pctIntensity,
+          tone: t.over_tolerance ? ('danger' as const) : ('success' as const),
+          flagged: t.over_tolerance,
+          sublabel: t.tolerance ? `tol ${t.tolerance}%` : undefined,
+          ariaLabel: `${t.tank} variance ${signed}${breach}`,
+        },
+        {
+          key: 'variance_litres',
+          display: formatLitres(t.variance),
+          intensity: litreIntensity,
+          tone: t.over_tolerance ? ('danger' as const) : ('success' as const),
+          flagged: t.over_tolerance,
+          sublabel: signedValue,
+          ariaLabel: `${t.tank} variance ${formatLitres(t.variance)} litres${
+            t.priced ? `, value ${signedValue}` : ''
+          }${breach}`,
+        },
+      ],
+    };
+  });
 }
 
 export default function InventoryReconciliationPage() {
@@ -60,7 +133,7 @@ export default function InventoryReconciliationPage() {
       <PageHeader
         eyebrow="Reports · Inventory"
         title="Inventory Reconciliation"
-        description="The signature visual: per-tank Opening + Deliveries − Sales ± Adjustments = Expected vs Actual closing, with over-tolerance variance, insights and data-quality checks."
+        description="The signature visual: per-tank Opening + Deliveries − Sales ± Adjustments = Expected vs Actual closing, with over-tolerance variance, a variance heatmap, insights and data-quality checks."
       />
 
       <ReportFilterBar
@@ -79,66 +152,136 @@ export default function InventoryReconciliationPage() {
       >
         {(env: ReportEnvelope) => {
           const tanks = (env.chart_data as ReconChartTank[] | null) ?? [];
+          const overCount = tanks.filter((t) => t.over_tolerance).length;
+          const rows = heatmapRows(tanks);
+
           return (
             <div className="flex flex-col gap-6">
+              {/* Hero: data-quality first (most prominent), then the KPI grid. */}
               <DataQualityPanel items={env.data_quality} />
               <SummaryGrid summary={env.summary} />
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Per-tank reconciliation waterfall</CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    Opening +Deliveries −Sales ±Adjustments = Expected, measured against the
-                    physical closing dip. Litres are exact.
-                  </p>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-5">
-                  {tanks.length === 0 ? (
-                    <EmptyState
-                      title="No tanks reconciled"
-                      description="No tanks or no active operating day for this station yet."
-                    />
-                  ) : (
-                    tanks.map((t) => (
-                      <div key={t.tank} className="flex flex-col gap-2">
-                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                          Tank {t.tank}
-                          {t.tolerance ? (
-                            <span className="text-xs font-normal text-muted-foreground">
-                              tolerance {t.tolerance}%
-                            </span>
-                          ) : null}
-                        </div>
-                        <ReconciliationWaterfall
-                          openingStock={t.opening}
-                          deliveries={t.deliveries}
-                          sales={t.sales}
-                          adjustments={t.adjustments}
-                          expectedClosing={t.expected_closing}
-                          actualClosing={t.actual_closing}
-                          variance={t.variance}
-                          tolerance={toleranceLitres(t)}
-                          unit="L"
+              {/* Two-column report view (§18.2): main visuals + right context panel. */}
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="flex min-w-0 flex-col gap-6">
+                  {/* The centerpiece: per-tank reconciliation waterfall (§5.3). */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Per-tank reconciliation waterfall</CardTitle>
+                      <p className="text-sm text-muted-foreground">
+                        Opening +Deliveries −Sales ±Adjustments = Expected, measured against the
+                        physical closing dip. Litres are exact.
+                      </p>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-5">
+                      {tanks.length === 0 ? (
+                        <EmptyState
+                          title="No tanks reconciled"
+                          description="No tanks or no active operating day for this station yet."
                         />
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
+                      ) : (
+                        tanks.map((t) => (
+                          <div key={t.tank} className="flex flex-col gap-2">
+                            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                              Tank {t.tank}
+                              {t.product ? (
+                                <span className="text-xs font-normal text-muted-foreground">
+                                  {t.product}
+                                </span>
+                              ) : null}
+                              {t.tolerance ? (
+                                <span className="text-xs font-normal text-muted-foreground">
+                                  tolerance {t.tolerance}%
+                                </span>
+                              ) : null}
+                            </div>
+                            <ReconciliationWaterfall
+                              openingStock={t.opening}
+                              deliveries={t.deliveries}
+                              sales={t.sales}
+                              adjustments={t.adjustments}
+                              expectedClosing={t.expected_closing}
+                              actualClosing={t.actual_closing}
+                              variance={t.variance}
+                              tolerance={toleranceLitres(t)}
+                              unit="L"
+                            />
+                          </div>
+                        ))
+                      )}
+                    </CardContent>
+                  </Card>
 
-              <InsightPanel insights={env.insights} recommendedActions={env.recommended_actions} />
+                  {/* Variance heatmap across tanks/products (§5.3 Visual Requirements). */}
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Variance heatmap</CardTitle>
+                      <p className="text-sm text-muted-foreground">
+                        Signed variance % and litre value per tank. Over-tolerance tanks are
+                        flagged; the wash intensity tracks the size of each breach.
+                      </p>
+                    </CardHeader>
+                    <CardContent>
+                      {rows.length === 0 ? (
+                        <EmptyState
+                          title="No variance to map"
+                          description="Reconcile at least one tank to see the variance heatmap."
+                        />
+                      ) : (
+                        <Heatmap
+                          rows={rows}
+                          columns={['Variance %', 'Variance (L / value)']}
+                          flagLabel="Over"
+                        />
+                      )}
+                    </CardContent>
+                  </Card>
 
-              <EnvelopeTable table={env.table} caption="All tanks" />
+                  <EnvelopeTable table={env.table} caption="All tanks" />
+                </div>
 
-              <div className="flex flex-col gap-3">
-                <DrilldownLinks links={env.drilldown} />
-                <EnvelopeExports
-                  options={env.export_options}
-                  reportKey="reconciliation"
-                  filters={filters}
-                  filenameBase={`reconciliation-${stationId.slice(0, 8)}`}
-                  permitted={allowed}
-                />
+                {/* Right panel (§18.2): over-tolerance summary, data-quality, insights,
+                    recommended actions, drill-down + export. */}
+                <aside className="flex flex-col gap-6">
+                  <Card>
+                    <CardHeader className="flex-row items-center gap-2 space-y-0">
+                      <Gauge className="size-4 text-accent" />
+                      <CardTitle className="text-base">Tolerance status</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      {tanks.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          No tanks reconciled for this day yet.
+                        </p>
+                      ) : overCount === 0 ? (
+                        <p className="text-sm text-success">
+                          All {tanks.length} reconciled tank(s) are within tolerance.
+                        </p>
+                      ) : (
+                        <p className="text-sm text-danger">
+                          {overCount} of {tanks.length} tank(s) breached tolerance — review the
+                          flagged rows and open a loss investigation if it repeats.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <InsightPanel
+                    insights={env.insights}
+                    recommendedActions={env.recommended_actions}
+                  />
+
+                  <div className="flex flex-col gap-3">
+                    <DrilldownLinks links={env.drilldown} />
+                    <EnvelopeExports
+                      options={env.export_options}
+                      reportKey="reconciliation"
+                      filters={filters}
+                      filenameBase={`reconciliation-${stationId.slice(0, 8)}`}
+                      permitted={allowed}
+                    />
+                  </div>
+                </aside>
               </div>
             </div>
           );

@@ -23,11 +23,28 @@ type ReportEnvelope struct {
 	DataQuality        []dataQualityItem   `json:"data_quality"`
 	Summary            []summaryMetric     `json:"summary"`
 	ChartData          any                 `json:"chart_data"`
+	TenderMix          *tenderMix          `json:"tender_mix,omitempty"`
 	Table              reportTable         `json:"table"`
 	Insights           []reporting.Insight `json:"insights"`
 	RecommendedActions []string            `json:"recommended_actions"`
 	Drilldown          []drilldownLink     `json:"drilldown"`
 	ExportOptions      []exportOption      `json:"export_options"`
+}
+
+// tenderMix is an additive, report-specific breakdown of a station-day's
+// recorded tenders by type — cash / mobile-money / card / credit / voucher and
+// their total. Every figure is an exact decimal STRING (numeric -> text), read
+// from the same revenue_days rollup the close figures come from; no money is
+// recomputed here. Optional (a pointer with omitempty) so reports that have no
+// tender split simply omit it. The Daily Station Close report sets it; later
+// phases (Sales) reuse the same shape for the payment-method donut.
+type tenderMix struct {
+	Cash        string `json:"cash"`
+	MobileMoney string `json:"mobile_money"`
+	Card        string `json:"card"`
+	Credit      string `json:"credit"`
+	Voucher     string `json:"voucher"`
+	Total       string `json:"total"`
 }
 
 // reportMetadata identifies the report instance.
