@@ -7,6 +7,7 @@ export type {
   ConfirmAssignmentPayload,
   ReadingPayload,
   CollectionPayload,
+  IssuePayload,
 } from './types';
 export { isOfflineError, replayAction, collectionTotal } from './replay';
 export type { ReplayApi, ReplayOutcome } from './replay';

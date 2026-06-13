@@ -181,6 +181,8 @@ function queuedActionLabel(item: QueuedAction, t: Messages): string {
     }
     case 'collection':
       return t.sync.actionCollection;
+    case 'report_issue':
+      return t.sync.actionReportIssue(t.report.types[item.payload.type]);
   }
 }
 
@@ -204,6 +206,10 @@ function queueErrorText(item: QueuedAction, t: Messages): string | null {
       return t.sync.errCollectionConflict(item.error_params?.server_value ?? '—');
     case 'verify_unavailable':
       return t.sync.errVerifyUnavailable;
+    case 'no_active_shift':
+      return t.sync.errNoActiveShift;
+    case 'issue_invalid':
+      return item.error_message ?? t.sync.errIssueInvalid;
     default:
       return item.error_message ?? null;
   }

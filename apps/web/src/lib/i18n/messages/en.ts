@@ -110,6 +110,81 @@ export const en = {
     ctaFinishShift: 'Finish your shift',
     errCheckIn: 'Could not check in. Try again.',
     errConfirm: 'Could not confirm the assignment. Try again.',
+    // Home header bell + report-issue entry point.
+    notificationsLink: 'Notifications',
+    /** Accessible label for the bell when there are unread items. */
+    bellUnread: (n: number) => `Notifications, ${n} unread`,
+    bellNoUnread: 'Notifications',
+    reportIssue: 'Report an issue',
+  },
+
+  notifications: {
+    title: 'Notifications',
+    subtitle: 'Updates from your supervisor about this shift.',
+    markAllRead: 'Mark all as read',
+    markRead: 'Mark as read',
+    markedRead: 'Read',
+    unread: 'Unread',
+    emptyTitle: 'No notifications yet',
+    emptyBody: 'Updates about your assignment, readings, cash and shift show up here.',
+    errLoadTitle: "Couldn't load your notifications",
+    loadMore: 'Show more',
+    // Severity badge labels (text always carries the meaning, colour reinforces).
+    severityInfo: 'Info',
+    severitySuccess: 'Done',
+    severityWarning: 'Attention',
+    severityCritical: 'Urgent',
+  },
+
+  report: {
+    title: 'Report an issue',
+    subtitle: 'Tell your supervisor about a problem at your pump. They are notified right away.',
+    typeLabel: 'What is the problem?',
+    // Issue-type picker labels, mapped to the API enum values.
+    types: {
+      pump: 'Pump',
+      nozzle: 'Nozzle',
+      meter: 'Meter',
+      payment: 'Payment',
+      safety: 'Safety',
+      other: 'Something else',
+    },
+    typeHints: {
+      pump: 'The pump is not working properly',
+      nozzle: 'A nozzle is faulty or leaking',
+      meter: 'The meter reading looks wrong',
+      payment: 'A problem taking payment',
+      safety: 'A safety or spill concern',
+      other: 'Any other problem',
+    },
+    urgencyLabel: 'How urgent is it?',
+    urgencyLow: 'Low',
+    urgencyMedium: 'Normal',
+    urgencyHigh: 'Urgent',
+    descriptionLabel: 'Describe the problem',
+    descriptionPlaceholder: 'What happened? Add anything your supervisor should know.',
+    descriptionMissing: 'Add a short description before you send.',
+    typeMissing: 'Choose what the problem is first.',
+    submitButton: 'Send to supervisor',
+    confirmTitle: 'Send this to your supervisor?',
+    confirmType: 'Problem',
+    confirmUrgency: 'Urgency',
+    confirmSend: 'Send now',
+    onceNote: 'Your supervisor is notified as soon as this is sent.',
+    sentTitle: 'Sent to your supervisor',
+    sentBody: 'Your supervisor has been notified and will follow up.',
+    queuedTitle: 'Saved on this phone',
+    queuedBody: 'It will be sent to your supervisor when you are back online.',
+    backHome: 'Back to my shift',
+    reportAnother: 'Report another issue',
+    errNoShiftTitle: 'You are not on a shift',
+    errNoShiftBody:
+      'Issue reports are linked to your current shift. Check in to a shift first, or call your supervisor.',
+    errGeneric: 'Could not send the report. Check your connection and try again.',
+    toastSentTitle: 'Issue reported',
+    toastSentBody: 'Your supervisor has been notified.',
+    toastQueuedTitle: 'Issue saved on this phone',
+    toastQueuedBody: 'It will be sent when you are back online.',
   },
 
   opening: {
@@ -134,6 +209,8 @@ export const en = {
     statusEmpty: 'Enter the reading shown on the meter.',
     notSaved: (message: string) => `Not saved: ${message}`,
     issueReported: 'Issue reported. Your supervisor has been notified.',
+    issueQueued:
+      'Issue saved on this phone — it will reach your supervisor when you are back online.',
     reportIssue: 'Report issue to supervisor',
     cannotReport:
       'You cannot file the report from here yet — call your supervisor to resolve this before the shift can continue.',
@@ -375,6 +452,8 @@ export const en = {
       `Closing reading ${reading} — pump ${pump} · nozzle ${nozzle}`,
     actionClosingReadingGeneric: (reading: string) => `Closing reading ${reading}`,
     actionCollection: 'Submit collections',
+    /** "Report a {pump} issue" — the issue type comes from report.types. */
+    actionReportIssue: (issueType: string) => `Report a ${issueType.toLowerCase()} issue`,
     // Client-generated queue error messages, stored as CODES in the queue
     // records and rendered here (raw server prose has no code and is shown
     // verbatim as the fallback).
@@ -389,6 +468,9 @@ export const en = {
     errCollectionConflict: (serverTotal: string) =>
       `Collections were already submitted for this shift with a different total (${serverTotal}). Your amounts are kept here — show them to your supervisor.`,
     errVerifyUnavailable: 'Could not verify with the server — it will be retried.',
+    errNoActiveShift:
+      'You are no longer on a shift, so this issue could not be sent. Check in to a shift first, or call your supervisor.',
+    errIssueInvalid: 'This issue report could not be sent. Edit it and try again, or discard it.',
   },
 
   settings: {

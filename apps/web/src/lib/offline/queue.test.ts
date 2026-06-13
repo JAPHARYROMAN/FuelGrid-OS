@@ -25,6 +25,9 @@ function makeApi(overrides: Partial<ReplayApi> = {}): ReplayApi {
     confirmNozzleAssignment: vi.fn().mockResolvedValue({}),
     captureMeterReading: vi.fn().mockResolvedValue({}),
     submitCash: vi.fn().mockResolvedValue({}),
+    // The SDK returns the parsed Incident on both a 201 create and a 200
+    // dedupe-key replay; the default resolves to a stub incident.
+    reportIncident: vi.fn().mockResolvedValue({ id: 'inc-1', dedupe_key: 'k1' }),
     ...overrides,
   };
 }
@@ -374,6 +377,95 @@ describe('replayAction mapping', () => {
       baseAction({ action_type: 'collection', payload: collectionPayload }),
     );
     expect(outcome.kind).toBe('failed');
+  });
+
+  const issuePayload = {
+    type: 'pump' as const,
+    description: 'pump 1 will not dispense',
+    severity: 'high',
+    dedupe_key: 'dedupe-1',
+  };
+
+  it('issue report success (first create, 201) → synced and sends the dedupe_key, never a station', async () => {
+    const reportIncident = vi.fn().mockResolvedValue({ id: 'inc-1', dedupe_key: 'dedupe-1' });
+    const api = makeApi({ reportIncident });
+    const outcome = await replayAction(
+      api,
+      baseAction({ action_type: 'report_issue', payload: issuePayload }),
+    );
+    expect(outcome.kind).toBe('synced');
+    const sent = reportIncident.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(sent).toMatchObject({
+      type: 'pump',
+      description: 'pump 1 will not dispense',
+      severity: 'high',
+      dedupe_key: 'dedupe-1',
+    });
+    // Station is derived server-side — the queue NEVER asserts one.
+    expect(sent).not.toHaveProperty('station_id');
+  });
+
+  it('issue report dedupe_key REPLAY (200, original incident) → synced/applied, NOT a duplicate conflict', async () => {
+    // A 200 replay surfaces through the SDK as a normal resolved Incident — the
+    // SAME success path as a 201. The honest mapping is synced/applied.
+    const reportIncident = vi
+      .fn()
+      .mockResolvedValue({ id: 'inc-ORIGINAL', dedupe_key: 'dedupe-1' });
+    const api = makeApi({ reportIncident });
+    const outcome = await replayAction(
+      api,
+      baseAction({ action_type: 'report_issue', payload: issuePayload }),
+    );
+    expect(outcome.kind).toBe('synced');
+    expect(outcome).not.toMatchObject({ kind: 'conflict' });
+  });
+
+  it('issue report 409 no_active_shift → failed with the code-mapped message (translated at render)', async () => {
+    const api = makeApi({
+      reportIncident: vi
+        .fn()
+        .mockRejectedValue(
+          new SdkError('you have no active shift', 409, { code: 'no_active_shift' }),
+        ),
+    });
+    const outcome = await replayAction(
+      api,
+      baseAction({ action_type: 'report_issue', payload: issuePayload }),
+    );
+    expect(outcome.kind).toBe('failed');
+    expect(outcome).toMatchObject({ code: 'no_active_shift' });
+  });
+
+  it('issue report 422 validation → failed with issue_invalid (re-editable, never silently dropped)', async () => {
+    const api = makeApi({
+      reportIncident: vi
+        .fn()
+        .mockRejectedValue(new SdkError('description is required', 422, { error: 'bad request' })),
+    });
+    const outcome = await replayAction(
+      api,
+      baseAction({ action_type: 'report_issue', payload: issuePayload }),
+    );
+    expect(outcome.kind).toBe('failed');
+    expect(outcome).toMatchObject({ code: 'issue_invalid' });
+  });
+
+  it('issue report offline transport → offline (stays pending, replays later)', async () => {
+    const api = makeApi({ reportIncident: vi.fn().mockRejectedValue(offlineError()) });
+    const outcome = await replayAction(
+      api,
+      baseAction({ action_type: 'report_issue', payload: issuePayload }),
+    );
+    expect(outcome).toEqual({ kind: 'offline' });
+  });
+
+  it('issue report 401 → auth (queue pauses, nothing discarded)', async () => {
+    const api = makeApi({ reportIncident: vi.fn().mockRejectedValue(authError()) });
+    const outcome = await replayAction(
+      api,
+      baseAction({ action_type: 'report_issue', payload: issuePayload }),
+    );
+    expect(outcome).toEqual({ kind: 'auth' });
   });
 
   it('collectionTotal sums tenders with exact decimal-string math', () => {

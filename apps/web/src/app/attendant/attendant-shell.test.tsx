@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 
 vi.mock('@/lib/api', () => ({
@@ -11,6 +12,8 @@ vi.mock('@/lib/api', () => ({
     confirmNozzleAssignment: vi.fn(),
     captureMeterReading: vi.fn(),
     submitCash: vi.fn(),
+    reportIncident: vi.fn(),
+    notificationUnreadCount: vi.fn().mockResolvedValue({ unread_count: 0 }),
   },
 }));
 
@@ -32,12 +35,15 @@ import { AttendantShell } from './attendant-shell';
  */
 
 function renderShell() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <AttendantPrefsProvider>
-      <AttendantShell>
-        <div>page-content</div>
-      </AttendantShell>
-    </AttendantPrefsProvider>,
+    <QueryClientProvider client={qc}>
+      <AttendantPrefsProvider>
+        <AttendantShell>
+          <div>page-content</div>
+        </AttendantShell>
+      </AttendantPrefsProvider>
+    </QueryClientProvider>,
   );
 }
 

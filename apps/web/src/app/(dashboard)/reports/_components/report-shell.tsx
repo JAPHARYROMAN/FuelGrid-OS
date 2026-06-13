@@ -58,6 +58,59 @@ export function ReportFilterBar({
 }
 
 /**
+ * A station + inclusive date-window (from/to) FilterBar for the dataset report
+ * views that take a `?from`/`?to` range (attendance, corrections & variances).
+ * Empty date inputs leave the SDK to apply its 30-day default.
+ */
+export function ReportDateRangeFilterBar({
+  items,
+  stationId,
+  onStation,
+  from,
+  to,
+  onFrom,
+  onTo,
+  actions,
+}: {
+  items: Station[];
+  stationId: string;
+  onStation: (id: string) => void;
+  from: string;
+  to: string;
+  onFrom: (v: string) => void;
+  onTo: (v: string) => void;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <FilterBar actions={actions}>
+      <FilterField label="Station">
+        <StationSelectBare items={items} value={stationId} onChange={onStation} />
+      </FilterField>
+      <FilterField label="From">
+        <input
+          type="date"
+          className={selectClasses}
+          value={from}
+          max={to || undefined}
+          onChange={(e) => onFrom(e.target.value)}
+          aria-label="From date"
+        />
+      </FilterField>
+      <FilterField label="To">
+        <input
+          type="date"
+          className={selectClasses}
+          value={to}
+          min={from || undefined}
+          onChange={(e) => onTo(e.target.value)}
+          aria-label="To date"
+        />
+      </FilterField>
+    </FilterBar>
+  );
+}
+
+/**
  * Renders the standard loading / empty / error / permission states around an
  * envelope query, delegating the success state to `children`. Keeps every
  * signature report view consistent.

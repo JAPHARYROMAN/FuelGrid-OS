@@ -29,6 +29,20 @@
  *                            different total → conflict, no submission at all
  *                            → failed with the server's message. 422
  *                            variance_reason_required → failed.
+ *   issue report             incidents_report_handlers.go — IDEMPOTENT on the
+ *                            client dedupe_key: the FIRST create returns 201, a
+ *                            REPLAY of the same key returns 200 with the
+ *                            ORIGINAL incident and NO side effects. The SDK
+ *                            returns the parsed Incident on both, so any
+ *                            success (201 or 200-replay) is `synced`/applied —
+ *                            a 200 replay is explicitly NOT a duplicate
+ *                            conflict, it is the honest "already recorded"
+ *                            outcome. 409 no_active_shift (the reporter has no
+ *                            current shift) and any 4xx validation (bad type /
+ *                            empty description) → failed with a code-mapped,
+ *                            translated message; the attendant fixes it or
+ *                            discards. 403 station mismatch cannot occur (the
+ *                            queue never sends a station_id).
  *
  * Cross-cutting:
  *   status 0 (SDK network failure) → offline: stay pending, retry later.
@@ -39,12 +53,18 @@
  *         only). Data is NEVER dropped by the replay engine itself.
  */
 
-import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
+import {
+  SdkError,
+  type AttendantCurrentShift,
+  type Incident,
+  type IncidentReportRequest,
+} from '@fuelgrid/sdk';
 
 import { compareMeterDecimals, addMeterDecimals, isMeterDecimal } from '@/lib/meter-decimal';
 
 import type {
   CollectionPayload,
+  IssuePayload,
   QueuedAction,
   QueueMessageCode,
   QueueMessageParams,
@@ -74,6 +94,7 @@ export interface ReplayApi {
       notes?: string;
     },
   ): Promise<unknown>;
+  reportIncident(req: IncidentReportRequest): Promise<Incident>;
 }
 
 /**
@@ -314,6 +335,42 @@ export async function replayAction(api: ReplayApi, action: QueuedAction): Promis
         }
         // 422 variance_reason_required and any other 4xx → failed, re-editable.
         return { kind: 'failed', message: sdkErr.message };
+      }
+    }
+    case 'report_issue': {
+      const payload = action.payload as IssuePayload;
+      try {
+        // The dedupe_key makes this idempotent: a replay of the same key
+        // returns the ORIGINAL incident (200) instead of creating a duplicate
+        // (201). The SDK returns the parsed Incident on both, so a successful
+        // call — first or replay — is `synced`/applied (NOT a duplicate
+        // conflict). The station is derived server-side; we never send one.
+        await api.reportIncident({
+          type: payload.type,
+          description: payload.description,
+          ...(payload.severity ? { severity: payload.severity } : {}),
+          dedupe_key: payload.dedupe_key,
+        });
+        return { kind: 'synced', note: 'issue reported (replay returns the original incident)' };
+      } catch (err) {
+        const common = commonOutcome(err);
+        if (common) return common;
+        const sdkErr = err as SdkError;
+        if (sdkErr.status === 409 && errorCode(sdkErr) === 'no_active_shift') {
+          // The reporter has no current shift — the server cannot derive a
+          // station. A genuine failure the attendant must see and resolve.
+          return {
+            kind: 'failed',
+            message: 'You are no longer on a shift, so this issue could not be sent.',
+            code: 'no_active_shift',
+          };
+        }
+        // Any other 4xx (bad type / empty description) → failed, re-editable.
+        return {
+          kind: 'failed',
+          message: sdkErr.message,
+          code: 'issue_invalid',
+        };
       }
     }
   }
