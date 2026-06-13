@@ -1,5 +1,6 @@
 'use client';
 
+import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
@@ -10,6 +11,7 @@ import {
   Bell,
   Building2,
   CalendarClock,
+  ChevronDown,
   ClipboardCheck,
   Database,
   DollarSign,
@@ -40,12 +42,37 @@ interface NavItem {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  /** Optional nested links (e.g. the Reports category tree, blueprint §19). */
+  children?: { label: string; href: string }[];
 }
 
 interface NavGroup {
   label: string;
   items: NavItem[];
 }
+
+/**
+ * The nested Reports category tree (blueprint §19). Mirrors the catalog's 16
+ * categories, ordered as the spec lists them. Routes point at the dedicated
+ * report page where one exists today and at the hub (/reports) for categories
+ * whose on-screen view is not built yet — never a dead link. The catalog/hub
+ * itself remains the source of truth for availability + permission filtering;
+ * this tree is navigation only.
+ */
+const REPORTS_TREE: { label: string; href: string }[] = [
+  { label: 'Overview', href: '/reports' },
+  { label: 'Executive', href: '/reports/executive' },
+  { label: 'Sales', href: '/reports/sales-summary' },
+  { label: 'Inventory', href: '/reports/inventory/reconciliation' },
+  { label: 'Shifts', href: '/reports/station-close' },
+  { label: 'Cash', href: '/reports/cash-reconciliation' },
+  { label: 'Finance', href: '/reports/profitability' },
+  { label: 'Customer Credit', href: '/reports/customer-aging' },
+  { label: 'Risk & Loss', href: '/reports/fuel-loss' },
+  { label: 'Station Comparison', href: '/reports/station-comparison' },
+  { label: 'Scheduled', href: '/reports/scheduled' },
+  { label: 'Exports', href: '/reports/exports' },
+];
 
 /**
  * Grouped navigation. Sections give the 20+ destinations a legible hierarchy
@@ -98,7 +125,7 @@ const navGroups: NavGroup[] = [
       { label: 'Payables Aging', href: '/payables/aging', icon: Receipt },
       { label: 'Credit Invoices', href: '/credit/invoices', icon: Receipt },
       { label: 'Supplier Invoices', href: '/payables/invoices', icon: Receipt },
-      { label: 'Reports', href: '/reports', icon: BarChart3 },
+      { label: 'Reports', href: '/reports', icon: BarChart3, children: REPORTS_TREE },
     ],
   },
   {
@@ -147,9 +174,92 @@ export function SidebarBrand() {
  * mobile slide-over sheet. `onNavigate` lets the sheet close itself when a
  * link is tapped.
  */
-export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+/**
+ * A single nav row. When the item has `children` (the Reports category tree,
+ * §19) it becomes an expandable group: the parent link still navigates to its
+ * own route, a chevron toggles the sub-tree, and the tree auto-expands while the
+ * user is anywhere under it. Leaf rows are a plain link as before.
+ */
+function NavLink({ item, onNavigate }: { item: NavItem; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const Icon = item.icon;
+  const withinTree = pathname === item.href || pathname.startsWith(item.href + '/');
+  const hasChildren = !!item.children?.length;
+  // Active for the parent row: exact match, or (for childless items) any
+  // descendant route. With children, the descendant highlight moves to the leaf.
+  const active = hasChildren ? pathname === item.href : withinTree;
+  const [open, setOpen] = React.useState(withinTree);
+  React.useEffect(() => {
+    if (withinTree) setOpen(true);
+  }, [withinTree]);
 
+  return (
+    <div className="flex flex-col">
+      <div className="relative flex items-center">
+        <Link
+          href={item.href}
+          onClick={onNavigate}
+          aria-current={active ? 'page' : undefined}
+          className={cn(
+            'group relative flex flex-1 items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+            active
+              ? 'bg-accent-muted/70 font-medium text-foreground'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          )}
+        >
+          {active ? (
+            <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
+          ) : null}
+          <Icon
+            className={cn(
+              'size-[18px] shrink-0 transition-colors',
+              active ? 'text-accent' : 'text-muted-foreground group-hover:text-foreground',
+            )}
+          />
+          <span className="truncate">{item.label}</span>
+        </Link>
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-label={open ? `Collapse ${item.label}` : `Expand ${item.label}`}
+            aria-expanded={open}
+            className="absolute right-1 flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <ChevronDown
+              className={cn('size-4 transition-transform', open ? 'rotate-180' : 'rotate-0')}
+            />
+          </button>
+        ) : null}
+      </div>
+      {hasChildren && open ? (
+        <div className="ml-[1.6rem] mt-0.5 flex flex-col gap-0.5 border-l border-border/70 pl-2">
+          {item.children!.map((child) => {
+            const childActive = pathname === child.href;
+            return (
+              <Link
+                key={child.href}
+                href={child.href}
+                onClick={onNavigate}
+                aria-current={childActive ? 'page' : undefined}
+                className={cn(
+                  'truncate rounded-md px-3 py-1.5 text-[13px] transition-colors',
+                  childActive
+                    ? 'bg-accent-muted/60 font-medium text-foreground'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                )}
+              >
+                {child.label}
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <nav className="flex-1 overflow-y-auto px-3 pb-6">
       {navGroups.map((group) => (
@@ -158,35 +268,9 @@ export function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
             {group.label}
           </p>
           <div className="flex flex-col gap-0.5">
-            {group.items.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(item.href + '/');
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={onNavigate}
-                  aria-current={active ? 'page' : undefined}
-                  className={cn(
-                    'group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-                    active
-                      ? 'bg-accent-muted/70 font-medium text-foreground'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  )}
-                >
-                  {active ? (
-                    <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent" />
-                  ) : null}
-                  <Icon
-                    className={cn(
-                      'size-[18px] shrink-0 transition-colors',
-                      active ? 'text-accent' : 'text-muted-foreground group-hover:text-foreground',
-                    )}
-                  />
-                  <span className="truncate">{item.label}</span>
-                </Link>
-              );
-            })}
+            {group.items.map((item) => (
+              <NavLink key={item.href} item={item} onNavigate={onNavigate} />
+            ))}
           </div>
         </div>
       ))}

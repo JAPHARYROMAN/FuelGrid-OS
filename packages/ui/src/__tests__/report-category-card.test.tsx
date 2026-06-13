@@ -73,4 +73,44 @@ describe('ReportCategoryCard', () => {
     expect(html).toContain('Plain');
     expect(html).not.toContain('NaN');
   });
+
+  it('shows a "Limited" pill for a partial category', () => {
+    const html = renderToStaticMarkup(
+      <ReportCategoryCard title="Pump" availability="partial" metricLabel="Throughput" />,
+    );
+    expect(html).toContain('Limited');
+    expect(html).not.toContain('Coming soon');
+  });
+
+  it('marks a placeholder category as coming-soon and unavailable', () => {
+    const html = renderToStaticMarkup(
+      <ReportCategoryCard title="Tank" availability="placeholder" />,
+    );
+    expect(html).toContain('Coming soon');
+    // The whole card is muted and flagged disabled for assistive tech.
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('opacity-75');
+  });
+
+  it('shows the honest reason instead of a value when there is no metric', () => {
+    const html = renderToStaticMarkup(
+      <ReportCategoryCard
+        title="Finance"
+        availability="live"
+        metricLabel="Outstanding payables"
+        metricReason="Requires margin.view to see supplier cost / payables exposure."
+      />,
+    );
+    expect(html).toContain('Requires margin.view');
+    // It must NOT fabricate a number in place of the gated/absent figure.
+    expect(html).not.toContain('NaN');
+    expect(html).not.toMatch(/font-mono[^>]*>0</);
+  });
+
+  it('defaults to live with no status pill', () => {
+    const html = renderToStaticMarkup(<ReportCategoryCard title="Inventory" metricValue="3" />);
+    expect(html).not.toContain('Limited');
+    expect(html).not.toContain('Coming soon');
+    expect(html).not.toContain('aria-disabled');
+  });
 });
