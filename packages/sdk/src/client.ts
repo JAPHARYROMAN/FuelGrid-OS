@@ -1933,6 +1933,24 @@ export class Client {
     );
   }
 
+  /**
+   * Approve ONE closing reading as-submitted (reading.override). The per-reading
+   * counterpart to verifyShiftReadings, and the path that CLEARS a hold: a
+   * flagged (or rejected) reading the supervisor decides is fine is approved
+   * here, overwriting the hold with a terminal 'approved' verdict (final = the
+   * attendant's submission, unchanged). An already-terminal verification 409s.
+   */
+  approveReading(
+    shiftID: string,
+    readingID: string,
+    signal?: AbortSignal,
+  ): Promise<ReadingVerification> {
+    return this.request<ReadingVerification>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/readings/${encodeURIComponent(readingID)}/approve`,
+      { method: 'POST', signal },
+    );
+  }
+
   // ----------- Shift close & cash -----------
 
   closeShift(shiftID: string, signal?: AbortSignal): Promise<ShiftCloseSummary> {

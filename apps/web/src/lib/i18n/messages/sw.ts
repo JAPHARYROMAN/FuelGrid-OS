@@ -279,6 +279,7 @@ export const sw: Messages = {
     badgeApproved: 'Umeidhinishwa na msimamizi',
     badgeCorrected: 'Umesahihishwa na msimamizi',
     badgeRejected: 'Umekataliwa na msimamizi',
+    badgeFlagged: 'Umewekewa alama ya uchunguzi',
     badgePending: 'Umewasilishwa — unasubiri uhakiki wa msimamizi',
     confirmTitle: 'Thibitisha usomaji wako wa kufunga',
     confirmSummaryPrefix: (n) => `Unawasilisha usomaji ${n} wenye jumla ya lita `,
@@ -311,6 +312,17 @@ export const sw: Messages = {
     errAlreadyRecorded: 'Usomaji wa kufunga ulisharekodiwa kwa nozeli hii.',
     errGeneric: 'Imeshindikana kuhifadhi usomaji huu. Angalia mtandao wako kisha ujaribu tena.',
     viewReviewStatus: 'Angalia hali ya uhakiki',
+    rejectedTitle: 'Umekataliwa — soma upya mita kisha uwasilishe tena',
+    rejectedReason: (reason) => `Sababu ya msimamizi: ${reason}`,
+    rejectedPrevious: (value) => `Uliwasilisha ${value}`,
+    resubmitButton: 'Wasilisha tena usomaji wa kufunga',
+    resubmitOfflineTitle: 'Unahitaji mtandao ili kuwasilisha tena',
+    resubmitOfflineBody:
+      'Kuwasilisha tena usomaji uliokataliwa kunahitaji mtandao hai ili msimamizi wako auone mara moja. Unganisha tena kisha ujaribu.',
+    resubmitErr:
+      'Imeshindikana kuwasilisha tena usomaji huu. Angalia mtandao wako kisha ujaribu tena.',
+    toastResubmittedTitle: 'Usomaji wa kufunga umewasilishwa tena',
+    toastResubmittedBody: 'Msimamizi wako atauhakiki usomaji mpya.',
   },
 
   collections: {
@@ -395,6 +407,8 @@ export const sw: Messages = {
     rejectedTitle: 'Msimamizi wako amekataa usomaji huu',
     rejectedHelp: 'Soma upya kipimo cha kufunga cha nozeli hii kisha uwasilishe tena.',
     resubmitCta: 'Wasilisha tena usomaji wako wa kufunga',
+    rejectedClosedHelp:
+      'Zamu imefungwa, kwa hivyo msimamizi wako atasahihisha usomaji huu. Hakuna hatua inayohitajika kwako.',
     // Usomaji uliowekewa alama uko kwenye uchunguzi wa msimamizi — hakuna hatua.
     flaggedHelp: 'Msimamizi wako anachunguza usomaji huu. Hakuna hatua inayohitajika kwako bado.',
   },

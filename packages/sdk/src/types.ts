@@ -1013,6 +1013,8 @@ export interface AttendantAssignment {
  */
 export interface AttendantReading {
   nozzle_id: string;
+  /** The ACTIVE closing reading's id, present once a closing exists — needed to drive the /correct resubmit after a rejection. */
+  closing_reading_id?: string;
   opening_reading?: string;
   closing_reading?: string;
   verification_status?: 'pending' | 'approved' | 'corrected' | 'rejected' | 'flagged';

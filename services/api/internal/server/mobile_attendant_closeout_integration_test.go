@@ -94,9 +94,18 @@ func TestMobileAttendant_RejectReading(t *testing.T) {
 		t.Fatalf("meter reading mutated: reading=%s status=%s, want 1500.000/active", rawReading, rawStatus)
 	}
 
-	// A second verdict on the same reading is refused (one verification per reading).
-	if code, _ := h.postJSON(t, rejectPath, operator, `{"reason":"again"}`); code != http.StatusConflict {
-		t.Fatalf("double verdict: %d, want 409", code)
+	// A rejection is a non-terminal HOLD, so re-deciding it overwrites the hold
+	// in place (still exactly one verification row) rather than 409ing — the
+	// supervisor can revise the reason or, later, clear it with a terminal
+	// verdict. The terminal-immutability rule is proven separately by the
+	// flag/collection clear tests' "re-approve terminal -> 409" assertions.
+	if code, b := h.postJSON(t, rejectPath, operator, `{"reason":"again"}`); code != http.StatusCreated {
+		t.Fatalf("re-reject hold: %d %v, want 201 (hold overwritten in place)", code, b)
+	}
+	var verifCount int
+	_ = h.pool.QueryRow(ctx, `SELECT count(*) FROM reading_verifications WHERE reading_id = $1`, closingID).Scan(&verifCount)
+	if verifCount != 1 {
+		t.Fatalf("verifications on reading = %d, want 1 (single row, overwritten)", verifCount)
 	}
 
 	// Approval is blocked with the rejection-specific machine-readable code.
@@ -356,9 +365,251 @@ func TestMobileAttendant_CollectionFlagBlocksApproval(t *testing.T) {
 		t.Fatalf("approve with flagged collection: %d %v, want 409 collection_unconfirmed", code, blocked)
 	}
 
-	// One receipt per submission: a follow-up confirm is refused.
-	if code, _ := h.postJSON(t, confirmPath, operator, `{"received_total":"1475000"}`); code != http.StatusConflict {
-		t.Fatalf("re-confirm after flag: %d, want 409 (one per submission)", code)
+	// A flag is a HOLD, not a final receipt: re-confirming after the dispute is
+	// settled overwrites it in place (the clear path is exercised end to end in
+	// TestMobileAttendant_CollectionFlagClearedByReconfirm).
+	if code, b := h.postJSON(t, confirmPath, operator, `{"received_total":"1475000"}`); code != http.StatusCreated {
+		t.Fatalf("re-confirm after flag: %d %v, want 201 (hold is re-confirmable)", code, b)
+	}
+}
+
+// TestMobileAttendant_FlagClearedByApprove proves a FLAGGED reading is
+// resolvable: the supervisor flags it, then — investigation done, figure fine —
+// approves it as-submitted via the per-reading approve path, which overwrites
+// the flag with a terminal 'approved'. The shift then approves cleanly. This is
+// the hold -> clear -> approve cycle the reviewers flagged as untested.
+func TestMobileAttendant_FlagClearedByApprove(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	operator := h.login(t, tenantSlug, h.ids.opEmail)
+
+	emailA := fmt.Sprintf("att-flagclear-%d@it.local", time.Now().UnixNano())
+	_, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, emailA)
+	att := h.login(t, tenantSlug, emailA)
+	h.capturePMSShiftReadings(t, admin, att, shiftID, nozzleID)
+
+	closingID := closingIDForShift(t, ctx, h, shiftID, nozzleID)
+	flagPath := "/api/v1/shifts/" + shiftID + "/readings/" + closingID.String() + "/flag"
+	approvePath := "/api/v1/shifts/" + shiftID + "/readings/" + closingID.String() + "/approve"
+
+	if code, _ := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/close", admin, ``); code != http.StatusOK {
+		t.Fatalf("close: %d", code)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission", admin,
+		fmt.Sprintf(`{"cash_amount":"%s"}`, expectedCashFor(t, h, admin, shiftID))); code != http.StatusCreated {
+		t.Fatalf("cash: %d %v", code, b)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission/confirm", operator,
+		fmt.Sprintf(`{"received_total":"%s"}`, expectedCashFor(t, h, admin, shiftID))); code != http.StatusCreated {
+		t.Fatalf("confirm cash: %d %v", code, b)
+	}
+
+	// Flag the reading: approval is blocked.
+	if code, b := h.postJSON(t, flagPath, operator, `{"reason":"checking the dip"}`); code != http.StatusCreated {
+		t.Fatalf("flag: %d %v", code, b)
+	}
+	code, blocked := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`)
+	if code != http.StatusConflict || blocked["code"] != "readings_flagged_pending" {
+		t.Fatalf("approve with flag: %d %v, want 409 readings_flagged_pending", code, blocked)
+	}
+
+	// Clear the flag by approving the reading as-submitted: the flag row is
+	// overwritten with a terminal 'approved'.
+	code, appr := h.postJSON(t, approvePath, operator, ``)
+	if code != http.StatusCreated || appr["status"] != "approved" || appr["final_approved_reading"] != "1500.000" {
+		t.Fatalf("approve reading to clear flag: %d %v", code, appr)
+	}
+	var verifCount int
+	_ = h.pool.QueryRow(ctx, `SELECT count(*) FROM reading_verifications WHERE reading_id = $1`, closingID).Scan(&verifCount)
+	if verifCount != 1 {
+		t.Fatalf("verifications on reading = %d, want 1 (hold overwritten in place)", verifCount)
+	}
+
+	// Re-approving an already-terminal reading is refused.
+	if code, _ := h.postJSON(t, approvePath, operator, ``); code != http.StatusConflict {
+		t.Fatalf("re-approve terminal: %d, want 409", code)
+	}
+
+	// The shift now approves.
+	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {
+		t.Fatalf("approve after clearing flag: %d %v, want 200", code, b)
+	}
+}
+
+// TestMobileAttendant_PostCloseRejectClearedByCorrect proves a rejection issued
+// on a CLOSED shift (the realistic post-close review path) is recoverable: the
+// attendant can no longer re-capture (the shift is closed), so the SUPERVISOR
+// clears the hold by correcting the reading, after which the shift approves.
+func TestMobileAttendant_PostCloseRejectClearedByCorrect(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	operator := h.login(t, tenantSlug, h.ids.opEmail)
+
+	emailA := fmt.Sprintf("att-postclose-%d@it.local", time.Now().UnixNano())
+	_, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, emailA)
+	att := h.login(t, tenantSlug, emailA)
+	h.capturePMSShiftReadings(t, admin, att, shiftID, nozzleID)
+
+	closingID := closingIDForShift(t, ctx, h, shiftID, nozzleID)
+	rejectPath := "/api/v1/shifts/" + shiftID + "/readings/" + closingID.String() + "/reject"
+	correctPath := "/api/v1/shifts/" + shiftID + "/readings/" + closingID.String() + "/verify-correct"
+
+	if code, _ := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/close", admin, ``); code != http.StatusOK {
+		t.Fatalf("close: %d", code)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission", admin,
+		fmt.Sprintf(`{"cash_amount":"%s"}`, expectedCashFor(t, h, admin, shiftID))); code != http.StatusCreated {
+		t.Fatalf("cash: %d %v", code, b)
+	}
+
+	// Reject after close.
+	if code, b := h.postJSON(t, rejectPath, operator, `{"reason":"meter photo unreadable"}`); code != http.StatusCreated {
+		t.Fatalf("reject post-close: %d %v", code, b)
+	}
+	// The attendant cannot re-capture on a closed shift.
+	closingCorrectPath := "/api/v1/shifts/" + shiftID + "/meter-readings/" + closingID.String() + "/correct"
+	if code, _ := h.postJSON(t, closingCorrectPath, att, `{"reading":"1495"}`); code != http.StatusConflict {
+		t.Fatalf("attendant re-capture on closed shift: %d, want 409", code)
+	}
+
+	// The supervisor clears the rejection by correcting the reading (works
+	// post-close — it recomputes the close line). The hold is overwritten.
+	code, corr := h.postJSON(t, correctPath, operator, `{"verified_reading":"1500","reason":"confirmed against dip"}`)
+	if code != http.StatusCreated || corr["status"] != "corrected" {
+		t.Fatalf("supervisor correct to clear rejection: %d %v", code, corr)
+	}
+	var verifCount int
+	_ = h.pool.QueryRow(ctx, `SELECT count(*) FROM reading_verifications WHERE reading_id = $1`, closingID).Scan(&verifCount)
+	if verifCount != 1 {
+		t.Fatalf("verifications on reading = %d, want 1 (rejection overwritten)", verifCount)
+	}
+
+	// Cash + approval now succeed.
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission/confirm", operator,
+		fmt.Sprintf(`{"received_total":"%s"}`, expectedCashFor(t, h, admin, shiftID))); code != http.StatusCreated {
+		t.Fatalf("confirm cash: %d %v", code, b)
+	}
+	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {
+		t.Fatalf("approve after supervisor cleared rejection: %d %v, want 200", code, b)
+	}
+}
+
+// TestMobileAttendant_CollectionFlagClearedByReconfirm proves a FLAGGED
+// collection receipt is resolvable: the supervisor re-confirms after settling
+// the dispute, overwriting the held receipt in place, and the shift approves. A
+// terminal-good receipt, by contrast, stays immutable.
+func TestMobileAttendant_CollectionFlagClearedByReconfirm(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	operator := h.login(t, tenantSlug, h.ids.opEmail)
+
+	emailA := fmt.Sprintf("att-colclear-%d@it.local", time.Now().UnixNano())
+	_, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, emailA)
+	att := h.login(t, tenantSlug, emailA)
+	h.capturePMSShiftReadings(t, admin, att, shiftID, nozzleID)
+
+	if code, _ := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/close", admin, ``); code != http.StatusOK {
+		t.Fatalf("close: %d", code)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/readings/verify", operator, ``); code != http.StatusOK {
+		t.Fatalf("verify readings: %d %v", code, b)
+	}
+	expected := expectedCashFor(t, h, admin, shiftID)
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission", admin,
+		fmt.Sprintf(`{"cash_amount":"%s"}`, expected)); code != http.StatusCreated {
+		t.Fatalf("cash: %d %v", code, b)
+	}
+	confirmPath := "/api/v1/shifts/" + shiftID + "/cash-submission/confirm"
+
+	// Flag the handover, then approval is blocked.
+	if code, b := h.postJSON(t, confirmPath, operator,
+		fmt.Sprintf(`{"received_total":"%s","status":"flagged","reason":"count disputed"}`, expected)); code != http.StatusCreated {
+		t.Fatalf("flag collection: %d %v", code, b)
+	}
+	code, blocked := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`)
+	if code != http.StatusConflict || blocked["code"] != "collection_unconfirmed" {
+		t.Fatalf("approve with flagged collection: %d %v, want 409 collection_unconfirmed", code, blocked)
+	}
+
+	// Re-confirm after settling: the held receipt is overwritten in place
+	// (still exactly one receipt for the submission).
+	code, rec := h.postJSON(t, confirmPath, operator, fmt.Sprintf(`{"received_total":"%s"}`, expected))
+	if code != http.StatusCreated || rec["status"] != "received" {
+		t.Fatalf("re-confirm flagged collection: %d %v, want 201 received", code, rec)
+	}
+	var receiptCount int
+	_ = h.pool.QueryRow(ctx, `SELECT count(*) FROM collection_receipts WHERE shift_id = $1`, shiftID).Scan(&receiptCount)
+	if receiptCount != 1 {
+		t.Fatalf("receipts for shift = %d, want 1 (held receipt overwritten in place)", receiptCount)
+	}
+
+	// A terminal-good receipt is now immutable: a further confirm is refused.
+	if code, _ := h.postJSON(t, confirmPath, operator, fmt.Sprintf(`{"received_total":"%s"}`, expected)); code != http.StatusConflict {
+		t.Fatalf("re-confirm terminal receipt: %d, want 409", code)
+	}
+
+	// The shift now approves.
+	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {
+		t.Fatalf("approve after clearing collection flag: %d %v, want 200", code, b)
+	}
+}
+
+// TestMobileAttendant_VerdictRejectedOnApprovedShift proves reject/flag/approve
+// are refused once the shift is approved (its facts are frozen), matching the
+// verify-correct guard.
+func TestMobileAttendant_VerdictRejectedOnApprovedShift(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	operator := h.login(t, tenantSlug, h.ids.opEmail)
+
+	emailA := fmt.Sprintf("att-approvedguard-%d@it.local", time.Now().UnixNano())
+	_, shiftID, _, nozzleID := h.openDayShiftWithAttendant(t, ctx, admin, emailA)
+	att := h.login(t, tenantSlug, emailA)
+	h.capturePMSShiftReadings(t, admin, att, shiftID, nozzleID)
+	closingID := closingIDForShift(t, ctx, h, shiftID, nozzleID)
+
+	// Drive the shift all the way to approved.
+	if code, _ := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/close", admin, ``); code != http.StatusOK {
+		t.Fatalf("close: %d", code)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/readings/verify", operator, ``); code != http.StatusOK {
+		t.Fatalf("verify: %d %v", code, b)
+	}
+	expected := expectedCashFor(t, h, admin, shiftID)
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission", admin,
+		fmt.Sprintf(`{"cash_amount":"%s"}`, expected)); code != http.StatusCreated {
+		t.Fatalf("cash: %d %v", code, b)
+	}
+	if code, b := h.postJSON(t, "/api/v1/shifts/"+shiftID+"/cash-submission/confirm", operator,
+		fmt.Sprintf(`{"received_total":"%s"}`, expected)); code != http.StatusCreated {
+		t.Fatalf("confirm: %d %v", code, b)
+	}
+	if code, b := h.patchJSON(t, "/api/v1/shifts/"+shiftID+"/status", admin, `{"status":"approved"}`); code != http.StatusOK {
+		t.Fatalf("approve: %d %v", code, b)
+	}
+
+	// Every verdict is now refused with 409 (shift approved).
+	for _, verb := range []string{"reject", "flag", "approve"} {
+		path := "/api/v1/shifts/" + shiftID + "/readings/" + closingID.String() + "/" + verb
+		body := `{"reason":"too late"}`
+		if verb == "approve" {
+			body = ``
+		}
+		if code, _ := h.postJSON(t, path, operator, body); code != http.StatusConflict {
+			t.Fatalf("%s on approved shift: %d, want 409", verb, code)
+		}
 	}
 }
 

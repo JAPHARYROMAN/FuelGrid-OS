@@ -1012,6 +1012,12 @@ func (s *Server) registerOperationsRoutes(r chi.Router) {
 		Post("/shifts/{id}/readings/{readingID}/reject", s.handleRejectReading)
 	r.With(s.requirePermissionHeld("reading.override")).
 		Post("/shifts/{id}/readings/{readingID}/flag", s.handleFlagReading)
+	// Per-reading approve-as-submitted — the single-reading counterpart to the
+	// batch /readings/verify, and the path that CLEARS a hold (a flagged reading
+	// the supervisor decides is fine) by overwriting it with a terminal
+	// 'approved'. Same reading.override + in-handler SoD as the other verdicts.
+	r.With(s.requirePermissionHeld("reading.override")).
+		Post("/shifts/{id}/readings/{readingID}/approve", s.handleApproveReading)
 
 	// Collection receipts + the handover chain (Mobile Attendant
 	// App, Phase 0). Confirm is station-scoped via cash.confirm,

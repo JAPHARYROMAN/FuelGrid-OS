@@ -10,6 +10,7 @@ package readings
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,13 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
+
+// ErrTerminalVerification is returned by ReplaceHoldVerification when the
+// reading's existing verification is already TERMINAL ({approved, corrected})
+// and therefore must not be re-decided in place. A terminal verdict is final;
+// the only way past it is a fresh ACTIVE reading (the supersedes chain), which
+// carries its own verification.
+var ErrTerminalVerification = errors.New("readings: reading already has a terminal verification")
 
 // Verification is one supervisor decision over one meter reading. All three
 // reading figures are exact decimal STRINGS (numeric(14,3) read ::text).
@@ -82,6 +90,46 @@ func (r *Repo) InsertVerification(ctx context.Context, tx pgx.Tx, tenantID uuid.
 		in.AttendantSubmittedReading, in.SupervisorVerifiedReading,
 		in.FinalApprovedReading, in.Status, in.Reason, in.VerifiedBy,
 	), &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// ReplaceHoldVerification re-decides a reading that currently carries a
+// NON-TERMINAL hold (rejected/flagged), overwriting that one verification row
+// in place with the new verdict inside the caller's tx. This is how a
+// supervisor clears a hold without re-capturing the reading: a flagged reading
+// is approved/corrected after the investigation, or a held reading is moved to
+// a different hold. The immutable trail of every verdict lives in the audit
+// log / outbox, not in this current-state row.
+//
+// It returns ErrTerminalVerification (and changes nothing) when the existing
+// verification is already terminal {approved, corrected} — a final verdict is
+// not re-decidable in place; the caller surfaces that as a 409. The WHERE clause
+// gates the UPDATE on the hold statuses so the terminal-immutability rule is
+// enforced in SQL, not just in Go.
+func (r *Repo) ReplaceHoldVerification(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in VerificationInput) (*Verification, error) {
+	var v Verification
+	err := scanVerification(tx.QueryRow(ctx, `
+		UPDATE reading_verifications
+		SET station_id = $2, shift_id = $3, nozzle_id = $4,
+		    attendant_submitted_reading = $6::numeric,
+		    supervisor_verified_reading = $7::numeric,
+		    final_approved_reading = $8::numeric,
+		    status = $9, reason = $10, verified_by = $11, verified_at = now()
+		WHERE tenant_id = $1 AND reading_id = $5
+		  AND status IN ('rejected', 'flagged')
+		RETURNING `+verificationColumns,
+		tenantID, in.StationID, in.ShiftID, in.NozzleID, in.ReadingID,
+		in.AttendantSubmittedReading, in.SupervisorVerifiedReading,
+		in.FinalApprovedReading, in.Status, in.Reason, in.VerifiedBy,
+	), &v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Either there is no verification at all (caller should have inserted),
+		// or it is terminal — the hold-only WHERE matched nothing.
+		return nil, ErrTerminalVerification
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &v, nil

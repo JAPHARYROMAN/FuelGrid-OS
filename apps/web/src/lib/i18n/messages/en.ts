@@ -267,6 +267,7 @@ export const en = {
     badgeApproved: 'Approved by supervisor',
     badgeCorrected: 'Corrected by supervisor',
     badgeRejected: 'Rejected by supervisor',
+    badgeFlagged: 'Flagged for investigation',
     badgePending: 'Submitted — pending supervisor review',
     confirmTitle: 'Confirm your closing readings',
     /** "You are submitting {n} readings totalling {litres span} litres — confirm." */
@@ -299,6 +300,18 @@ export const en = {
     errAlreadyRecorded: 'A closing reading was already recorded for this nozzle.',
     errGeneric: 'Could not save this reading. Check your connection and try again.',
     viewReviewStatus: 'View review status',
+    // Rejected-resubmit (PRD §7.8): a supervisor sent the closing back; the
+    // attendant re-reads the meter and resubmits this one nozzle.
+    rejectedTitle: 'Rejected — re-read the meter and resubmit',
+    rejectedReason: (reason: string) => `Supervisor's reason: ${reason}`,
+    rejectedPrevious: (value: string) => `You submitted ${value}`,
+    resubmitButton: 'Resubmit closing reading',
+    resubmitOfflineTitle: 'You need a connection to resubmit',
+    resubmitOfflineBody:
+      'Resubmitting a rejected reading needs a live connection so your supervisor sees it right away. Reconnect and try again.',
+    resubmitErr: 'Could not resubmit this reading. Check your connection and try again.',
+    toastResubmittedTitle: 'Closing reading resubmitted',
+    toastResubmittedBody: 'Your supervisor will review the new figure.',
   },
 
   collections: {
@@ -384,6 +397,10 @@ export const en = {
     rejectedTitle: 'Your supervisor rejected this reading',
     rejectedHelp: 'Take a fresh closing reading for this nozzle and submit it again.',
     resubmitCta: 'Resubmit your closing reading',
+    // Once the shift is closed the attendant can no longer re-capture; the
+    // supervisor corrects or re-approves the reading themselves.
+    rejectedClosedHelp:
+      'The shift is closed, so your supervisor will correct this reading. No action is needed from you.',
     // A flagged reading is under supervisor investigation — no attendant action.
     flaggedHelp: 'Your supervisor is investigating this reading. No action is needed from you yet.',
   },

@@ -25,6 +25,7 @@ const getCollectionReceipt = vi.fn();
 const listShiftExceptions = vi.fn();
 const verifyShiftReadings = vi.fn();
 const verifyCorrectReading = vi.fn();
+const approveReading = vi.fn();
 const rejectReading = vi.fn();
 const flagReading = vi.fn();
 const confirmCashSubmission = vi.fn();
@@ -48,6 +49,7 @@ vi.mock('@/lib/api', () => ({
     listShiftExceptions: (...a: unknown[]) => listShiftExceptions(...a),
     verifyShiftReadings: (...a: unknown[]) => verifyShiftReadings(...a),
     verifyCorrectReading: (...a: unknown[]) => verifyCorrectReading(...a),
+    approveReading: (...a: unknown[]) => approveReading(...a),
     rejectReading: (...a: unknown[]) => rejectReading(...a),
     flagReading: (...a: unknown[]) => flagReading(...a),
     confirmCashSubmission: (...a: unknown[]) => confirmCashSubmission(...a),
@@ -268,6 +270,7 @@ describe('ShiftReviewPage', () => {
     verifyCorrectReading.mockResolvedValue(
       verification({ status: 'corrected', supervisor_verified_reading: '1490.00' }),
     );
+    approveReading.mockResolvedValue(verification({ status: 'approved' }));
     rejectReading.mockResolvedValue(verification({ status: 'rejected', reason: 'photo mismatch' }));
     flagReading.mockResolvedValue(verification({ status: 'flagged', reason: 'looks tampered' }));
     confirmCashSubmission.mockResolvedValue(receipt());
@@ -588,8 +591,11 @@ describe('ShiftReviewPage', () => {
     expect(within(row).getByText('Rejected')).toBeInTheDocument();
     expect(within(row).getByText(/blurry meter photo/)).toBeInTheDocument();
     expect(within(row).getByText(/sent back to the attendant to re-capture/i)).toBeInTheDocument();
-    // A decided reading offers no further per-reading actions.
+    // A rejected reading is a HOLD: it offers clear actions but not another Reject.
     expect(within(queue).queryByRole('button', { name: /^reject…$/i })).not.toBeInTheDocument();
+    expect(
+      within(queue).getByRole('button', { name: /approve as submitted/i }),
+    ).toBeInTheDocument();
   });
 
   it('shows a flagged verification with its reason', async () => {
@@ -608,6 +614,72 @@ describe('ShiftReviewPage', () => {
     const row = await within(queue).findByTestId('verification-row');
     expect(within(row).getByText('Flagged for investigation')).toBeInTheDocument();
     expect(within(row).getByText(/escalated to manager/)).toBeInTheDocument();
+  });
+
+  it('clears a FLAGGED reading by approving it as-submitted (per-reading approve path)', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    listReadingVerifications.mockResolvedValue({
+      items: [verification({ status: 'flagged', reason: 'looked off — investigated' })],
+      count: 1,
+    });
+    renderPage();
+
+    const queue = await screen.findByTestId('verification-queue');
+    // Wait for the flagged verdict to render before asserting its clear actions.
+    await within(queue).findByText('Flagged for investigation');
+    // The hold offers Approve/Correct/Reject (the supervisor can re-decide it).
+    const approve = within(queue).getByRole('button', { name: /approve as submitted/i });
+    expect(within(queue).getByRole('button', { name: /^correct…$/i })).toBeInTheDocument();
+    expect(within(queue).getByRole('button', { name: /^reject…$/i })).toBeInTheDocument();
+
+    await userEvent.click(approve);
+    await waitFor(() => expect(approveReading).toHaveBeenCalledWith('sh-1', 'mr-close'));
+  });
+
+  it('lets the supervisor re-confirm a FLAGGED collection receipt to clear the hold', async () => {
+    getShift.mockResolvedValue(closedShift());
+    getCloseSummary.mockResolvedValue({
+      shift: closedShift(),
+      lines: [],
+      expected_cash: '1475000.00',
+      cash_submission: cashSubmission,
+    });
+    getCollectionReceipt.mockResolvedValue(
+      receipt({ status: 'flagged', reason: 'cash count disputed', difference: '0.00' }),
+    );
+    confirmCashSubmission.mockResolvedValue(receipt({ status: 'received', difference: '0.00' }));
+    renderPage();
+
+    const panel = await screen.findByTestId('collection-receipt-panel');
+    // A held receipt still shows its status AND a re-confirm form.
+    expect(await within(panel).findByText(/re-confirm the handover below/i)).toBeInTheDocument();
+    await userEvent.type(within(panel).getByLabelText('Received total'), '1475000');
+    await userEvent.click(within(panel).getByRole('button', { name: /confirm receipt/i }));
+
+    await waitFor(() =>
+      expect(confirmCashSubmission).toHaveBeenCalledWith('sh-1', { received_total: '1475000' }),
+    );
+  });
+
+  it('keeps a TERMINAL collection receipt read-only (no re-confirm form)', async () => {
+    getShift.mockResolvedValue(closedShift());
+    getCloseSummary.mockResolvedValue({
+      shift: closedShift(),
+      lines: [],
+      expected_cash: '1475000.00',
+      cash_submission: cashSubmission,
+    });
+    getCollectionReceipt.mockResolvedValue(receipt({ status: 'received', difference: '0.00' }));
+    renderPage();
+
+    const panel = await screen.findByTestId('collection-receipt-panel');
+    await within(panel).findByTestId('receipt-status');
+    expect(within(panel).queryByText(/re-confirm the handover below/i)).not.toBeInTheDocument();
+    expect(within(panel).queryByLabelText('Received total')).not.toBeInTheDocument();
   });
 
   // --- ad-hoc attendant assignment (PRD gap #5) ---

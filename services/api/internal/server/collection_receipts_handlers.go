@@ -242,16 +242,41 @@ func (s *Server) handleConfirmCashSubmission(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	receipt, err := s.operations.InsertCollectionReceipt(ctx, tx, actor.TenantID, operations.CollectionReceiptInput{
+	receiptInput := operations.CollectionReceiptInput{
 		StationID: shift.StationID, ShiftID: shift.ID, CashSubmissionID: sub.ID,
 		ExpectedAmount:          sub.ExpectedCash,
 		AttendantSubmittedTotal: sub.SubmittedTotal,
 		SupervisorReceivedTotal: req.ReceivedTotal.String(),
 		Status:                  status, Reason: reasonPtr, SupervisorComment: req.SupervisorComment,
 		ReceivedBy: actor.UserID,
-	})
-	if isUniqueViolation(err) {
-		writeError(w, http.StatusConflict, "this cash submission already has a collection receipt")
+	}
+	// Insert inside a SAVEPOINT so a unique-violation (a receipt already exists)
+	// rolls back just the attempt instead of aborting the outer tx (SQLSTATE
+	// 25P02), letting the held-receipt overwrite run on the same connection.
+	receipt, err := func() (*operations.CollectionReceipt, error) {
+		sp, berr := tx.Begin(ctx)
+		if berr != nil {
+			return nil, berr
+		}
+		rc, ierr := s.operations.InsertCollectionReceipt(ctx, sp, actor.TenantID, receiptInput)
+		if ierr == nil {
+			if cerr := sp.Commit(ctx); cerr != nil {
+				return nil, cerr
+			}
+			return rc, nil
+		}
+		_ = sp.Rollback(ctx)
+		if !isUniqueViolation(ierr) {
+			return nil, ierr
+		}
+		// A receipt already exists. If it is a HOLD (rejected/flagged) the
+		// supervisor is re-confirming after settling the dispute — overwrite it.
+		// A TERMINAL-GOOD receipt ({received, approved_with_difference}) is a
+		// final handover and stays immutable → ErrTerminalReceipt → 409.
+		return s.operations.ReplaceHeldCollectionReceipt(ctx, tx, actor.TenantID, receiptInput)
+	}()
+	if errors.Is(err, operations.ErrTerminalReceipt) {
+		writeError(w, http.StatusConflict, "this cash submission already has a confirmed collection receipt")
 		return
 	}
 	if err != nil {

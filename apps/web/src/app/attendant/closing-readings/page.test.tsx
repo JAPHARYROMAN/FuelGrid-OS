@@ -8,10 +8,12 @@ import { SdkError, type AttendantCurrentShift } from '@fuelgrid/sdk';
 
 const attendantCurrentShift = vi.fn();
 const captureMeterReading = vi.fn();
+const correctMeterReading = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     attendantCurrentShift: (...args: unknown[]) => attendantCurrentShift(...args),
     captureMeterReading: (...args: unknown[]) => captureMeterReading(...args),
+    correctMeterReading: (...args: unknown[]) => correctMeterReading(...args),
   },
 }));
 
@@ -93,6 +95,7 @@ describe('ClosingReadingsPage', () => {
     resetSyncEngineForTests();
     attendantCurrentShift.mockReset();
     captureMeterReading.mockReset();
+    correctMeterReading.mockReset();
     push.mockReset();
     attendantCurrentShift.mockResolvedValue(snapshot);
   });
@@ -285,6 +288,109 @@ describe('ClosingReadingsPage', () => {
     expect(document.querySelector('#closing-noz-1')).toBeNull();
     // The remaining nozzle is still capturable.
     expect(await dieselInput()).toBeInTheDocument();
+  });
+
+  it('makes a REJECTED nozzle re-capturable and resubmits it through /correct (not capture)', async () => {
+    correctMeterReading.mockResolvedValue({ id: 'mr-9', reading: '1640.000', status: 'active' });
+    attendantCurrentShift.mockResolvedValue({
+      ...snapshot,
+      next_action: 'submit_closing_readings',
+      readings: [
+        {
+          nozzle_id: 'noz-1',
+          closing_reading_id: 'closing-1',
+          opening_reading: '1500.250',
+          closing_reading: '1620.500',
+          verification_status: 'rejected',
+          verification_reason: 'Meter photo unreadable — re-read it',
+        },
+        {
+          nozzle_id: 'noz-2',
+          opening_reading: '2000.000',
+          closing_reading: '2300.000',
+          verification_status: 'approved',
+          final_reading: '2300.000',
+        },
+      ],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    // The rejected nozzle is NOT locked: it shows the reason + the prior figure
+    // + an editable input, not a read-only "Submitted" badge.
+    expect(await screen.findByText(/re-read the meter and resubmit/i)).toBeInTheDocument();
+    expect(screen.getByText(/meter photo unreadable/i)).toBeInTheDocument();
+    expect(screen.getByText(/you submitted 1620\.500/i)).toBeInTheDocument();
+    const input = await premiumInput();
+
+    // A new figure resubmits through /correct (the unlocked path), NOT capture.
+    await userEvent.type(input, '1640');
+    await userEvent.click(screen.getByRole('button', { name: /resubmit closing reading/i }));
+
+    await waitFor(() =>
+      expect(correctMeterReading).toHaveBeenCalledWith('shift-1', 'closing-1', '1640'),
+    );
+    expect(captureMeterReading).not.toHaveBeenCalled();
+  });
+
+  it('blocks resubmit of a rejected nozzle until the figure is valid (>= opening)', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...snapshot,
+      readings: [
+        {
+          nozzle_id: 'noz-1',
+          closing_reading_id: 'closing-1',
+          opening_reading: '1500.250',
+          closing_reading: '1620.500',
+          verification_status: 'rejected',
+          verification_reason: 'Re-read it',
+        },
+        {
+          nozzle_id: 'noz-2',
+          opening_reading: '2000.000',
+          closing_reading: '2300.000',
+          verification_status: 'approved',
+        },
+      ],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    const input = await premiumInput();
+    await userEvent.type(input, '1400'); // below opening
+    expect(
+      screen.getByText('Closing reading cannot be lower than opening reading.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resubmit closing reading/i })).toBeDisabled();
+    expect(correctMeterReading).not.toHaveBeenCalled();
+  });
+
+  it('on a CLOSED shift a rejected nozzle is the supervisor’s to clear — no resubmit input', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...snapshot,
+      shift: { ...snapshot.shift!, status: 'closed' },
+      readings: [
+        {
+          nozzle_id: 'noz-1',
+          closing_reading_id: 'closing-1',
+          opening_reading: '1500.250',
+          closing_reading: '1620.500',
+          verification_status: 'rejected',
+          verification_reason: 'Re-read it',
+        },
+        {
+          nozzle_id: 'noz-2',
+          opening_reading: '2000.000',
+          closing_reading: '2300.000',
+          verification_status: 'approved',
+        },
+      ],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    expect(await screen.findByText('Rejected by supervisor')).toBeInTheDocument();
+    expect(document.querySelector('#closing-noz-1')).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: /resubmit closing reading/i }),
+    ).not.toBeInTheDocument();
   });
 
   it('shows the all-submitted state with the review-status path when every nozzle is done', async () => {

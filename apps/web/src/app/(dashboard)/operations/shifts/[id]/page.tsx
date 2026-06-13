@@ -953,6 +953,25 @@ function VerificationQueue({
     },
   });
 
+  // Clear a HELD (rejected/flagged) reading by approving it as-submitted — the
+  // per-reading approve path that overwrites the hold with a terminal verdict
+  // (the supervisor decided the attendant's figure was fine). Correcting a held
+  // reading uses the existing CorrectReadingDialog (also clears the hold).
+  const approveSingle = useMutation({
+    mutationFn: (readingID: string) => api.approveReading(shift.id, readingID),
+    onSuccess: () => {
+      setActionError(null);
+      onChanged();
+    },
+    onError: (e) => {
+      setActionError(
+        e instanceof SdkError && e.status === 403
+          ? apiErrorMessage(e, 'You cannot verify a reading you recorded.')
+          : apiErrorMessage(e, "Couldn't approve the reading. Try again."),
+      );
+    },
+  });
+
   return (
     <Card data-testid="verification-queue">
       <CardHeader className="gap-1">
@@ -1047,17 +1066,39 @@ function VerificationQueue({
                     <p className="text-sm text-danger">
                       Rejected — {verification.reason}
                       <span className="block text-muted-foreground">
-                        Sent back to the attendant to re-capture this closing reading.
+                        Sent back to the attendant to re-capture this closing reading. Approve or
+                        correct it here once it is resolved.
                       </span>
                     </p>
                   ) : null}
                   {verification?.status === 'flagged' && verification.reason ? (
                     <p className="text-sm text-warning">
                       Flagged for investigation — {verification.reason}
+                      <span className="block text-muted-foreground">
+                        Approve or correct it here to clear the hold once your investigation is
+                        done.
+                      </span>
                     </p>
                   ) : null}
-                  {!verification && canVerify ? (
+                  {canVerify &&
+                  (!verification ||
+                    verification.status === 'rejected' ||
+                    verification.status === 'flagged') ? (
                     <div className="flex flex-wrap gap-2">
+                      {/* A held reading can be APPROVED as-submitted to clear the
+                          hold; a never-verified one is approved via "Approve all". */}
+                      {verification ? (
+                        <Button
+                          size="sm"
+                          disabled={approveSingle.isPending}
+                          onClick={() => {
+                            setActionError(null);
+                            approveSingle.mutate(reading.id);
+                          }}
+                        >
+                          Approve as submitted
+                        </Button>
+                      ) : null}
                       <Button
                         size="sm"
                         variant="outline"
@@ -1068,26 +1109,30 @@ function VerificationQueue({
                       >
                         Correct…
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setActionError(null);
-                          setRejecting(reading);
-                        }}
-                      >
-                        Reject…
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setActionError(null);
-                          setFlagging(reading);
-                        }}
-                      >
-                        Flag for investigation…
-                      </Button>
+                      {verification?.status !== 'rejected' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setActionError(null);
+                            setRejecting(reading);
+                          }}
+                        >
+                          Reject…
+                        </Button>
+                      ) : null}
+                      {verification?.status !== 'flagged' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setActionError(null);
+                            setFlagging(reading);
+                          }}
+                        >
+                          Flag for investigation…
+                        </Button>
+                      ) : null}
                     </div>
                   ) : null}
                 </li>
@@ -1513,15 +1558,26 @@ function CollectionReceiptPanel({
               </p>
             ) : null}
 
-            {receipt ? (
-              <ReceiptStatus receipt={receipt} nameByUserID={nameByUserID} />
-            ) : canConfirm === false ? (
-              <p className="text-sm text-muted-foreground" data-testid="receipt-readonly">
-                Awaiting collection confirmation — recording the receipt requires the cash.confirm
-                permission.
-              </p>
+            {/* A HOLD receipt (rejected/flagged) is not terminal: the supervisor
+                can re-confirm it after settling the dispute. A terminal receipt
+                (received/approved_with_difference) is final — read-only. */}
+            {receipt ? <ReceiptStatus receipt={receipt} nameByUserID={nameByUserID} /> : null}
+            {receipt &&
+            (receipt.status === 'received' ||
+              receipt.status === 'approved_with_difference') ? null : canConfirm === false ? (
+              receipt ? null : (
+                <p className="text-sm text-muted-foreground" data-testid="receipt-readonly">
+                  Awaiting collection confirmation — recording the receipt requires the cash.confirm
+                  permission.
+                </p>
+              )
             ) : (
               <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-muted/20 p-3">
+                {receipt ? (
+                  <p className="text-sm text-muted-foreground">
+                    Re-confirm the handover below once the {receipt.status} is resolved.
+                  </p>
+                ) : null}
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Record receipt
                 </span>

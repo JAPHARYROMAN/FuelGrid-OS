@@ -101,12 +101,16 @@ type attendantAssignmentDTO struct {
 // supervisor's reason where one was required — the dual-value model surfaced
 // to the attendant review-status screen (Phase 3, PRD §6.9).
 type attendantReadingDTO struct {
-	NozzleID           uuid.UUID `json:"nozzle_id"`
-	OpeningReading     *string   `json:"opening_reading,omitempty"`
-	ClosingReading     *string   `json:"closing_reading,omitempty"`
-	VerificationStatus *string   `json:"verification_status,omitempty"`
-	FinalReading       *string   `json:"final_reading,omitempty"`
-	VerificationReason *string   `json:"verification_reason,omitempty"`
+	NozzleID uuid.UUID `json:"nozzle_id"`
+	// ClosingReadingID is the ACTIVE closing reading's id, present once a closing
+	// exists. The mobile resubmit flow needs it to call the /correct endpoint
+	// when the supervisor has REJECTED the closing (PRD §7.8 re-capture loop).
+	ClosingReadingID   *uuid.UUID `json:"closing_reading_id,omitempty"`
+	OpeningReading     *string    `json:"opening_reading,omitempty"`
+	ClosingReading     *string    `json:"closing_reading,omitempty"`
+	VerificationStatus *string    `json:"verification_status,omitempty"`
+	FinalReading       *string    `json:"final_reading,omitempty"`
+	VerificationReason *string    `json:"verification_reason,omitempty"`
 }
 
 // attendantCloseLineDTO is one frozen close line with its nozzle's display
@@ -306,6 +310,8 @@ func (s *Server) attendantShiftSnapshot(r *http.Request, actor identity.Actor, s
 			d.OpeningReading = &v
 		} else {
 			d.ClosingReading = &v
+			readingID := m.ID
+			d.ClosingReadingID = &readingID
 			status := "pending"
 			if ver, ok := verifByReading[m.ID]; ok {
 				status = ver.Status

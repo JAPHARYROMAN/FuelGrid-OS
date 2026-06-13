@@ -510,6 +510,22 @@ describe('Client mobile attendant phase-0 methods', () => {
     expect(res.status).toBe('flagged');
   });
 
+  it('approveReading POSTs the per-reading approve path (clears a hold)', async () => {
+    const f = jsonFetch(201, {
+      id: 'v3',
+      attendant_submitted_reading: '1500.000',
+      final_approved_reading: '1500.000',
+      status: 'approved',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.approveReading('shift-1', 'r1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/readings/r1/approve');
+    expect(init.method).toBe('POST');
+    expect(res.status).toBe('approved');
+    expect(res.final_approved_reading).toBe('1500.000');
+  });
+
   it('listReadingVerifications GETs the verification set with decimal strings intact', async () => {
     const f = jsonFetch(200, {
       items: [

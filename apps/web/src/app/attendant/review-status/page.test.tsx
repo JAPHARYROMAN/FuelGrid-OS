@@ -96,6 +96,9 @@ const snapshot: AttendantCurrentShift = {
 
 describe('ReviewStatusPage', () => {
   beforeEach(() => {
+    // The offline snapshot hook seeds from localStorage; clear it so a prior
+    // test's cached shift (e.g. an open shift) can't leak into this one.
+    localStorage.clear();
     attendantCurrentShift.mockReset();
     attendantCurrentShift.mockResolvedValue(snapshot);
   });
@@ -139,6 +142,33 @@ describe('ReviewStatusPage', () => {
     expect(screen.getByText('Your supervisor rejected this reading')).toBeInTheDocument();
     const cta = screen.getByRole('link', { name: /resubmit your closing reading/i });
     expect(cta).toHaveAttribute('href', '/attendant/closing-readings');
+  });
+
+  it('drops the resubmit CTA once the shift is closed (supervisor clears it then)', async () => {
+    attendantCurrentShift.mockResolvedValue({
+      ...snapshot,
+      shift: { ...snapshot.shift!, status: 'closed' },
+      readings: [
+        {
+          nozzle_id: 'noz-1',
+          opening_reading: '1000.000',
+          closing_reading: '1500.000',
+          verification_status: 'rejected',
+          verification_reason: 'Photo does not match the meter',
+        },
+      ],
+      assignments: [assignment(1, 'Premium')],
+    } satisfies AttendantCurrentShift);
+    renderPage();
+
+    await screen.findByText('Your supervisor rejected this reading');
+    // No re-capture path on a closed shift — the supervisor corrects it.
+    expect(
+      screen.queryByRole('link', { name: /resubmit your closing reading/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/the shift is closed, so your supervisor will correct/i),
+    ).toBeInTheDocument();
   });
 
   it('renders a flagged badge, its reason, and an investigation note (no resubmit CTA)', async () => {
