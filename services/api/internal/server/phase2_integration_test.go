@@ -25,6 +25,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -309,119 +310,31 @@ func grantRole(t *testing.T, ctx context.Context, pool *database.Pool, tenantID,
 	}
 }
 
+// cleanupTenant purges every row a test seeded for tenantID, child-before-parent,
+// so the next run starts from a clean slate and a dirty local dev DB does not
+// accumulate orphan tenants/tanks/movements (the bug class behind the
+// opening-stock phantom-500 investigation).
+//
+// The delete order is DERIVED FROM THE LIVE SCHEMA at runtime rather than
+// hand-maintained: we enumerate every tenant-scoped table (one with a tenant_id
+// column) from information_schema, read the foreign-key edges among them from
+// pg_constraint, topologically sort, and delete leaves (the referencing child)
+// before the tables they reference. A future migration that adds a tenant-scoped
+// table is therefore torn down automatically — the teardown can never rot. The
+// guard test TestCleanupTenant_LeavesNoResidual asserts this stays true.
+//
+// Every delete is scoped `WHERE tenant_id = $1` so shared/system rows (e.g.
+// system roles, which carry tenant_id IS NULL) are never touched. tenants itself
+// has no tenant_id column and is removed last, by id.
+//
+// journal_entries / journal_lines are append-only at the database (the 0065
+// immutability trigger). A test owns its tenant and may purge it, so we acquire
+// one connection, flip the app.allow_ledger_delete escape-hatch GUC on it for the
+// session, and run every delete on that connection. Non-ledger tables ignore the
+// GUC. Errors are swallowed per-statement (best effort): the guard test is the
+// backstop that fails the moment a real leak survives.
 func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID) {
-	// Delete children before parents to satisfy RESTRICT FKs.
-	stmts := []string{
-		// opening_stock_requests (migration 0093) has ON DELETE RESTRICT FKs to
-		// stock_movements, tanks, users and tenants. It MUST be purged before any
-		// of those parents, otherwise the parent DELETEs silently fail (their
-		// errors are swallowed below) and the whole tenant tree leaks — every
-		// opening-stock test would orphan its tanks, movements, users and tenant.
-		`DELETE FROM opening_stock_requests WHERE tenant_id = $1`,
-		`DELETE FROM outbox_events WHERE tenant_id = $1`,
-		`DELETE FROM audit_logs WHERE tenant_id = $1`,
-		`DELETE FROM investigation_case_actions WHERE tenant_id = $1`,
-		`DELETE FROM investigation_case_comments WHERE tenant_id = $1`,
-		`DELETE FROM investigation_case_alerts WHERE tenant_id = $1`,
-		`DELETE FROM investigation_cases WHERE tenant_id = $1`,
-		`DELETE FROM risk_feedback WHERE tenant_id = $1`,
-		`DELETE FROM risk_suppressions WHERE tenant_id = $1`,
-		`DELETE FROM risk_scores WHERE tenant_id = $1`,
-		`DELETE FROM risk_alerts WHERE tenant_id = $1`,
-		`DELETE FROM risk_rules WHERE tenant_id = $1`,
-		`DELETE FROM risk_signals WHERE tenant_id = $1`,
-		`DELETE FROM stock_transfer_orders WHERE tenant_id = $1`,
-		`DELETE FROM central_procurement_plan_lines WHERE tenant_id = $1`,
-		`DELETE FROM central_procurement_plans WHERE tenant_id = $1`,
-		`DELETE FROM central_price_rollouts WHERE tenant_id = $1`,
-		`DELETE FROM station_daily_kpis WHERE tenant_id = $1`,
-		`DELETE FROM enterprise_projection_state WHERE tenant_id = $1`,
-		`DELETE FROM approval_decisions WHERE tenant_id = $1`,
-		`DELETE FROM approval_requests WHERE tenant_id = $1`,
-		`DELETE FROM approval_policies WHERE tenant_id = $1`,
-		`DELETE FROM enterprise_scope_grants WHERE tenant_id = $1`,
-		`DELETE FROM station_group_memberships WHERE tenant_id = $1`,
-		`DELETE FROM station_groups WHERE tenant_id = $1`,
-		`DELETE FROM accounting_exports WHERE tenant_id = $1`,
-		`DELETE FROM petty_cash_reconciliations WHERE tenant_id = $1`,
-		`DELETE FROM petty_cash_transactions WHERE tenant_id = $1`,
-		`DELETE FROM petty_cash_floats WHERE tenant_id = $1`,
-		`DELETE FROM expenses WHERE tenant_id = $1`,
-		`DELETE FROM expense_categories WHERE tenant_id = $1`,
-		`DELETE FROM customer_payment_allocations WHERE tenant_id = $1`,
-		`DELETE FROM customer_payments WHERE tenant_id = $1`,
-		`DELETE FROM customer_invoice_lines WHERE tenant_id = $1`,
-		`DELETE FROM customer_invoices WHERE tenant_id = $1`,
-		`DELETE FROM customer_credit_alerts WHERE tenant_id = $1`,
-		`DELETE FROM customer_statements WHERE tenant_id = $1`,
-		`DELETE FROM vehicle_odometer_readings WHERE tenant_id = $1`,
-		`DELETE FROM fuel_authorization_denials WHERE tenant_id = $1`,
-		`DELETE FROM fuel_authorizations WHERE tenant_id = $1`,
-		`DELETE FROM fuel_limits WHERE tenant_id = $1`,
-		`DELETE FROM fuel_credentials WHERE tenant_id = $1`,
-		`DELETE FROM customer_drivers WHERE tenant_id = $1`,
-		`DELETE FROM customer_vehicles WHERE tenant_id = $1`,
-		`DELETE FROM customer_price_agreements WHERE tenant_id = $1`,
-		`DELETE FROM customer_credit_profiles WHERE tenant_id = $1`,
-		`DELETE FROM customer_contacts WHERE tenant_id = $1`,
-		`DELETE FROM bank_statement_lines WHERE tenant_id = $1`,
-		`DELETE FROM bank_statement_imports WHERE tenant_id = $1`,
-		`DELETE FROM bank_deposit_lines WHERE tenant_id = $1`,
-		`DELETE FROM bank_deposits WHERE tenant_id = $1`,
-		`DELETE FROM bank_accounts WHERE tenant_id = $1`,
-		`DELETE FROM cash_reconciliation_lines WHERE tenant_id = $1`,
-		`DELETE FROM cash_reconciliations WHERE tenant_id = $1`,
-		`DELETE FROM supplier_payment_allocations WHERE tenant_id = $1`,
-		`DELETE FROM supplier_payments WHERE tenant_id = $1`,
-		`DELETE FROM payables WHERE tenant_id = $1`,
-		`DELETE FROM journal_lines WHERE tenant_id = $1`,
-		`DELETE FROM journal_entries WHERE tenant_id = $1`,
-		`DELETE FROM accounting_periods WHERE tenant_id = $1`,
-		`DELETE FROM accounts WHERE tenant_id = $1`,
-		`DELETE FROM revenue_days WHERE tenant_id = $1`,
-		`DELETE FROM sale_voids WHERE tenant_id = $1`,
-		`DELETE FROM sales WHERE tenant_id = $1`,
-		`DELETE FROM payments WHERE tenant_id = $1`,
-		`DELETE FROM ar_entries WHERE tenant_id = $1`,
-		`DELETE FROM customers WHERE tenant_id = $1`,
-		`DELETE FROM price_changes WHERE tenant_id = $1`,
-		`DELETE FROM procurement_discrepancies WHERE tenant_id = $1`,
-		`DELETE FROM supplier_invoice_lines WHERE tenant_id = $1`,
-		`DELETE FROM supplier_invoices WHERE tenant_id = $1`,
-		`DELETE FROM tank_reconciliations WHERE tenant_id = $1`,
-		`DELETE FROM stock_movements WHERE tenant_id = $1`,
-		`DELETE FROM deliveries WHERE tenant_id = $1`,
-		`DELETE FROM purchase_order_lines WHERE tenant_id = $1`,
-		`DELETE FROM purchase_orders WHERE tenant_id = $1`,
-		`DELETE FROM supplier_products WHERE tenant_id = $1`,
-		`DELETE FROM suppliers WHERE tenant_id = $1`,
-		`DELETE FROM tank_dip_readings WHERE tenant_id = $1`,
-		`DELETE FROM shift_close_lines WHERE tenant_id = $1`,
-		`DELETE FROM shifts WHERE tenant_id = $1`,
-		`DELETE FROM shift_team_members WHERE tenant_id = $1`,
-		`DELETE FROM shift_teams WHERE tenant_id = $1`,
-		`DELETE FROM employees WHERE tenant_id = $1`,
-		`DELETE FROM operating_days WHERE tenant_id = $1`,
-		`DELETE FROM nozzles WHERE tenant_id = $1`,
-		`DELETE FROM pump_calibrations WHERE tenant_id = $1`,
-		`DELETE FROM pumps WHERE tenant_id = $1`,
-		`DELETE FROM tank_calibration_charts WHERE tenant_id = $1`,
-		`DELETE FROM incidents WHERE tenant_id = $1`,
-		`DELETE FROM tanks WHERE tenant_id = $1`,
-		`DELETE FROM products WHERE tenant_id = $1`,
-		`DELETE FROM user_station_access WHERE tenant_id = $1`,
-		`DELETE FROM user_roles WHERE tenant_id = $1`,
-		`DELETE FROM sessions WHERE tenant_id = $1`,
-		`DELETE FROM users WHERE tenant_id = $1`,
-		`DELETE FROM stations WHERE tenant_id = $1`,
-		`DELETE FROM regions WHERE tenant_id = $1`,
-		`DELETE FROM companies WHERE tenant_id = $1`,
-		`DELETE FROM tenants WHERE id = $1`,
-	}
-	// journal_entries / journal_lines are append-only at the database (0065
-	// immutability trigger). A test owns its tenant and may purge it, so acquire
-	// one connection, flip the escape-hatch GUC on it for the session, and run
-	// every delete on that connection. Non-journal tables ignore the GUC.
+	stmts := tenantDeleteStatements(ctx, pool)
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		for _, s := range stmts {
@@ -434,6 +347,184 @@ func cleanupTenant(ctx context.Context, pool *database.Pool, tenantID uuid.UUID)
 	for _, s := range stmts {
 		_, _ = conn.Exec(ctx, s, tenantID)
 	}
+}
+
+// tenantScopedTables returns every base table in the public schema that carries
+// a tenant_id column — i.e. the set of tables a single tenant owns rows in.
+func tenantScopedTables(ctx context.Context, pool *database.Pool) ([]string, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT c.table_name
+		FROM information_schema.columns c
+		JOIN information_schema.tables t
+		  ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+		WHERE c.table_schema = 'public'
+		  AND c.column_name = 'tenant_id'
+		  AND t.table_type = 'BASE TABLE'
+		ORDER BY c.table_name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// tenantFKEdges returns the foreign-key edges among tenant-scoped tables as
+// child -> parent pairs (the child holds the FK, the parent is referenced).
+// Self-references are excluded: a single `DELETE FROM t WHERE tenant_id = $1`
+// removes all of a table's rows at once, so intra-table ordering is irrelevant.
+func tenantFKEdges(ctx context.Context, pool *database.Pool) (map[string][]string, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT DISTINCT con.conrelid::regclass::text AS child,
+		                con.confrelid::regclass::text AS parent
+		FROM pg_constraint con
+		JOIN pg_namespace n ON n.oid = con.connamespace
+		WHERE con.contype = 'f'
+		  AND n.nspname = 'public'
+		  AND con.conrelid <> con.confrelid
+		  AND con.conrelid::regclass::text IN (
+		      SELECT table_name FROM information_schema.columns
+		      WHERE table_schema = 'public' AND column_name = 'tenant_id')
+		  AND con.confrelid::regclass::text IN (
+		      SELECT table_name FROM information_schema.columns
+		      WHERE table_schema = 'public' AND column_name = 'tenant_id')`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	edges := map[string][]string{}
+	for rows.Next() {
+		var child, parent string
+		if err := rows.Scan(&child, &parent); err != nil {
+			return nil, err
+		}
+		edges[child] = append(edges[child], parent)
+	}
+	return edges, rows.Err()
+}
+
+// tenantDeleteStatements builds the ordered list of DELETE statements that purge
+// a tenant, children before parents, from the live schema. The order is a
+// topological sort of the tenant-scoped FK graph: a table is emitted only after
+// every table that references it has been emitted (leaves first). The final
+// statement removes the tenant row itself by id. If the schema cannot be read
+// (e.g. the pool is gone mid-teardown) it falls back to deleting tenants alone.
+func tenantDeleteStatements(ctx context.Context, pool *database.Pool) []string {
+	tables, err := tenantScopedTables(ctx, pool)
+	if err != nil || len(tables) == 0 {
+		return []string{`DELETE FROM tenants WHERE id = $1`}
+	}
+	edges, err := tenantFKEdges(ctx, pool)
+	if err != nil {
+		return []string{`DELETE FROM tenants WHERE id = $1`}
+	}
+	ordered := topoDeleteOrder(tables, edges)
+
+	stmts := make([]string, 0, len(ordered)+1)
+	for _, tbl := range ordered {
+		stmts = append(stmts, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1`, tbl))
+	}
+	stmts = append(stmts, `DELETE FROM tenants WHERE id = $1`)
+	return stmts
+}
+
+// topoDeleteOrder returns tables ordered so each table appears before any table
+// it references via a foreign key — i.e. referencing children are deleted before
+// the parents they point at. edges maps child -> parents. The graph among
+// distinct tenant-scoped tables is a DAG (verified: no 2-cycles), so a stable
+// Kahn-style sort always terminates; any table caught in an unexpected cycle is
+// appended at the end so it is still attempted.
+func topoDeleteOrder(tables []string, edges map[string][]string) []string {
+	// childrenOf[parent] = tables that reference parent. We want every child
+	// emitted before its parent, so we emit parents only once all their children
+	// are done — process the reverse-dependency graph leaves-first.
+	childrenOf := map[string]map[string]bool{}
+	remainingChildren := map[string]int{} // unemitted children referencing this table
+	present := map[string]bool{}
+	for _, t := range tables {
+		present[t] = true
+	}
+	for child, parents := range edges {
+		if !present[child] {
+			continue
+		}
+		for _, parent := range parents {
+			if !present[parent] || parent == child {
+				continue
+			}
+			if childrenOf[parent] == nil {
+				childrenOf[parent] = map[string]bool{}
+			}
+			if !childrenOf[parent][child] {
+				childrenOf[parent][child] = true
+				remainingChildren[parent]++
+			}
+		}
+	}
+
+	// Deterministic order: process tables in name order, emitting a table only
+	// once it has no remaining unemitted children referencing it.
+	sorted := append([]string(nil), tables...)
+	sort.Strings(sorted)
+
+	emitted := map[string]bool{}
+	out := make([]string, 0, len(tables))
+	for progress := true; progress; {
+		progress = false
+		for _, t := range sorted {
+			if emitted[t] || remainingChildren[t] > 0 {
+				continue
+			}
+			emitted[t] = true
+			out = append(out, t)
+			progress = true
+			for parent := range childrenOf {
+				if childrenOf[parent][t] {
+					delete(childrenOf[parent], t)
+					remainingChildren[parent]--
+				}
+			}
+		}
+	}
+	// Any table left (a cycle we did not anticipate) is appended so it is still
+	// attempted; the guard test would catch a resulting leak.
+	for _, t := range sorted {
+		if !emitted[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// residualTenantRows returns, for the given tenant, the per-table count of rows
+// that survive cleanupTenant. A clean teardown yields an empty map. It iterates
+// the SAME runtime-enumerated tenant-scoped table set the teardown uses, so it
+// can never silently miss a newly added table. Counts are scoped
+// `WHERE tenant_id = $1`, so shared/system rows (tenant_id IS NULL) are ignored.
+func residualTenantRows(ctx context.Context, pool *database.Pool, tenantID uuid.UUID) (map[string]int, error) {
+	tables, err := tenantScopedTables(ctx, pool)
+	if err != nil {
+		return nil, err
+	}
+	residual := map[string]int{}
+	for _, tbl := range tables {
+		var n int
+		if err := pool.QueryRow(ctx,
+			fmt.Sprintf(`SELECT count(*) FROM %s WHERE tenant_id = $1`, tbl), tenantID).Scan(&n); err != nil {
+			return nil, fmt.Errorf("count %s: %w", tbl, err)
+		}
+		if n > 0 {
+			residual[tbl] = n
+		}
+	}
+	return residual, nil
 }
 
 // --- HTTP helpers ---
