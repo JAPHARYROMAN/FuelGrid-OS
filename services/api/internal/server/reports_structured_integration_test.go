@@ -80,6 +80,65 @@ func TestReportsStationClose_EnvelopeShape(t *testing.T) {
 	}
 }
 
+// TestReportsReconciliation_EnvelopeShape asserts the Inventory Reconciliation
+// report returns the signature §20.3 envelope: a permission-gated 200 for an
+// actor holding reconciliation.read, with the KPI-hero summary carrying the
+// blueprint headline labels (total variance litres, variance %, over-tolerance
+// tank count, tanks reconciled) and the always-present envelope slices. With no
+// tanks reconciled for the station's active day, the report degrades honestly —
+// the four base KPIs are still present and a data-quality warning explains the
+// empty state (so the report never reads as final when it has no data).
+func TestReportsReconciliation_EnvelopeShape(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	tenantSlug := slug(h)
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	code, body := h.getJSON(t, "/api/v1/reports/inventory/reconciliation?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin reconciliation report = %d, want 200", code)
+	}
+
+	meta, ok := body["metadata"].(map[string]any)
+	if !ok || meta["report_key"] != "inventory-reconciliation" {
+		t.Fatalf("metadata.report_key = %v, want inventory-reconciliation", body["metadata"])
+	}
+
+	// The canonical envelope slices are always present (never null).
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table", "chart_data", "drilldown", "export_options"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section: %v", key, body)
+		}
+	}
+
+	// The KPI hero carries the blueprint §20.3 headline labels.
+	summary, ok := body["summary"].([]any)
+	if !ok || len(summary) == 0 {
+		t.Fatalf("summary = %v, want a non-empty KPI hero", body["summary"])
+	}
+	got := map[string]bool{}
+	for _, m := range summary {
+		if row, ok := m.(map[string]any); ok {
+			if label, ok := row["label"].(string); ok {
+				got[label] = true
+			}
+		}
+	}
+	for _, want := range []string{"Total variance", "Variance %", "Over-tolerance tanks", "Tanks reconciled"} {
+		if !got[want] {
+			t.Fatalf("KPI hero is missing the %q metric: %v", want, summary)
+		}
+	}
+
+	// With no tanks reconciled, the report raises a data-quality warning rather
+	// than reading as a clean, final reconciliation.
+	dq, ok := body["data_quality"].([]any)
+	if !ok || len(dq) == 0 {
+		t.Fatalf("data_quality = %v, want an empty-day warning", body["data_quality"])
+	}
+}
+
 func TestReportsStructured_TenantScopingAndPermissions(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()

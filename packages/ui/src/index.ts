@@ -64,6 +64,9 @@ export type { RiskAlertCardProps } from './components/risk-alert-card';
 export { ReconciliationWaterfall } from './components/reconciliation-waterfall';
 export type { ReconciliationWaterfallProps } from './components/reconciliation-waterfall';
 
+export { Heatmap, heatmapToneColor } from './components/heatmap';
+export type { HeatmapProps, HeatmapRow, HeatmapCell, HeatmapTone } from './components/heatmap';
+
 export { ShiftTimeline } from './components/shift-timeline';
 export type {
   ShiftTimelineProps,

@@ -99,12 +99,17 @@ const RECON_ENVELOPE = {
   filters_used: { station_id: STATION.id, period: 'current' },
   data_quality: [],
   summary: [
-    { label: 'Tanks reconciled', value: '1', unit: 'count' },
+    { label: 'Total variance', value: '-50.000', unit: 'L' },
+    { label: 'Variance %', value: '-0.45' },
     { label: 'Over-tolerance tanks', value: '0', unit: 'count' },
+    { label: 'Tanks reconciled', value: '1', unit: 'count' },
+    { label: 'Variance value', value: '145000.00', unit: 'TZS' },
   ],
   chart_data: [
     {
-      tank: 'TANK-01',
+      tank: 'PMS-01',
+      product: 'Petrol',
+      product_color: '#f97316',
       opening: '10000.000',
       deliveries: '5000.000',
       sales: '4000.000',
@@ -113,13 +118,16 @@ const RECON_ENVELOPE = {
       actual_closing: '10950.000',
       variance: '-50.000',
       variance_pct: '-0.45',
+      variance_value: '145000.00',
+      priced: true,
       tolerance: '0.50',
+      over_tolerance: false,
       sealed: false,
     },
   ],
   table: {
-    columns: ['tank', 'opening', 'expected_closing', 'actual_closing', 'variance'],
-    rows: [['TANK-01', '10000.000', '11000.000', '10950.000', '-50.000']],
+    columns: ['tank', 'product', 'opening', 'expected_closing', 'actual_closing', 'variance'],
+    rows: [['PMS-01', 'Petrol', '10000.000', '11000.000', '10950.000', '-50.000']],
   },
   insights: [],
   recommended_actions: [],
@@ -184,6 +192,8 @@ test.describe('reports', () => {
       page.getByRole('heading', { name: 'Inventory Reconciliation', exact: true }),
     ).toBeVisible();
     await expect(page.getByText('Per-tank reconciliation waterfall')).toBeVisible();
+    // The signature §20.3 layout also renders the new variance heatmap.
+    await expect(page.getByRole('heading', { name: 'Variance heatmap' })).toBeVisible();
 
     // The export group's CSV button POSTs the unified export then downloads.
     const downloadPromise = page.waitForEvent('download');

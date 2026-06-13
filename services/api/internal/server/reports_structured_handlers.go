@@ -176,27 +176,35 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 
 	var recs []reconLine
 	if dayID != uuid.Nil {
-		raw, rerr := s.reconciliation.ListForStationDay(ctx, actor.TenantID, stationID, dayID)
+		raw, rerr := s.reconciliation.ListForStationDayWithProduct(ctx, actor.TenantID, stationID, dayID)
 		if rerr != nil {
 			s.logger.Error("recon report: list", "error", rerr)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		for i := range raw {
-			recs = append(recs, reconLineFromRec(raw[i]))
+			recs = append(recs, reconLineFromStationDay(raw[i]))
 		}
 	}
 
 	// Physical dips tell us which tanks are book-only (a data-quality signal).
 	dips, _ := s.readings.LatestDipsForStation(ctx, actor.TenantID, stationID)
 
-	// Build the table + the chart waterfall, and feed the reporting composer.
+	// The signature layout's chart payload carries BOTH the per-tank waterfall
+	// rows (the centerpiece visual) AND a variance heatmap cell per tank/product,
+	// so the page renders the waterfall and the over-tolerance heatmap from one
+	// envelope. The heatmap cell keeps the signed variance %, the tolerance, the
+	// over-tolerance flag (text + color, never color alone), the priced variance
+	// value, and the product identity.
 	env.Table.Columns = []string{
-		"tank", "opening", "deliveries", "sales", "adjustments",
-		"expected_closing", "actual_closing", "variance", "variance_pct", "tolerance", "sealed",
+		"tank", "product", "opening", "deliveries", "sales", "adjustments",
+		"expected_closing", "actual_closing", "variance", "variance_pct", "variance_value",
+		"tolerance", "over_tolerance", "sealed",
 	}
 	type chartTank struct {
 		Tank            string `json:"tank"`
+		Product         string `json:"product"`
+		ProductColor    string `json:"product_color"`
 		Opening         string `json:"opening"`
 		Deliveries      string `json:"deliveries"`
 		Sales           string `json:"sales"`
@@ -205,7 +213,10 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 		ActualClosing   string `json:"actual_closing"`
 		Variance        string `json:"variance"`
 		VariancePct     string `json:"variance_pct"`
+		VarianceValue   string `json:"variance_value"`
+		Priced          bool   `json:"priced"`
 		Tolerance       string `json:"tolerance"`
+		OverTolerance   bool   `json:"over_tolerance"`
 		Sealed          bool   `json:"sealed"`
 	}
 	chart := make([]chartTank, 0, len(recs))
@@ -216,24 +227,49 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 			reconIn.AllShiftsClosed = n == 0
 		}
 	}
-	var exceptions int
+	// KPI-hero aggregates, all summed in float for the DISPLAY headline only (the
+	// per-line decimal strings are never mutated): the net signed variance litres
+	// and its absolute total, the over-tolerance count, and the priced variance
+	// value (only when every contributing tank is priced, so the figure is honest).
+	var exceptions, missingDips, pricedTanks int
+	var netVarianceLitres, absVarianceLitres, totalExpected, varianceValue float64
 	for i := range recs {
 		rc := recs[i]
 		sealed := rc.Status == "sealed"
 		_, hasDip := dips[rc.TankID]
-		if rc.Status == "exception" {
+		if !hasDip {
+			missingDips++
+		}
+		over := rc.Status == "exception" || overTolerance(rc.VarianceLitres, rc.ExpectedClosing, rc.TolerancePercent)
+		if over {
 			exceptions++
 		}
+		if v, ok := parseFloatSafe(rc.VarianceLitres); ok {
+			netVarianceLitres += v
+			absVarianceLitres += math.Abs(v)
+		}
+		if e, ok := parseFloatSafe(rc.ExpectedClosing); ok {
+			totalExpected += math.Abs(e)
+		}
+		if rc.Priced {
+			pricedTanks++
+			if vv, ok := parseFloatSafe(rc.VarianceValue); ok {
+				varianceValue += vv
+			}
+		}
 		env.Table.Rows = append(env.Table.Rows, []string{
-			rc.TankLabel, rc.OpeningBook, rc.DeliveriesTotal, rc.SalesTotal, rc.AdjustmentsTotal,
-			rc.ExpectedClosing, rc.ClosingPhysical, rc.VarianceLitres, rc.VariancePercent,
-			rc.TolerancePercent, strconv.FormatBool(sealed),
+			rc.TankLabel, rc.ProductName, rc.OpeningBook, rc.DeliveriesTotal, rc.SalesTotal,
+			rc.AdjustmentsTotal, rc.ExpectedClosing, rc.ClosingPhysical, rc.VarianceLitres,
+			rc.VariancePercent, rc.VarianceValue, rc.TolerancePercent, strconv.FormatBool(over),
+			strconv.FormatBool(sealed),
 		})
 		chart = append(chart, chartTank{
-			Tank: rc.TankLabel, Opening: rc.OpeningBook, Deliveries: rc.DeliveriesTotal,
-			Sales: rc.SalesTotal, Adjustments: rc.AdjustmentsTotal, ExpectedClosing: rc.ExpectedClosing,
+			Tank: rc.TankLabel, Product: rc.ProductName, ProductColor: rc.ProductColor,
+			Opening: rc.OpeningBook, Deliveries: rc.DeliveriesTotal, Sales: rc.SalesTotal,
+			Adjustments: rc.AdjustmentsTotal, ExpectedClosing: rc.ExpectedClosing,
 			ActualClosing: rc.ClosingPhysical, Variance: rc.VarianceLitres, VariancePct: rc.VariancePercent,
-			Tolerance: rc.TolerancePercent, Sealed: sealed,
+			VarianceValue: rc.VarianceValue, Priced: rc.Priced, Tolerance: rc.TolerancePercent,
+			OverTolerance: over, Sealed: sealed,
 		})
 		reconIn.Tanks = append(reconIn.Tanks, reporting.TankRecon{
 			TankLabel:        rc.TankLabel,
@@ -245,21 +281,61 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 	}
 	env.ChartData = chart
 
+	// KPI hero (blueprint §20.3): total variance litres, variance %, value, and
+	// the over-tolerance tank count. Variance % is the net signed variance over
+	// the total expected book volume (a display ratio); the value KPI is only
+	// surfaced when every reconciled tank is priced, otherwise it would understate.
 	env.Summary = []summaryMetric{
-		{Label: "Tanks reconciled", Value: strconv.Itoa(len(recs)), Unit: "count"},
+		{Label: "Total variance", Value: strconv.FormatFloat(netVarianceLitres, 'f', 3, 64), Unit: "L"},
+		{Label: "Variance %", Value: overallVariancePct(netVarianceLitres, totalExpected)},
 		{Label: "Over-tolerance tanks", Value: strconv.Itoa(exceptions), Unit: "count"},
+		{Label: "Tanks reconciled", Value: strconv.Itoa(len(recs)), Unit: "count"},
+	}
+	if len(recs) > 0 && pricedTanks == len(recs) {
+		env.Summary = append(env.Summary, summaryMetric{
+			Label: "Variance value", Value: strconv.FormatFloat(varianceValue, 'f', 2, 64), Unit: "TZS",
+		})
 	}
 	env.applyReport(reporting.StockReconciliation(reconIn))
 
+	// Harden data-quality beyond the composer: an empty day (no reconciliations)
+	// reads honestly, and an unpriced tank means the variance VALUE is incomplete.
+	if len(recs) == 0 {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: "No tanks have been reconciled for this station's active day yet — reconciliation figures are unavailable.",
+		})
+	} else if pricedTanks < len(recs) {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: fmt.Sprintf("%d of %d tank(s) have no product price — the variance value is omitted until prices are set.", len(recs)-pricedTanks, len(recs)),
+		})
+	}
+	_ = missingDips // the composer raises the missing-dip data-quality warning.
+
+	// Drilldown into the underlying readings/adjustments (blueprint §20.3): the
+	// per-station reconciliation overview (variance history + closing dips) and
+	// the inventory overview (the live book balances + adjustment movements).
 	env.Drilldown = []drilldownLink{
-		{Label: "Reconciliation console", Href: fmt.Sprintf("/api/v1/stations/%s/reconciliation/overview", sid)},
-		{Label: "Inventory overview", Href: fmt.Sprintf("/api/v1/stations/%s/inventory/overview", sid)},
+		{Label: "Reconciliation console", Href: fmt.Sprintf("/api/v1/stations/%s/reconciliation-overview", sid)},
+		{Label: "Inventory overview", Href: fmt.Sprintf("/api/v1/stations/%s/inventory-overview", sid)},
 	}
 	env.ExportOptions = []exportOption{
 		{Format: "csv", URL: fmt.Sprintf("/api/v1/stations/%s/reports/reconciliation.csv", sid)},
 		{Format: "xlsx", URL: fmt.Sprintf("/api/v1/stations/%s/reports/reconciliation.xlsx", sid)},
 	}
 	writeJSON(w, http.StatusOK, env)
+}
+
+// overallVariancePct is the day's net signed variance as a percent of the total
+// expected book volume — a DISPLAY ratio over the already-computed decimal
+// figures (parsed to float for the headline only). Returns "0" when there is no
+// expected volume to divide by.
+func overallVariancePct(netVariance, totalExpected float64) string {
+	if totalExpected == 0 {
+		return "0"
+	}
+	return strconv.FormatFloat(netVariance/totalExpected*100, 'f', 2, 64)
 }
 
 // ---- Daily station close report ----
@@ -903,10 +979,17 @@ func reconStatusForReporting(status string) string {
 // reconLine is a local projection of a reconciliation row for the report,
 // pre-computing the expected closing (opening + deliveries - sales + adjustments)
 // as a decimal STRING via string-safe arithmetic-free passthrough of the
-// persisted ClosingBook (which already is the expected book balance).
+// persisted ClosingBook (which already is the expected book balance). The
+// product identity + the litre variance's monetary value come enriched from
+// the station-day projection so the signature layout can render a variance
+// heatmap (tank × product) and a variance-value KPI — every figure an exact
+// decimal string, the value computed in SQL numeric (never recomputed in Go).
 type reconLine struct {
 	TankID           uuid.UUID
 	TankLabel        string
+	ProductCode      string
+	ProductName      string
+	ProductColor     string
 	OpeningBook      string
 	DeliveriesTotal  string
 	SalesTotal       string
@@ -915,26 +998,43 @@ type reconLine struct {
 	ClosingPhysical  string
 	VarianceLitres   string
 	VariancePercent  string
+	VarianceValue    string // |variance_litres| × product price, decimal string
+	Priced           bool
 	TolerancePercent string
 	Status           string
 }
 
-// reconLineFromRec projects a reconciliation.Reconciliation. ClosingBook is the
-// expected (book) closing balance the day computed; ClosingPhysical is the
-// actual measured closing. Both are exact decimal strings, passed through.
-func reconLineFromRec(rec reconciliation.Reconciliation) reconLine {
+// reconLineFromStationDay projects a product-enriched station-day recon line.
+// ClosingBook is the expected (book) closing balance; ClosingPhysical is the
+// actual measured closing; VarianceValue is the litre variance priced in SQL.
+// All are exact decimal strings, passed through.
+func reconLineFromStationDay(line reconciliation.StationDayReconLine) reconLine {
 	return reconLine{
-		TankID:           rec.TankID,
-		TankLabel:        rec.TankID.String()[:8],
-		OpeningBook:      rec.OpeningBook,
-		DeliveriesTotal:  rec.DeliveriesTotal,
-		SalesTotal:       rec.SalesTotal,
-		AdjustmentsTotal: rec.AdjustmentsTotal,
-		ExpectedClosing:  rec.ClosingBook,
-		ClosingPhysical:  rec.ClosingPhysical,
-		VarianceLitres:   rec.VarianceLitres,
-		VariancePercent:  rec.VariancePercent,
-		TolerancePercent: rec.TolerancePercent,
-		Status:           rec.Status,
+		TankID:           line.TankID,
+		TankLabel:        tankLabelFor(line),
+		ProductCode:      line.ProductCode,
+		ProductName:      line.ProductName,
+		ProductColor:     line.ProductColor,
+		OpeningBook:      line.OpeningBook,
+		DeliveriesTotal:  line.DeliveriesTotal,
+		SalesTotal:       line.SalesTotal,
+		AdjustmentsTotal: line.AdjustmentsTotal,
+		ExpectedClosing:  line.ClosingBook,
+		ClosingPhysical:  line.ClosingPhysical,
+		VarianceLitres:   line.VarianceLitres,
+		VariancePercent:  line.VariancePercent,
+		VarianceValue:    line.VarianceValue,
+		Priced:           line.Priced,
+		TolerancePercent: line.TolerancePercent,
+		Status:           line.Status,
 	}
+}
+
+// tankLabelFor names a tank line: the product code when present (the readable
+// fuel identity), otherwise the tank-id prefix used historically.
+func tankLabelFor(line reconciliation.StationDayReconLine) string {
+	if strings.TrimSpace(line.ProductCode) != "" {
+		return line.ProductCode
+	}
+	return line.TankID.String()[:8]
 }
