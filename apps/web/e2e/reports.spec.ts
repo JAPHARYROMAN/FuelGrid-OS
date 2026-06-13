@@ -199,10 +199,10 @@ const CASH_ENVELOPE = {
       {
         key: 'bank_deposit',
         label: 'Bank deposit',
-        status: 'Not posted',
+        status: 'Not banked',
         tone: 'at_risk',
         amount: '100000.00',
-        detail: '1 deposit(s) prepared, not yet posted',
+        detail: '1 deposit(s) prepared, not yet banked',
       },
     ],
   },
@@ -223,9 +223,11 @@ const CASH_ENVELOPE = {
   insights: [],
   recommended_actions: [],
   drilldown: [],
-  export_options: [
-    { format: 'csv', url: `/api/v1/stations/${STATION.id}/reports/cash-reconciliation.csv` },
-  ],
+  // The cash-reconciliation handler returns NO export options in production
+  // (there is no cash CSV exporter wired), so the mock omits them too — the
+  // export assertion runs on the reconciliation report, whose handler does emit
+  // real options. This keeps the e2e honest about what the cash page can do.
+  export_options: [],
 };
 
 test.describe('reports', () => {
@@ -289,6 +291,16 @@ test.describe('reports', () => {
     // The signature §20.3 layout also renders the new variance heatmap.
     await expect(page.getByRole('heading', { name: 'Variance heatmap' })).toBeVisible();
 
+    // The reconciliation handler returns real export options, so its CSV button
+    // POSTs the unified export then downloads — exercise it here (the cash report
+    // has no exporter, so we never click a CSV button on that page).
+    const downloadPromise = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'CSV' }).first().click();
+
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toContain('reconciliation');
+    expect(exportCalls).toBe(1);
+
     // ---- Signature §20.5 cash-reconciliation view ----
     await page.goto('/reports/cash-reconciliation');
     await expect(
@@ -299,14 +311,6 @@ test.describe('reports', () => {
     // status (colour is never the only signal).
     await expect(page.getByRole('heading', { name: 'Settlement status' })).toBeVisible();
     await expect(page.getByText('Bank deposit', { exact: true })).toBeVisible();
-    await expect(page.getByText('Not posted', { exact: true })).toBeVisible();
-
-    // The export group's CSV button POSTs the unified export then downloads.
-    const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'CSV' }).first().click();
-
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toContain('reconciliation');
-    expect(exportCalls).toBe(1);
+    await expect(page.getByText('Not banked', { exact: true })).toBeVisible();
   });
 });

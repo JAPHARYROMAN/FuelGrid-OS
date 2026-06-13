@@ -58,20 +58,33 @@ function num(v: string | undefined): number {
 }
 
 /**
- * Build the variance heatmap rows from the tank lines. One row per tank; the
- * cell intensity is each tank's |variance %| as a share of the worst |variance
- * %| in the grid (so the heaviest breach reads strongest). Over-tolerance cells
- * are flagged (text chip + ring), within-tolerance cells wash toward success —
- * colour is never the sole signal because every cell shows its figure. Values
- * stay decimal strings; the float coercion is for the intensity ratio only.
+ * Build the variance heatmap rows from the tank lines. One row per tank. Each
+ * column's cell intensity is that tank's magnitude as a share of the worst in
+ * the SAME column — the % cell washes by |variance %| and the litre cell washes
+ * by |variance litres|, so the litre column's colour honestly encodes litre
+ * magnitude (not %), and a large-tank litre loss no longer reads faint just
+ * because its % is small. Over-tolerance cells are flagged (text chip + ring)
+ * and both cells append the breach state to their accessible label, so a
+ * screen-reader hears the breach the colour/ring conveys — colour is never the
+ * sole signal. The priced money sub-label carries the variance DIRECTION (a
+ * shortage shows negative), so it never reads like a gain on a loss. Values stay
+ * decimal strings; the float coercion is for the per-column intensity ratio only.
  */
 function heatmapRows(tanks: ReconChartTank[]): HeatmapRow[] {
-  const worst = tanks.reduce((m, t) => Math.max(m, Math.abs(num(t.variance_pct))), 0);
+  const worstPct = tanks.reduce((m, t) => Math.max(m, Math.abs(num(t.variance_pct))), 0);
+  const worstLitres = tanks.reduce((m, t) => Math.max(m, Math.abs(num(t.variance))), 0);
   return tanks.map((t) => {
-    const absPct = Math.abs(num(t.variance_pct));
-    const intensity = worst > 0 ? absPct / worst : 0;
+    const pctIntensity = worstPct > 0 ? Math.abs(num(t.variance_pct)) / worstPct : 0;
+    const litreIntensity = worstLitres > 0 ? Math.abs(num(t.variance)) / worstLitres : 0;
     const pct = num(t.variance_pct);
     const signed = `${pct > 0 ? '+' : ''}${t.variance_pct || '0'}%`;
+    const breach = t.over_tolerance ? ' over tolerance' : ' within tolerance';
+    // The priced money value is unsigned from the API (abs litres × price); carry
+    // the litre variance's direction so a shortage's value reads negative.
+    const litres = num(t.variance);
+    const signedValue = t.priced
+      ? `${litres < 0 ? '-' : litres > 0 ? '+' : ''}${formatMoney(t.variance_value)}`
+      : 'no price';
     return {
       key: t.tank,
       label: t.tank,
@@ -80,22 +93,22 @@ function heatmapRows(tanks: ReconChartTank[]): HeatmapRow[] {
         {
           key: 'variance_pct',
           display: signed,
-          intensity,
+          intensity: pctIntensity,
           tone: t.over_tolerance ? ('danger' as const) : ('success' as const),
           flagged: t.over_tolerance,
           sublabel: t.tolerance ? `tol ${t.tolerance}%` : undefined,
-          ariaLabel: `${t.tank} variance ${signed}${
-            t.over_tolerance ? ' over tolerance' : ' within tolerance'
-          }`,
+          ariaLabel: `${t.tank} variance ${signed}${breach}`,
         },
         {
           key: 'variance_litres',
           display: formatLitres(t.variance),
-          intensity,
+          intensity: litreIntensity,
           tone: t.over_tolerance ? ('danger' as const) : ('success' as const),
           flagged: t.over_tolerance,
-          sublabel: t.priced ? formatMoney(t.variance_value) : 'no price',
-          ariaLabel: `${t.tank} variance ${formatLitres(t.variance)} litres`,
+          sublabel: signedValue,
+          ariaLabel: `${t.tank} variance ${formatLitres(t.variance)} litres${
+            t.priced ? `, value ${signedValue}` : ''
+          }${breach}`,
         },
       ],
     };

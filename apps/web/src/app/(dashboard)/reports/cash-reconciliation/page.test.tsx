@@ -97,10 +97,10 @@ const envelope = {
       {
         key: 'bank_deposit',
         label: 'Bank deposit',
-        status: 'Not posted',
+        status: 'Not banked',
         tone: 'at_risk',
         amount: '100000.00',
-        detail: '1 deposit(s) prepared, not yet posted',
+        detail: '1 deposit(s) prepared, not yet banked',
       },
     ],
   },
@@ -154,7 +154,7 @@ describe('CashReconciliationPage', () => {
     // a TEXT status (colour is never the only signal).
     expect(screen.getByText('Settlement status')).toBeInTheDocument();
     expect(screen.getByText('Bank deposit')).toBeInTheDocument();
-    expect(screen.getByText('Not posted')).toBeInTheDocument();
+    expect(screen.getByText('Not banked')).toBeInTheDocument();
 
     // The cash flow + tender split visuals. "Mobile money" appears both as a
     // settlement chip and as a tender-mix donut legend entry, so assert presence

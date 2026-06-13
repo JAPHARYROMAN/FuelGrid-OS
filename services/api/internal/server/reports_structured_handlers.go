@@ -244,17 +244,26 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 		if over {
 			exceptions++
 		}
-		if v, ok := parseFloatSafe(rc.VarianceLitres); ok {
-			netVarianceLitres += v
-			absVarianceLitres += math.Abs(v)
+		litreVariance, hasLitre := parseFloatSafe(rc.VarianceLitres)
+		if hasLitre {
+			netVarianceLitres += litreVariance
+			absVarianceLitres += math.Abs(litreVariance)
 		}
 		if e, ok := parseFloatSafe(rc.ExpectedClosing); ok {
 			totalExpected += math.Abs(e)
 		}
 		if rc.Priced {
 			pricedTanks++
+			// VarianceValue is unsigned from SQL (|litres| × price). The KPI sums
+			// the NET signed monetary variance so it agrees in direction with the
+			// signed "Total variance" litres beside it (a shortage subtracts) — an
+			// absolute sum would read shortages and excesses with the same sign.
 			if vv, ok := parseFloatSafe(rc.VarianceValue); ok {
-				varianceValue += vv
+				if hasLitre && litreVariance < 0 {
+					varianceValue -= vv
+				} else {
+					varianceValue += vv
+				}
 			}
 		}
 		env.Table.Rows = append(env.Table.Rows, []string{
@@ -283,7 +292,8 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 
 	// KPI hero (blueprint §20.3): total variance litres, variance %, value, and
 	// the over-tolerance tank count. Variance % is the net signed variance over
-	// the total expected book volume (a display ratio); the value KPI is only
+	// the total expected book volume (a display ratio); the value KPI is the NET
+	// signed monetary variance (sign-aligned with the litre figure) and is only
 	// surfaced when every reconciled tank is priced, otherwise it would understate.
 	env.Summary = []summaryMetric{
 		{Label: "Total variance", Value: strconv.FormatFloat(netVarianceLitres, 'f', 3, 64), Unit: "L"},
@@ -384,19 +394,33 @@ func (s *Server) handleStationCloseReport(w http.ResponseWriter, r *http.Request
 	if len(days) > 0 {
 		d := days[0]
 		env.FiltersUsed["business_date"] = d.BusinessDate.Format(dateLayout)
-		// Expected cash = recorded cash tender; submitted cash = recorded cash
-		// less the till variance (a positive variance is over, negative short).
-		// Both are exact decimal strings (the variance is string-safe-subtracted
-		// only for the display headline; the source figures are never mutated).
-		submittedCash := submittedCashFromVariance(d.CashTotal, cashVariance)
+		// Reconcile the SAME day's cash: resolve the cash reconciliation for THIS
+		// revenue day's operating day, and surface its OWN expected/counted/variance
+		// — never the recorded tender plus a global-latest recon's variance (those
+		// can belong to two different business days, yielding a "submitted" figure
+		// that existed for neither). Expected cash is the recon's seeded expected
+		// when a recon exists, else the day's recorded cash tender; submitted and
+		// variance are shown only once the drawer has actually been counted
+		// (submitted/approved/posted), so a draft recon never fabricates them.
+		recon := s.cashReconForDay(ctx, actor.TenantID, stationID, d.OperatingDayID)
+		expectedCash := d.CashTotal
+		submittedCash := "not submitted"
+		varianceDisplay := d.CashVariance
+		if recon != nil {
+			expectedCash = recon.ExpectedCash
+			if cashRowCounted(recon.Status) {
+				submittedCash = recon.CountedCash
+				varianceDisplay = recon.Variance
+			}
+		}
 		env.Summary = []summaryMetric{
 			{Label: "Sales value", Value: d.GrossRevenue, Unit: "TZS"},
 			{Label: "Net revenue", Value: d.NetRevenue, Unit: "TZS"},
 			{Label: "Margin", Value: d.MarginTotal, Unit: "TZS"},
 			{Label: "Total tendered", Value: d.TenderTotal, Unit: "TZS"},
-			{Label: "Expected cash", Value: d.CashTotal, Unit: "TZS"},
+			{Label: "Expected cash", Value: expectedCash, Unit: "TZS"},
 			{Label: "Submitted cash", Value: submittedCash, Unit: "TZS"},
-			{Label: "Cash variance", Value: cashVarianceDisplay(cashVariance, d.CashVariance), Unit: "TZS"},
+			{Label: "Cash variance", Value: varianceDisplay, Unit: "TZS"},
 			{Label: "Open exceptions", Value: strconv.Itoa(unclosed), Unit: "count"},
 			{Label: "Approval status", Value: dayApprovalStatus(d.Status, unclosed)},
 		}
@@ -537,21 +561,33 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 	var anyPosted, anyUnsubmitted bool
 	for i := range recons {
 		c := recons[i]
+		// A drawer is only COUNTED once the recon is submitted/approved/posted; a
+		// draft/rejected recon seeds expected_cash from cash tenders but leaves
+		// counted_cash/variance at their 0 default (migration 0042). Folding a
+		// draft's seeded expected (with counted 0, variance 0) into the headline
+		// aggregates makes "Net variance" read as a huge shortage while
+		// "Variance status"/shortage/excess (driven by per-row variance) stay
+		// balanced — three contradictory figures. So expected/submitted/variance
+		// only accumulate for counted recons; draft expected stays in the
+		// per-row table/flow (shown as-is) but never in the hero totals.
+		counted := cashRowCounted(c.Status)
 		variance := c.Variance
 		vf, _ := parseFloatSafe(variance)
 		shortage, excess := "0", "0"
-		if vf < 0 {
-			shortage = strconv.FormatFloat(math.Abs(vf), 'f', 2, 64)
-			totalShortage += math.Abs(vf)
-		} else if vf > 0 {
-			excess = strconv.FormatFloat(vf, 'f', 2, 64)
-			totalExcess += vf
-		}
-		if ev, ok := parseFloatSafe(c.ExpectedCash); ok {
-			totalExpected += ev
-		}
-		if cv, ok := parseFloatSafe(c.CountedCash); ok {
-			totalSubmitted += cv
+		if counted {
+			if vf < 0 {
+				shortage = strconv.FormatFloat(math.Abs(vf), 'f', 2, 64)
+				totalShortage += math.Abs(vf)
+			} else if vf > 0 {
+				excess = strconv.FormatFloat(vf, 'f', 2, 64)
+				totalExcess += vf
+			}
+			if ev, ok := parseFloatSafe(c.ExpectedCash); ok {
+				totalExpected += ev
+			}
+			if cv, ok := parseFloatSafe(c.CountedCash); ok {
+				totalSubmitted += cv
+			}
 		}
 		switch c.Status {
 		case "posted":
@@ -570,20 +606,27 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 		})
 	}
 
-	// Deposited cash = sum of POSTED bank deposits; pending = everything still in
-	// draft/prepared/in_transit/confirmed (not yet hit the bank).
+	// Deposited cash = bank deposits the bank has already received. Per the
+	// 0043 lifecycle (draft -> prepared -> in_transit -> confirmed -> posted),
+	// funds move into the bank account at CONFIRMATION; 'posted' only adds the GL
+	// entry. So both 'confirmed' and 'posted' are banked. The genuine at-risk set
+	// — cash prepared but not yet banked — is draft/prepared/in_transit only;
+	// counting 'confirmed' as pending would overstate risk on cash the bank has
+	// already acknowledged.
 	var totalDeposited, pendingDeposited float64
-	var postedDeposits, pendingDeposits int
+	var bankedDeposits, pendingDeposits int
 	for i := range deposits {
 		d := deposits[i]
 		amt, _ := parseFloatSafe(d.Amount)
-		if d.Status == "posted" {
+		switch d.Status {
+		case "confirmed", "posted":
 			totalDeposited += amt
-			postedDeposits++
-		} else if d.Status != "voided" {
+			bankedDeposits++
+		case "draft", "prepared", "in_transit":
 			pendingDeposited += amt
 			pendingDeposits++
 		}
+		// 'voided' deposits are ignored (neither banked nor at risk).
 	}
 
 	// KPI hero (§20.5): expected, submitted, deposited, variance, and the
@@ -607,34 +650,46 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 		{Label: "Reconciliations", Value: strconv.Itoa(len(recons)), Unit: "count"},
 	}
 
-	// Tender mix from the latest revenue day powers the signature tender-split
-	// donut + the mobile-money / card settlement chips. Read straight from the
-	// revenue_days rollup (decimal strings, no recompute), exactly like the close
-	// report. The latest day also tells us if the period is locked.
+	// Recent revenue days drive (a) the latest-day tender-split donut and (b) the
+	// mobile-money/card settlement totals. Read straight from the revenue_days
+	// rollup (decimal strings, no recompute). The mm/card chips must cover the
+	// SAME window as the period-wide cash and deposit chips, otherwise the board
+	// puts an all-time cash figure beside a single-day mobile-money figure and a
+	// viewer reads them as the same period; so we sum mm/card over every day in
+	// the window, not just the latest. The donut still shows the latest day's mix
+	// (its own labelled context), and the latest day tells us if it's locked.
 	pts, latestLocked, _ := s.loadRevenuePoints(ctx, actor.TenantID, stationID)
 	cashPts := grossSeries(pts, func(p reportingRevenuePoint) string { return p.cash })
 	var mmTotal, cardTotal float64
-	if days, derr := s.revenue.RecentDays(ctx, actor.TenantID, stationID, 1); derr == nil && len(days) > 0 {
-		d := days[0]
+	if days, derr := s.revenue.RecentDays(ctx, actor.TenantID, stationID, 30); derr == nil && len(days) > 0 {
+		latest := days[0]
 		env.TenderMix = &tenderMix{
-			Cash: d.CashTotal, MobileMoney: d.MobileMoneyTotal, Card: d.CardTotal,
-			Credit: d.CreditTotal, Voucher: d.VoucherTotal, Total: d.TenderTotal,
+			Cash: latest.CashTotal, MobileMoney: latest.MobileMoneyTotal, Card: latest.CardTotal,
+			Credit: latest.CreditTotal, Voucher: latest.VoucherTotal, Total: latest.TenderTotal,
 		}
-		mmTotal, _ = parseFloatSafe(d.MobileMoneyTotal)
-		cardTotal, _ = parseFloatSafe(d.CardTotal)
+		for i := range days {
+			if v, ok := parseFloatSafe(days[i].MobileMoneyTotal); ok {
+				mmTotal += v
+			}
+			if v, ok := parseFloatSafe(days[i].CardTotal); ok {
+				cardTotal += v
+			}
+		}
 	}
 
 	// Settlement-status board (§20.5, net-new): cash / mobile-money / card / bank
 	// deposit chips, each settled or pending derived deterministically from the
 	// real domain state (no settlement-batch table exists, so the honest signal
-	// is the cash-reconciliation/deposit lifecycle + the day-lock state). The
-	// figures are exact decimal strings; the tone/status are text, never
+	// is the cash-reconciliation/deposit lifecycle + the day-lock state). Every
+	// chip covers the SAME period window (cash submitted, mm/card tendered, and
+	// deposits banked over the recent days), so the figures are on one scale. The
+	// amounts are exact decimal strings; the tone/status are text, never
 	// colour-alone, so the front-end board reads accessibly.
 	settlement := []settlementChip{
 		cashSettlementChip(anyPosted, anyUnsubmitted, len(recons), strconv.FormatFloat(totalSubmitted, 'f', 2, 64)),
 		mediumSettlementChip("mobile_money", "Mobile money", mmTotal, latestLocked),
 		mediumSettlementChip("card", "Card", cardTotal, latestLocked),
-		depositSettlementChip(postedDeposits, pendingDeposits,
+		depositSettlementChip(bankedDeposits, pendingDeposits,
 			strconv.FormatFloat(totalDeposited, 'f', 2, 64),
 			strconv.FormatFloat(pendingDeposited, 'f', 2, 64)),
 	}
@@ -677,14 +732,18 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 	if pendingDeposits > 0 {
 		env.DataQuality = append(env.DataQuality, dataQualityItem{
 			Level:   "warning",
-			Message: fmt.Sprintf("%d bank deposit(s) are prepared but not yet posted — banked cash is not confirmed.", pendingDeposits),
+			Message: fmt.Sprintf("%d bank deposit(s) are prepared but not yet banked — the bank has not received this cash.", pendingDeposits),
 		})
 	}
 
+	// Drill-down targets point at REGISTERED routes (server_routes.go): the
+	// station-scoped cash-reconciliations list and the bank-deposits list filtered
+	// by station. (There is no station-scoped collection-receipts route — receipts
+	// are shift-scoped — so it is dropped rather than linking a 404.) The
+	// operations overview keeps the cross-report drilldown convention.
 	env.Drilldown = []drilldownLink{
 		{Label: "Cash reconciliations", Href: fmt.Sprintf("/api/v1/stations/%s/cash-reconciliations", sid)},
-		{Label: "Collection receipts", Href: fmt.Sprintf("/api/v1/stations/%s/collection-receipts", sid)},
-		{Label: "Bank deposits", Href: fmt.Sprintf("/api/v1/stations/%s/bank-deposits", sid)},
+		{Label: "Bank deposits", Href: fmt.Sprintf("/api/v1/bank-deposits?station_id=%s", sid)},
 		{Label: "Operations overview", Href: fmt.Sprintf("/api/v1/stations/%s/operations/overview", sid)},
 	}
 	writeJSON(w, http.StatusOK, env)
@@ -702,6 +761,20 @@ type settlementChip struct {
 	Tone   string `json:"tone"` // settled | pending | at_risk | neutral
 	Amount string `json:"amount"`
 	Detail string `json:"detail"`
+}
+
+// cashRowCounted reports whether a cash reconciliation's drawer has actually
+// been counted — true once it leaves draft/rejected for submitted/approved/
+// posted. Only counted recons carry a real counted_cash/variance (a draft seeds
+// only expected_cash), so only they may feed the expected/submitted/variance
+// headline aggregates.
+func cashRowCounted(status string) bool {
+	switch status {
+	case "submitted", "approved", "posted":
+		return true
+	default:
+		return false
+	}
 }
 
 // cashSettlementChip describes the cash medium's settlement state from the
@@ -722,11 +795,12 @@ func cashSettlementChip(anyPosted, anyUnsubmitted bool, count int, submitted str
 	return chip
 }
 
-// mediumSettlementChip describes a non-cash tender medium (mobile money / card).
-// With no settlement-batch table, the honest signal is the day-lock state: a
-// locked day means the non-cash tenders are confirmed/settled; an unlocked day
-// with recorded tenders is pending. A zero medium reads as "None".
-func mediumSettlementChip(key, label string, total float64, dayLocked bool) settlementChip {
+// mediumSettlementChip describes a non-cash tender medium (mobile money / card),
+// with the amount tendered over the report window. With no settlement-batch
+// table, the honest settlement signal is the latest day's lock state: a locked
+// latest day means non-cash tenders are confirmed/settled; an unlocked latest
+// day with recorded tenders is pending. A zero medium reads as "None".
+func mediumSettlementChip(key, label string, total float64, latestDayLocked bool) settlementChip {
 	amt := strconv.FormatFloat(total, 'f', 2, 64)
 	switch {
 	case total <= 0:
@@ -734,33 +808,33 @@ func mediumSettlementChip(key, label string, total float64, dayLocked bool) sett
 			Key: key, Label: label, Status: "None", Tone: "neutral", Amount: amt,
 			Detail: "No " + label + " tendered",
 		}
-	case dayLocked:
+	case latestDayLocked:
 		return settlementChip{
 			Key: key, Label: label, Status: "Settled", Tone: "settled", Amount: amt,
-			Detail: "Day locked — tenders confirmed",
+			Detail: "Latest day locked — tenders confirmed",
 		}
 	default:
 		return settlementChip{
 			Key: key, Label: label, Status: "Pending", Tone: "pending", Amount: amt,
-			Detail: "Day not locked — awaiting settlement",
+			Detail: "Latest day not locked — awaiting settlement",
 		}
 	}
 }
 
-// depositSettlementChip describes the bank-deposit medium: posted deposits are
-// settled (cash hit the bank); deposits still in draft/prepared/in_transit are
-// at risk (prepared but not posted).
-func depositSettlementChip(posted, pending int, postedAmt, pendingAmt string) settlementChip {
+// depositSettlementChip describes the bank-deposit medium: banked deposits
+// (confirmed/posted — the bank has received the funds) are settled; deposits
+// still in draft/prepared/in_transit are at risk (prepared but not yet banked).
+func depositSettlementChip(banked, pending int, bankedAmt, pendingAmt string) settlementChip {
 	switch {
 	case pending > 0:
 		return settlementChip{
-			Key: "bank_deposit", Label: "Bank deposit", Status: "Not posted", Tone: "at_risk",
-			Amount: pendingAmt, Detail: fmt.Sprintf("%d deposit(s) prepared, not yet posted", pending),
+			Key: "bank_deposit", Label: "Bank deposit", Status: "Not banked", Tone: "at_risk",
+			Amount: pendingAmt, Detail: fmt.Sprintf("%d deposit(s) prepared, not yet banked", pending),
 		}
-	case posted > 0:
+	case banked > 0:
 		return settlementChip{
-			Key: "bank_deposit", Label: "Bank deposit", Status: "Posted", Tone: "settled",
-			Amount: postedAmt, Detail: fmt.Sprintf("%d deposit(s) posted to the bank", posted),
+			Key: "bank_deposit", Label: "Bank deposit", Status: "Banked", Tone: "settled",
+			Amount: bankedAmt, Detail: fmt.Sprintf("%d deposit(s) received by the bank", banked),
 		}
 	default:
 		return settlementChip{
@@ -1126,31 +1200,6 @@ func parseFloatSafe(s string) (float64, bool) {
 		return 0, false
 	}
 	return v, true
-}
-
-// cashVarianceDisplay picks the till-drawer variance (from the cash
-// reconciliation) when one exists, else falls back to the revenue day's
-// tender-vs-revenue variance. Both are exact decimal strings, passed through.
-func cashVarianceDisplay(reconVariance, dayVariance string) string {
-	if strings.TrimSpace(reconVariance) != "" {
-		return reconVariance
-	}
-	return dayVariance
-}
-
-// submittedCashFromVariance derives the submitted (counted) cash from the
-// recorded cash tender (expected) and the signed till variance: submitted =
-// expected + variance (a positive variance is an over-count, negative a short).
-// Parsing to float here is DISPLAY math only (the headline figure); the source
-// expected/variance strings are never mutated. Returns the expected figure
-// verbatim when no variance was reconciled.
-func submittedCashFromVariance(expectedCash, variance string) string {
-	exp, okE := parseFloatSafe(expectedCash)
-	v, okV := parseFloatSafe(variance)
-	if !okE || !okV || strings.TrimSpace(variance) == "" {
-		return expectedCash
-	}
-	return strconv.FormatFloat(exp+v, 'f', 2, 64)
 }
 
 // dayApprovalStatus derives a coarse approval status for the close summary.

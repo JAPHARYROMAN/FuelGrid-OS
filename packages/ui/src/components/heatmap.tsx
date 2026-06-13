@@ -69,7 +69,13 @@ export interface HeatmapProps {
   flagLabel?: string;
   /** Lowest wash opacity (intensity 0). Defaults to 0.06. */
   minOpacity?: number;
-  /** Highest wash opacity (intensity 1). Defaults to 0.85. */
+  /**
+   * Highest wash opacity (intensity 1). Defaults to 0.6 — capped so the
+   * fixed `text-foreground` figure keeps ≥4.5:1 (WCAG AA) against even the
+   * heaviest danger wash in dark mode, where a 0.85 wash drops the number below
+   * AA. The whole premise of the grid is "read the figure, not the colour", so
+   * the figure must stay legible at full intensity.
+   */
   maxOpacity?: number;
   className?: string;
 }
@@ -88,7 +94,7 @@ export function Heatmap({
   tone = 'accent',
   flagLabel = 'Over',
   minOpacity = 0.06,
-  maxOpacity = 0.85,
+  maxOpacity = 0.6,
   className,
 }: HeatmapProps) {
   if (rows.length === 0 || columns.length === 0) return null;

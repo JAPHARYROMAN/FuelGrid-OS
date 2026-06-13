@@ -21,6 +21,8 @@ import (
 	"context"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // TestReportsStationClose_EnvelopeShape asserts the Daily Station Close report
@@ -280,5 +282,127 @@ func TestReportsStructured_TenantScopingAndPermissions(t *testing.T) {
 	// confirming the 404 above was scoping — not a blanket failure.
 	if code, _ := h.getJSON(t, "/api/v1/reports/inventory/reconciliation?station_id="+other.station1.String(), otherAdmin); code != http.StatusOK {
 		t.Fatalf("other-tenant admin own-station reconciliation report = %d, want 200", code)
+	}
+}
+
+// TestReportsCashReconciliation_Figures seeds a DRAFT reconciliation (expected
+// cash seeded, drawer not yet counted → counted 0 / variance 0) alongside a
+// SUBMITTED one (a real counted shortage) and asserts the headline aggregates
+// reconcile with the shortage/excess status. The draft's seeded expected must
+// NOT inflate the totals (otherwise Net variance reads as a huge shortage while
+// the status stays balanced) — so only the counted recon drives expected /
+// submitted / net variance / shortage, and the three figures agree.
+func TestReportsCashReconciliation_Figures(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+
+	// Day A: a SUBMITTED recon with a real 5,000 shortage (counted 595k < 600k).
+	dayA, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-01", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
+		VALUES ($1, $2, $3, 600000, 595000, -5000, 'submitted', $4)
+	`, h.ids.tenantID, h.ids.station1, dayA, adminID); err != nil {
+		t.Fatalf("seed submitted recon: %v", err)
+	}
+	// Day B: a DRAFT recon — expected seeded (400k) but drawer not counted, so
+	// counted/variance default to 0. It must stay OUT of the headline totals.
+	dayB, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-02", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
+		VALUES ($1, $2, $3, 400000, 0, 0, 'draft', $4)
+	`, h.ids.tenantID, h.ids.station1, dayB, adminID); err != nil {
+		t.Fatalf("seed draft recon: %v", err)
+	}
+
+	code, body := h.getJSON(t, "/api/v1/reports/cash-reconciliation?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("cash report = %d, want 200", code)
+	}
+
+	// Only the counted recon feeds the totals: expected 600k, submitted 595k,
+	// net variance −5,000 — NOT 595,000−1,000,000 (which folding the draft in
+	// would yield), and NOT a balanced status.
+	for label, want := range map[string]string{
+		"Expected cash":   "600000.00",
+		"Submitted cash":  "595000.00",
+		"Net variance":    "-5000.00",
+		"Total shortage":  "5000.00",
+		"Total excess":    "0.00",
+		"Variance status": "Shortage",
+	} {
+		if got := summaryValue(body, label); got != want {
+			t.Fatalf("cash KPI %q = %q, want %q (draft recon must not inflate the totals)", label, got, want)
+		}
+	}
+}
+
+// TestReportsStationClose_DayAlignedCash seeds a revenue day plus the SAME day's
+// submitted cash reconciliation, and a LATER (newest) recon for a different day,
+// then asserts the close headline reconciles the headline day against ITS OWN
+// recon — never the newest recon's variance bolted onto the headline day's
+// tender. Submitted cash must equal the day's counted drawer (not tender ± a
+// cross-day variance), and the cash variance is that day's own variance.
+func TestReportsStationClose_DayAlignedCash(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	var nozzleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM nozzles WHERE tenant_id=$1 AND tank_id=$2 LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzleID); err != nil {
+		t.Fatalf("nozzle: %v", err)
+	}
+
+	// The HEADLINE day (newest business_date) with its own recon: expected 500k,
+	// counted 480k, variance −20,000.
+	headDay, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-10", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO revenue_days (tenant_id, station_id, operating_day_id, business_date, gross_revenue, net_revenue, cash_total, tender_total, cash_variance, status)
+		VALUES ($1, $2, $3, '2026-05-10', 500000, 500000, 500000, 500000, 0, 'draft')
+	`, h.ids.tenantID, h.ids.station1, headDay); err != nil {
+		t.Fatalf("seed revenue day: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by)
+		VALUES ($1, $2, $3, 500000, 480000, -20000, 'submitted', $4)
+	`, h.ids.tenantID, h.ids.station1, headDay, adminID); err != nil {
+		t.Fatalf("seed head-day recon: %v", err)
+	}
+	// A NEWER recon (by created_at) for a DIFFERENT, EARLIER business day with a
+	// very different variance — the global-latest. The close must IGNORE it for
+	// the headline day's cash position.
+	otherDay, _ := seedClosedDayShift(t, ctx, h, adminID, nozzleID, "2026-05-09", 1000)
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO cash_reconciliations (tenant_id, station_id, operating_day_id, expected_cash, counted_cash, variance, status, created_by, created_at)
+		VALUES ($1, $2, $3, 700000, 707000, 7000, 'submitted', $4, now() + interval '1 hour')
+	`, h.ids.tenantID, h.ids.station1, otherDay, adminID); err != nil {
+		t.Fatalf("seed other-day recon: %v", err)
+	}
+
+	code, body := h.getJSON(t, "/api/v1/reports/station-close?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("station-close report = %d, want 200", code)
+	}
+
+	// Submitted cash = the HEADLINE day's counted drawer (480,000), and the cash
+	// variance is the headline day's own −20,000 — NOT 500,000 + 7,000 (the
+	// newest recon's cross-day variance) and NOT the newest recon's figures.
+	if v := summaryValue(body, "Submitted cash"); v != "480000.00" {
+		t.Fatalf("Submitted cash = %q, want 480000.00 (the headline day's counted drawer, not a cross-day blend)", v)
+	}
+	if v := summaryValue(body, "Cash variance"); v != "-20000.00" {
+		t.Fatalf("Cash variance = %q, want -20000.00 (the headline day's own variance, not the newest recon's +7000)", v)
+	}
+	if v := summaryValue(body, "Expected cash"); v != "500000.00" {
+		t.Fatalf("Expected cash = %q, want 500000.00 (the headline day's recon expected)", v)
 	}
 }
