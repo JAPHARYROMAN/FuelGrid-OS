@@ -197,44 +197,16 @@ func seedBlast(t *testing.T, ctx context.Context, owner *database.Pool, tenant u
 	return bt
 }
 
-// cleanupBlast tears down everything seedBlast created for a tenant, in
-// child-before-parent order. The ledger immutability triggers (0065/0069)
-// require the escape-hatch GUC, so all deletes run on one connection that sets
-// it for the session — mirroring cleanupTenant in the phase2 harness.
-func cleanupBlast(ctx context.Context, owner *database.Pool, tenants ...uuid.UUID) {
-	stmts := []string{
-		`DELETE FROM payables WHERE tenant_id = $1`,
-		`DELETE FROM stock_movements WHERE tenant_id = $1`,
-		`DELETE FROM journal_lines WHERE tenant_id = $1`,
-		`DELETE FROM journal_entries WHERE tenant_id = $1`,
-		`DELETE FROM accounting_periods WHERE tenant_id = $1`,
-		`DELETE FROM accounts WHERE tenant_id = $1`,
-		`DELETE FROM customers WHERE tenant_id = $1`,
-		`DELETE FROM suppliers WHERE tenant_id = $1`,
-		`DELETE FROM tanks WHERE tenant_id = $1`,
-		`DELETE FROM products WHERE tenant_id = $1`,
-		`DELETE FROM stations WHERE tenant_id = $1`,
-		`DELETE FROM users WHERE tenant_id = $1`,
-		`DELETE FROM companies WHERE tenant_id = $1`,
-		`DELETE FROM tenants WHERE id = $1`,
-	}
-	conn, err := owner.Acquire(ctx)
-	if err != nil {
-		for _, tn := range tenants {
-			for _, s := range stmts {
-				_, _ = owner.Exec(ctx, s, tn)
-			}
-		}
-		return
-	}
-	defer conn.Release()
-	_, _ = conn.Exec(ctx, `SET app.allow_ledger_delete = 'on'`)
-	for _, tn := range tenants {
-		for _, s := range stmts {
-			_, _ = conn.Exec(ctx, s, tn)
-		}
-	}
-}
+// Teardown is handled by the generic cleanupTenant (phase2 harness), invoked via
+// cleanupTenantNoResidual in TestRLS_BlastCrossTenantIsolation below. cleanupTenant
+// derives the delete order from the LIVE FK graph and tears down EVERY
+// tenant-scoped table — so the blast can never leak a tenant tree by hand-omitting
+// a table. The previous bespoke cleanupBlast statement list only enumerated the
+// dozen tables seedBlast happened to touch; it would rot the moment seedBlast (or
+// a migration) added a tenant-scoped table, leaving the tenant tree behind.
+// cleanupTenant already flips the app.allow_ledger_delete escape-hatch GUC on its
+// connection, so the 0065/0069 ledger immutability triggers do not block the
+// journal deletes.
 
 // TestRLS_BlastCrossTenantIsolation is the data-driven blast: across a broad
 // set of tenant-owned tables, a fuelgrid_app connection scoped to tenant A (via
@@ -286,7 +258,15 @@ func TestRLS_BlastCrossTenantIsolation(t *testing.T) {
 	`, tenantA, "blast-a-"+tenantA.String()[:8], tenantB, "blast-b-"+tenantB.String()[:8]); err != nil {
 		t.Fatalf("seed tenants: %v", err)
 	}
-	t.Cleanup(func() { cleanupBlast(ctx, owner, tenantA, tenantB) })
+	// Tear both tenants down via the now-generic cleanupTenant (which replaces the
+	// removed bespoke cleanupBlast) and assert zero residual. This is a `defer`, not a
+	// t.Cleanup: t.Cleanup fires AFTER the test's deferred `owner.Close()` /
+	// `app.Close()` have closed the pools, which would make the purge — and any
+	// residual check — a silent no-op and leak both tenant trees. Registered here
+	// (after `defer owner.Close()`), it runs LIFO, i.e. BEFORE the owner pool
+	// closes, so the purge lands and cleanupTenantNoResidual can verify it.
+	defer cleanupTenantNoResidual(t, ctx, owner, tenantA)
+	defer cleanupTenantNoResidual(t, ctx, owner, tenantB)
 
 	btA := seedBlast(t, ctx, owner, tenantA, "A")
 	btB := seedBlast(t, ctx, owner, tenantB, "B")
