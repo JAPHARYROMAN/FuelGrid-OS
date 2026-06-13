@@ -10,6 +10,7 @@ package readings
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +18,13 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
+
+// ErrTerminalVerification is returned by ReplaceHoldVerification when the
+// reading's existing verification is already TERMINAL ({approved, corrected})
+// and therefore must not be re-decided in place. A terminal verdict is final;
+// the only way past it is a fresh ACTIVE reading (the supersedes chain), which
+// carries its own verification.
+var ErrTerminalVerification = errors.New("readings: reading already has a terminal verification")
 
 // Verification is one supervisor decision over one meter reading. All three
 // reading figures are exact decimal STRINGS (numeric(14,3) read ::text).
@@ -82,6 +90,46 @@ func (r *Repo) InsertVerification(ctx context.Context, tx pgx.Tx, tenantID uuid.
 		in.AttendantSubmittedReading, in.SupervisorVerifiedReading,
 		in.FinalApprovedReading, in.Status, in.Reason, in.VerifiedBy,
 	), &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// ReplaceHoldVerification re-decides a reading that currently carries a
+// NON-TERMINAL hold (rejected/flagged), overwriting that one verification row
+// in place with the new verdict inside the caller's tx. This is how a
+// supervisor clears a hold without re-capturing the reading: a flagged reading
+// is approved/corrected after the investigation, or a held reading is moved to
+// a different hold. The immutable trail of every verdict lives in the audit
+// log / outbox, not in this current-state row.
+//
+// It returns ErrTerminalVerification (and changes nothing) when the existing
+// verification is already terminal {approved, corrected} — a final verdict is
+// not re-decidable in place; the caller surfaces that as a 409. The WHERE clause
+// gates the UPDATE on the hold statuses so the terminal-immutability rule is
+// enforced in SQL, not just in Go.
+func (r *Repo) ReplaceHoldVerification(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in VerificationInput) (*Verification, error) {
+	var v Verification
+	err := scanVerification(tx.QueryRow(ctx, `
+		UPDATE reading_verifications
+		SET station_id = $2, shift_id = $3, nozzle_id = $4,
+		    attendant_submitted_reading = $6::numeric,
+		    supervisor_verified_reading = $7::numeric,
+		    final_approved_reading = $8::numeric,
+		    status = $9, reason = $10, verified_by = $11, verified_at = now()
+		WHERE tenant_id = $1 AND reading_id = $5
+		  AND status IN ('rejected', 'flagged')
+		RETURNING `+verificationColumns,
+		tenantID, in.StationID, in.ShiftID, in.NozzleID, in.ReadingID,
+		in.AttendantSubmittedReading, in.SupervisorVerifiedReading,
+		in.FinalApprovedReading, in.Status, in.Reason, in.VerifiedBy,
+	), &v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Either there is no verification at all (caller should have inserted),
+		// or it is terminal — the hold-only WHERE matched nothing.
+		return nil, ErrTerminalVerification
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &v, nil
@@ -250,22 +298,51 @@ func (r *Repo) CorrectionReportRows(ctx context.Context, tenantID, stationID uui
 	return out, rows.Err()
 }
 
-// UnverifiedClosingCountForShift counts the shift's ACTIVE closing readings
-// without a verification row — the shift-approval gate. It runs through any
-// Querier so the approval handler can re-check inside the tx that holds the
-// shift's FOR UPDATE lock (a verification cannot slip in between the check and
-// the approval flip).
-func (r *Repo) UnverifiedClosingCountForShift(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (int, error) {
-	var n int
-	err := q.QueryRow(ctx, `
-		SELECT count(*)
+// ClosingVerificationGateCounts breaks the shift's ACTIVE closing readings into
+// the buckets the approval gate cares about (PRD §7.8/§9.5 closeout): readings
+// with no verification yet, readings held by a 'rejected' verdict (the
+// attendant must re-capture), and readings held by a 'flagged' verdict (under
+// investigation). A reading is approvable only when its ACTIVE row carries a
+// terminal-good verdict {approved, corrected} — any of these three buckets
+// being non-zero blocks approval. Runs through any Querier so the approval
+// handler can re-check inside its FOR UPDATE tx.
+//
+// Holds are matched against the ACTIVE reading's own verification: a rejected
+// reading that the attendant re-captured leaves the rejection on the now
+// SUPERSEDED row and the new ACTIVE row unverified, so it lands in `unverified`
+// (re-verification pending), never in `rejected`.
+func (r *Repo) ClosingVerificationGateCounts(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (unverified, rejected, flagged int, err error) {
+	err = q.QueryRow(ctx, `
+		SELECT
+		    count(*) FILTER (WHERE v.id IS NULL),
+		    count(*) FILTER (WHERE v.status = 'rejected'),
+		    count(*) FILTER (WHERE v.status = 'flagged')
 		FROM meter_readings m
+		LEFT JOIN reading_verifications v
+		    ON v.tenant_id = m.tenant_id AND v.reading_id = m.id
 		WHERE m.tenant_id = $1 AND m.shift_id = $2
 		  AND m.reading_type = 'closing' AND m.status = 'active'
-		  AND NOT EXISTS (
-		      SELECT 1 FROM reading_verifications v
-		      WHERE v.tenant_id = m.tenant_id AND v.reading_id = m.id
-		  )
-	`, tenantID, shiftID).Scan(&n)
-	return n, err
+	`, tenantID, shiftID).Scan(&unverified, &rejected, &flagged)
+	return unverified, rejected, flagged, err
+}
+
+// ActiveClosingRejected reports whether the shift's ACTIVE closing reading for
+// a nozzle carries a 'rejected' verification — i.e. the supervisor sent it back
+// and the attendant is expected to re-capture (PRD §7.8). The capture/correct
+// paths consult this to relax the Phase 3 closing-submission lock for exactly
+// that nozzle: a rejection (and only a rejection) unlocks attendant resubmission.
+func (r *Repo) ActiveClosingRejected(ctx context.Context, tenantID, shiftID, nozzleID uuid.UUID) (bool, error) {
+	var rejected bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		    FROM meter_readings m
+		    JOIN reading_verifications v
+		        ON v.tenant_id = m.tenant_id AND v.reading_id = m.id
+		    WHERE m.tenant_id = $1 AND m.shift_id = $2 AND m.nozzle_id = $3
+		      AND m.reading_type = 'closing' AND m.status = 'active'
+		      AND v.status = 'rejected'
+		)
+	`, tenantID, shiftID, nozzleID).Scan(&rejected)
+	return rejected, err
 }

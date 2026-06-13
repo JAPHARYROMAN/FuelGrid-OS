@@ -1876,11 +1876,98 @@ paths:
         '409': { description: Reading already verified, superseded, or shift approved }
         '422': { description: Not a closing reading, precision exceeded, or below opening }
 
+  /api/v1/shifts/{id}/readings/{readingID}/reject:
+    post:
+      tags: [Shifts]
+      summary: Reject a closing reading — send it back to the attendant (reading.override)
+      description: >-
+        PRD §7.8. A non-terminal HOLD on the attendant's submitted closing reading: the meter
+        reading is never mutated; a verification with status 'rejected' and the mandatory reason
+        is recorded. A rejection (a) blocks shift approval (the gate returns 409
+        readings_rejected_pending) and (b) unlocks the attendant's Phase 3 closing-submission lock
+        for that nozzle so they can re-capture. The re-captured closing supersedes the rejected one
+        (the rejection stays on the superseded row as history) and is unverified again, so
+        re-verification then proceeds. Separation of duties — the rejecter must not be the recorder.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: readingID, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, description: Mandatory — why the reading is rejected }
+      responses:
+        '201': { description: Rejected, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingVerification' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Missing reading.override, or the rejecter is the recorder (separation of duties) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Reading already verified, or superseded }
+        '422': { description: Not a closing reading }
+
+  /api/v1/shifts/{id}/readings/{readingID}/flag:
+    post:
+      tags: [Shifts]
+      summary: Flag a closing reading for investigation (reading.override)
+      description: >-
+        PRD §9.5. A non-terminal HOLD recording a verification with status 'flagged' and the
+        mandatory reason; the meter reading is never mutated. A flag blocks shift approval (the gate
+        returns 409 readings_flagged_pending) but, unlike a rejection, does NOT unlock attendant
+        resubmission — it is the supervisor's own investigation. It is cleared by re-deciding the
+        reading: approve it as-submitted (POST .../approve) or correct it (POST .../verify-correct),
+        either of which overwrites the hold with a terminal verdict. Separation of duties — the
+        flagger must not be the recorder.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: readingID, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, description: Mandatory — why the reading is flagged }
+      responses:
+        '201': { description: Flagged, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingVerification' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Missing reading.override, or the flagger is the recorder (separation of duties) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Reading already verified, or superseded }
+        '422': { description: Not a closing reading }
+
+  /api/v1/shifts/{id}/readings/{readingID}/approve:
+    post:
+      tags: [Shifts]
+      summary: Approve one closing reading as-submitted (reading.override)
+      description: >-
+        The per-reading counterpart to POST /readings/verify, and the path that CLEARS a hold: a
+        verification with status 'approved' is recorded (final = the attendant's submission,
+        unchanged). When the reading already carries a non-terminal hold (rejected/flagged) the hold
+        is overwritten with this terminal 'approved' verdict — this is how a supervisor resolves a
+        flag they decide is fine. A reading that already carries a TERMINAL verdict
+        ({approved, corrected}) is immutable (409). Separation of duties — the approver must not be
+        the recorder.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: readingID, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '201': { description: Approved, content: { application/json: { schema: { $ref: '#/components/schemas/ReadingVerification' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Missing reading.override, or the approver is the recorder (separation of duties) }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Reading already has a terminal verification, superseded, or shift approved }
+        '422': { description: Not a closing reading }
+
   /api/v1/shifts/{id}/cash-submission/confirm:
     post:
       tags: [Shifts]
       summary: Confirm receipt of the shift's cash submission (cash.confirm)
-      description: Records the supervisor's collection receipt for a closed shift's cash submission — snapshots expected + submitted, the received total, and the difference (received − expected, SQL numeric). Separation of duties — the receiver must not be the submitter. A reason is required when the difference is non-zero or the handover is rejected. Shift approval is gated on a non-rejected receipt.
+      description: Records the supervisor's collection receipt for a closed shift's cash submission — snapshots expected + submitted, the received total, and the difference (received − expected, SQL numeric). Separation of duties — the receiver must not be the submitter. A reason is required when the difference is non-zero or the handover is rejected or flagged. Shift approval is gated on a TERMINAL-GOOD receipt (received or approved_with_difference); a rejected or flagged (PRD §9.6) receipt leaves the gate closed (409 collection_unconfirmed).
       parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
       requestBody:
         required: true
@@ -1891,8 +1978,8 @@ paths:
               required: [received_total]
               properties:
                 received_total: { type: string, description: Exact decimal string (numeric 14,2) of the cash physically received }
-                status: { type: string, enum: [received, rejected], description: Defaults to received; a non-zero difference upgrades to approved_with_difference server-side }
-                reason: { type: string, description: Required when the difference is non-zero or the handover is rejected }
+                status: { type: string, enum: [received, rejected, flagged], description: Defaults to received; a non-zero difference upgrades to approved_with_difference server-side. 'flagged' (PRD §9.6) is a hold under investigation that blocks approval. }
+                reason: { type: string, description: Required when the difference is non-zero or the handover is rejected or flagged }
                 supervisor_comment: { type: string }
       responses:
         '201': { description: Confirmed, content: { application/json: { schema: { $ref: '#/components/schemas/CollectionReceipt' } } } }
@@ -1905,7 +1992,7 @@ paths:
     get:
       tags: [Shifts]
       summary: Get a shift's collection receipt (station.read)
-      description: The supervisor review surface's receipt status — received / approved_with_difference / rejected, with the snapshots, difference, and reason. 404 while no receipt has been recorded yet.
+      description: The supervisor review surface's receipt status — received / approved_with_difference / rejected / flagged, with the snapshots, difference, and reason. 404 while no receipt has been recorded yet.
       parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/CollectionReceipt' } } } }
@@ -6569,7 +6656,7 @@ components:
         attendant_submitted_reading: { type: string }
         supervisor_verified_reading: { type: string }
         final_approved_reading: { type: string }
-        status: { type: string, enum: [approved, corrected, rejected] }
+        status: { type: string, enum: [approved, corrected, rejected, flagged], description: "approved/corrected are terminal-good; rejected/flagged are non-terminal holds that block shift approval (PRD §7.8/§9.5)" }
         reason: { type: string }
         verified_by: { type: string, format: uuid }
         verified_at: { type: string, format: date-time }
@@ -6597,7 +6684,7 @@ components:
         attendant_submitted_total: { type: string }
         supervisor_received_total: { type: string }
         difference: { type: string }
-        status: { type: string, enum: [received, approved_with_difference, rejected] }
+        status: { type: string, enum: [received, approved_with_difference, rejected, flagged], description: "received/approved_with_difference are terminal-good; rejected/flagged (PRD §9.6) are holds that block shift approval" }
         reason: { type: string }
         supervisor_comment: { type: string }
         received_by: { type: string, format: uuid }
@@ -6657,11 +6744,12 @@ components:
       description: The actor's own meter progress on one nozzle. Reading figures are exact decimal strings (numeric 14,3). verification_status is set once a closing exists — pending until a reading verification lands, then that row's status. Once verified, final_reading carries the final approved figure (the supervisor's value when corrected) and verification_reason the supervisor's reason where one was required (Phase 3 review-status screen).
       properties:
         nozzle_id: { type: string, format: uuid }
+        closing_reading_id: { type: string, format: uuid, description: The ACTIVE closing reading's id, present once a closing exists — needed to drive the /correct resubmit after a rejection }
         opening_reading: { type: string }
         closing_reading: { type: string }
-        verification_status: { type: string, enum: [pending, approved, corrected, rejected] }
+        verification_status: { type: string, enum: [pending, approved, corrected, rejected, flagged], description: "pending until a verdict lands; rejected/flagged (PRD §7.8/§9.5) are non-terminal holds — rejected means the attendant must re-capture" }
         final_reading: { type: string, description: The verification's final approved reading (exact decimal string), present once verified }
-        verification_reason: { type: string, description: The supervisor's reason, present when the verification required one (corrected/rejected) }
+        verification_reason: { type: string, description: The supervisor's reason, present when the verification required one (corrected/rejected/flagged) }
     AttendantCurrentShift:
       type: object
       description: The Mobile Attendant App workflow snapshot — one self-scoped payload the home screen renders directly.

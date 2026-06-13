@@ -25,8 +25,14 @@ const getCollectionReceipt = vi.fn();
 const listShiftExceptions = vi.fn();
 const verifyShiftReadings = vi.fn();
 const verifyCorrectReading = vi.fn();
+const approveReading = vi.fn();
+const rejectReading = vi.fn();
+const flagReading = vi.fn();
 const confirmCashSubmission = vi.fn();
 const approveShift = vi.fn();
+const assignAttendant = vi.fn();
+const assignNozzle = vi.fn();
+const unassignNozzle = vi.fn();
 
 vi.mock('@/lib/api', () => ({
   api: {
@@ -43,8 +49,14 @@ vi.mock('@/lib/api', () => ({
     listShiftExceptions: (...a: unknown[]) => listShiftExceptions(...a),
     verifyShiftReadings: (...a: unknown[]) => verifyShiftReadings(...a),
     verifyCorrectReading: (...a: unknown[]) => verifyCorrectReading(...a),
+    approveReading: (...a: unknown[]) => approveReading(...a),
+    rejectReading: (...a: unknown[]) => rejectReading(...a),
+    flagReading: (...a: unknown[]) => flagReading(...a),
     confirmCashSubmission: (...a: unknown[]) => confirmCashSubmission(...a),
     approveShift: (...a: unknown[]) => approveShift(...a),
+    assignAttendant: (...a: unknown[]) => assignAttendant(...a),
+    assignNozzle: (...a: unknown[]) => assignNozzle(...a),
+    unassignNozzle: (...a: unknown[]) => unassignNozzle(...a),
   },
 }));
 
@@ -180,7 +192,12 @@ const notFound404 = () => new SdkError('not found', 404, { error: 'not found' })
 
 describe('ShiftReviewPage', () => {
   beforeEach(() => {
-    perms = { 'reading.override': true, 'cash.confirm': true, 'shift.approve': true };
+    perms = {
+      'reading.override': true,
+      'cash.confirm': true,
+      'shift.approve': true,
+      'shift.assign': true,
+    };
     getShift.mockResolvedValue(shift());
     listMeterReadings.mockResolvedValue({ items: [], count: 0, dispensed: [] });
     listAuditLogs.mockResolvedValue({ items: [], count: 0, has_more: false });
@@ -253,8 +270,20 @@ describe('ShiftReviewPage', () => {
     verifyCorrectReading.mockResolvedValue(
       verification({ status: 'corrected', supervisor_verified_reading: '1490.00' }),
     );
+    approveReading.mockResolvedValue(verification({ status: 'approved' }));
+    rejectReading.mockResolvedValue(verification({ status: 'rejected', reason: 'photo mismatch' }));
+    flagReading.mockResolvedValue(verification({ status: 'flagged', reason: 'looks tampered' }));
     confirmCashSubmission.mockResolvedValue(receipt());
     approveShift.mockResolvedValue(shift({ status: 'approved' }));
+    assignAttendant.mockResolvedValue(undefined);
+    assignNozzle.mockResolvedValue({
+      id: 'na-2',
+      shift_id: 'sh-1',
+      nozzle_id: 'noz-1',
+      attendant_id: 'u-att',
+      assigned_at: '2026-06-01T06:30:00Z',
+    });
+    unassignNozzle.mockResolvedValue(undefined);
   });
 
   afterEach(() => vi.clearAllMocks());
@@ -446,7 +475,12 @@ describe('ShiftReviewPage', () => {
   });
 
   it('hides verification actions without reading.override (read-only)', async () => {
-    perms = { 'reading.override': false, 'cash.confirm': true, 'shift.approve': true };
+    perms = {
+      'reading.override': false,
+      'cash.confirm': true,
+      'shift.approve': true,
+      'shift.assign': true,
+    };
     listMeterReadings.mockResolvedValue({
       items: [openingReading, reading()],
       count: 2,
@@ -458,7 +492,299 @@ describe('ShiftReviewPage', () => {
     await within(queue).findByTestId('verification-row');
     expect(within(queue).queryByRole('button', { name: /approve all/i })).not.toBeInTheDocument();
     expect(within(queue).queryByRole('button', { name: /correct/i })).not.toBeInTheDocument();
+    expect(within(queue).queryByRole('button', { name: /reject/i })).not.toBeInTheDocument();
+    expect(
+      within(queue).queryByRole('button', { name: /flag for investigation/i }),
+    ).not.toBeInTheDocument();
     expect(within(queue).getByText('Pending verification')).toBeInTheDocument();
+  });
+
+  it('reject modal requires a reason, then calls rejectReading', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: /^reject…$/i }));
+    const reasonInput = await screen.findByLabelText('Rejection reason');
+    const submit = screen.getByRole('button', { name: /^reject reading$/i });
+
+    // No reason — blocked.
+    expect(submit).toBeDisabled();
+    expect(rejectReading).not.toHaveBeenCalled();
+
+    await userEvent.type(reasonInput, 'photo does not match the meter');
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    await waitFor(() =>
+      expect(rejectReading).toHaveBeenCalledWith('sh-1', 'mr-close', {
+        reason: 'photo does not match the meter',
+      }),
+    );
+  });
+
+  it('flag modal requires a reason, then calls flagReading', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: /flag for investigation…/i }));
+    const reasonInput = await screen.findByLabelText('Flag reason');
+    const submit = screen.getByRole('button', { name: /^flag reading$/i });
+
+    expect(submit).toBeDisabled();
+    expect(flagReading).not.toHaveBeenCalled();
+
+    await userEvent.type(reasonInput, 'figure looks tampered');
+    expect(submit).toBeEnabled();
+    await userEvent.click(submit);
+
+    await waitFor(() =>
+      expect(flagReading).toHaveBeenCalledWith('sh-1', 'mr-close', {
+        reason: 'figure looks tampered',
+      }),
+    );
+  });
+
+  it('surfaces the separation-of-duties 403 from reject cleanly', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    rejectReading.mockRejectedValue(
+      new SdkError('separation of duties: you cannot verify readings you recorded', 403, {
+        error: 'separation of duties: you cannot verify readings you recorded',
+      }),
+    );
+    renderPage();
+
+    await userEvent.click(await screen.findByRole('button', { name: /^reject…$/i }));
+    await userEvent.type(await screen.findByLabelText('Rejection reason'), 'mismatch');
+    await userEvent.click(screen.getByRole('button', { name: /^reject reading$/i }));
+
+    expect(
+      await screen.findByText(/separation of duties: you cannot verify readings you recorded/i),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a rejected verification with its reason and resubmit note', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    listReadingVerifications.mockResolvedValue({
+      items: [verification({ status: 'rejected', reason: 'blurry meter photo' })],
+      count: 1,
+    });
+    renderPage();
+
+    const queue = await screen.findByTestId('verification-queue');
+    const row = await within(queue).findByTestId('verification-row');
+    expect(within(row).getByText('Rejected')).toBeInTheDocument();
+    expect(within(row).getByText(/blurry meter photo/)).toBeInTheDocument();
+    expect(within(row).getByText(/sent back to the attendant to re-capture/i)).toBeInTheDocument();
+    // A rejected reading is a HOLD: it offers clear actions but not another Reject.
+    expect(within(queue).queryByRole('button', { name: /^reject…$/i })).not.toBeInTheDocument();
+    expect(
+      within(queue).getByRole('button', { name: /approve as submitted/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a flagged verification with its reason', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    listReadingVerifications.mockResolvedValue({
+      items: [verification({ status: 'flagged', reason: 'escalated to manager' })],
+      count: 1,
+    });
+    renderPage();
+
+    const queue = await screen.findByTestId('verification-queue');
+    const row = await within(queue).findByTestId('verification-row');
+    expect(within(row).getByText('Flagged for investigation')).toBeInTheDocument();
+    expect(within(row).getByText(/escalated to manager/)).toBeInTheDocument();
+  });
+
+  it('clears a FLAGGED reading by approving it as-submitted (per-reading approve path)', async () => {
+    listMeterReadings.mockResolvedValue({
+      items: [openingReading, reading()],
+      count: 2,
+      dispensed: [],
+    });
+    listReadingVerifications.mockResolvedValue({
+      items: [verification({ status: 'flagged', reason: 'looked off — investigated' })],
+      count: 1,
+    });
+    renderPage();
+
+    const queue = await screen.findByTestId('verification-queue');
+    // Wait for the flagged verdict to render before asserting its clear actions.
+    await within(queue).findByText('Flagged for investigation');
+    // The hold offers Approve/Correct/Reject (the supervisor can re-decide it).
+    const approve = within(queue).getByRole('button', { name: /approve as submitted/i });
+    expect(within(queue).getByRole('button', { name: /^correct…$/i })).toBeInTheDocument();
+    expect(within(queue).getByRole('button', { name: /^reject…$/i })).toBeInTheDocument();
+
+    await userEvent.click(approve);
+    await waitFor(() => expect(approveReading).toHaveBeenCalledWith('sh-1', 'mr-close'));
+  });
+
+  it('lets the supervisor re-confirm a FLAGGED collection receipt to clear the hold', async () => {
+    getShift.mockResolvedValue(closedShift());
+    getCloseSummary.mockResolvedValue({
+      shift: closedShift(),
+      lines: [],
+      expected_cash: '1475000.00',
+      cash_submission: cashSubmission,
+    });
+    getCollectionReceipt.mockResolvedValue(
+      receipt({ status: 'flagged', reason: 'cash count disputed', difference: '0.00' }),
+    );
+    confirmCashSubmission.mockResolvedValue(receipt({ status: 'received', difference: '0.00' }));
+    renderPage();
+
+    const panel = await screen.findByTestId('collection-receipt-panel');
+    // A held receipt still shows its status AND a re-confirm form.
+    expect(await within(panel).findByText(/re-confirm the handover below/i)).toBeInTheDocument();
+    await userEvent.type(within(panel).getByLabelText('Received total'), '1475000');
+    await userEvent.click(within(panel).getByRole('button', { name: /confirm receipt/i }));
+
+    await waitFor(() =>
+      expect(confirmCashSubmission).toHaveBeenCalledWith('sh-1', { received_total: '1475000' }),
+    );
+  });
+
+  it('keeps a TERMINAL collection receipt read-only (no re-confirm form)', async () => {
+    getShift.mockResolvedValue(closedShift());
+    getCloseSummary.mockResolvedValue({
+      shift: closedShift(),
+      lines: [],
+      expected_cash: '1475000.00',
+      cash_submission: cashSubmission,
+    });
+    getCollectionReceipt.mockResolvedValue(receipt({ status: 'received', difference: '0.00' }));
+    renderPage();
+
+    const panel = await screen.findByTestId('collection-receipt-panel');
+    await within(panel).findByTestId('receipt-status');
+    expect(within(panel).queryByText(/re-confirm the handover below/i)).not.toBeInTheDocument();
+    expect(within(panel).queryByLabelText('Received total')).not.toBeInTheDocument();
+  });
+
+  // --- ad-hoc attendant assignment (PRD gap #5) ---
+
+  it('assigns a rostered attendant to a nozzle without re-adding them to the roster', async () => {
+    // noz-1 is already assigned in the fixture; expose a second free nozzle.
+    getStationOverview.mockResolvedValue({
+      station: { id: 'st-1', name: 'Mikocheni' },
+      tanks: [],
+      pumps: [
+        {
+          id: 'p-1',
+          number: 1,
+          nozzles: [
+            {
+              id: 'noz-1',
+              number: 2,
+              product_id: 'prod-1',
+              tank_id: 'tk-1',
+              meter_decimal_places: 2,
+              status: 'active',
+            },
+            {
+              id: 'noz-2',
+              number: 3,
+              product_id: 'prod-1',
+              tank_id: 'tk-1',
+              meter_decimal_places: 2,
+              status: 'active',
+            },
+          ],
+        },
+      ],
+      open_shifts: [],
+      open_incidents: [],
+    });
+    getShift.mockResolvedValue(shift({ nozzle_assignments: [] }));
+    renderPage();
+
+    const panel = await screen.findByTestId('adhoc-assignment-panel');
+    // Wait for the station overview to load the selectable nozzle options.
+    await within(panel).findByRole('option', { name: /Pump 1 · Nozzle 2/ });
+    await userEvent.selectOptions(within(panel).getByLabelText('Nozzle'), 'noz-1');
+    await userEvent.selectOptions(within(panel).getByLabelText('Attendant'), 'u-att');
+    await userEvent.click(within(panel).getByRole('button', { name: /^assign$/i }));
+
+    await waitFor(() =>
+      expect(assignNozzle).toHaveBeenCalledWith('sh-1', {
+        nozzle_id: 'noz-1',
+        attendant_id: 'u-att',
+      }),
+    );
+    // u-att is already on the roster — no extra assignAttendant call.
+    expect(assignAttendant).not.toHaveBeenCalled();
+  });
+
+  it('adds an off-roster substitute to the shift before assigning the nozzle', async () => {
+    getShift.mockResolvedValue(shift({ nozzle_assignments: [] }));
+    renderPage();
+
+    const panel = await screen.findByTestId('adhoc-assignment-panel');
+    // u-sup is a station employee but NOT on this shift's roster — a substitute.
+    await within(panel).findByRole('option', { name: /Pump 1 · Nozzle 2/ });
+    await userEvent.selectOptions(within(panel).getByLabelText('Nozzle'), 'noz-1');
+    await userEvent.selectOptions(within(panel).getByLabelText('Attendant'), 'u-sup');
+    await userEvent.click(within(panel).getByRole('button', { name: /^assign$/i }));
+
+    await waitFor(() => expect(assignAttendant).toHaveBeenCalledWith('sh-1', 'u-sup'));
+    await waitFor(() =>
+      expect(assignNozzle).toHaveBeenCalledWith('sh-1', {
+        nozzle_id: 'noz-1',
+        attendant_id: 'u-sup',
+      }),
+    );
+  });
+
+  it('confirms before unassigning a nozzle, then calls unassignNozzle', async () => {
+    renderPage();
+
+    const panel = await screen.findByTestId('adhoc-assignment-panel');
+    const row = await within(panel).findByTestId('adhoc-assignment-row');
+    await userEvent.click(within(row).getByRole('button', { name: /unassign/i }));
+
+    // A confirmation dialog appears before anything is called.
+    expect(await screen.findByText('Unassign this nozzle?')).toBeInTheDocument();
+    expect(unassignNozzle).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: /^unassign$/i }));
+    await waitFor(() => expect(unassignNozzle).toHaveBeenCalledWith('sh-1', 'na-1'));
+  });
+
+  it('disables assignment controls without shift.assign', async () => {
+    perms = {
+      'reading.override': true,
+      'cash.confirm': true,
+      'shift.approve': true,
+      'shift.assign': false,
+    };
+    renderPage();
+
+    const panel = await screen.findByTestId('adhoc-assignment-panel');
+    // The assign form is withheld entirely; the per-row unassign is rendered
+    // but disabled (PermissionGate disable mode, matching the operations page).
+    expect(within(panel).queryByLabelText('Nozzle')).not.toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /unassign/i })).toBeDisabled();
   });
 
   // --- collection receipt ---

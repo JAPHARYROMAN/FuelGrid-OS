@@ -317,13 +317,29 @@ func (s *Server) handleCorrectMeterReading(w http.ResponseWriter, r *http.Reques
 	// their own closing while the shift is open, silently replacing the
 	// submission (and resetting any verification already recorded on it).
 	// Openings stay attendant-correctable while the shift is open (Phase 2).
+	//
+	// EXCEPTION (PRD §7.8 closeout): once a supervisor REJECTS the active
+	// closing, the attendant is expected to re-capture it. The lock is relaxed
+	// for exactly that nozzle so the attendant can resubmit; superseding the
+	// rejected reading inserts a new ACTIVE row that is unverified again (the
+	// rejection stays on the now-superseded row as history) and re-verification
+	// then proceeds. A flag does NOT unlock — it is the supervisor's own
+	// investigation, not a request for the attendant to re-capture.
 	if !override && old.ReadingType == "closing" {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":  "your closing reading is locked after submission; ask your supervisor to review and correct it",
-			"code":   "closing_already_submitted",
-			"status": http.StatusConflict,
-		})
-		return
+		rejected, err := s.readings.ActiveClosingRejected(ctx, actor.TenantID, shift.ID, old.NozzleID)
+		if err != nil {
+			s.logger.Error("correct meter reading: rejection check", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !rejected {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":  "your closing reading is locked after submission; ask your supervisor to review and correct it",
+				"code":   "closing_already_submitted",
+				"status": http.StatusConflict,
+			})
+			return
+		}
 	}
 	if !s.requireNozzleAssigned(w, ctx, actor, shift.ID, old.NozzleID, override) {
 		return

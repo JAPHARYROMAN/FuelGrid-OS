@@ -475,6 +475,57 @@ describe('Client mobile attendant phase-0 methods', () => {
     expect(res.attendant_submitted_reading).toBe('1500.000');
   });
 
+  it('rejectReading POSTs the reject path with the mandatory reason', async () => {
+    const f = jsonFetch(201, {
+      id: 'v1',
+      attendant_submitted_reading: '1500.000',
+      final_approved_reading: '1500.000',
+      status: 'rejected',
+      reason: 'meter photo unreadable',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.rejectReading('shift-1', 'r1', { reason: 'meter photo unreadable' });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/readings/r1/reject');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ reason: 'meter photo unreadable' }));
+    expect(res.status).toBe('rejected');
+    expect(res.final_approved_reading).toBe('1500.000');
+  });
+
+  it('flagReading POSTs the flag path with the mandatory reason', async () => {
+    const f = jsonFetch(201, {
+      id: 'v2',
+      attendant_submitted_reading: '1500.000',
+      final_approved_reading: '1500.000',
+      status: 'flagged',
+      reason: 'inconsistent with dip',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.flagReading('shift-1', 'r1', { reason: 'inconsistent with dip' });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/readings/r1/flag');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(JSON.stringify({ reason: 'inconsistent with dip' }));
+    expect(res.status).toBe('flagged');
+  });
+
+  it('approveReading POSTs the per-reading approve path (clears a hold)', async () => {
+    const f = jsonFetch(201, {
+      id: 'v3',
+      attendant_submitted_reading: '1500.000',
+      final_approved_reading: '1500.000',
+      status: 'approved',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.approveReading('shift-1', 'r1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/readings/r1/approve');
+    expect(init.method).toBe('POST');
+    expect(res.status).toBe('approved');
+    expect(res.final_approved_reading).toBe('1500.000');
+  });
+
   it('listReadingVerifications GETs the verification set with decimal strings intact', async () => {
     const f = jsonFetch(200, {
       items: [
@@ -528,6 +579,35 @@ describe('Client mobile attendant phase-0 handover methods', () => {
     );
     expect(res.difference).toBe('-5000.00');
     expect(res.status).toBe('approved_with_difference');
+  });
+
+  it('confirmCashSubmission flags the handover (PRD §9.6 hold) with a reason', async () => {
+    const f = jsonFetch(201, {
+      id: 'cr2',
+      expected_amount: '1475000.00',
+      attendant_submitted_total: '1475000.00',
+      supervisor_received_total: '1475000.00',
+      difference: '0.00',
+      status: 'flagged',
+      reason: 'cash count disputed',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.confirmCashSubmission('shift-1', {
+      received_total: '1475000.00',
+      status: 'flagged',
+      reason: 'cash count disputed',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/shifts/shift-1/cash-submission/confirm');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe(
+      JSON.stringify({
+        received_total: '1475000.00',
+        status: 'flagged',
+        reason: 'cash count disputed',
+      }),
+    );
+    expect(res.status).toBe('flagged');
   });
 
   it('getCollectionReceipt GETs the collection-receipt path with decimal strings intact', async () => {

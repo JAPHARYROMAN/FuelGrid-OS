@@ -62,9 +62,11 @@ func toCollectionReceiptDTO(c *operations.CollectionReceipt) collectionReceiptDT
 }
 
 // requireCollectionReceiptConfirmed is the shift-approval gate (Mobile
-// Attendant Phase 0, handover chain): when the shift has a cash submission,
-// a non-rejected collection receipt must exist for it. Returns true when the
-// gate passes; otherwise writes a 409 with the machine-readable code
+// Attendant Phase 0, handover chain; extended for the PRD §9.6 closeout): when
+// the shift has a cash submission, it must carry a TERMINAL-GOOD collection
+// receipt {received, approved_with_difference}. A rejected handover (refused)
+// or a flagged one (under investigation) leaves the gate closed. Returns true
+// when the gate passes; otherwise writes a 409 with the machine-readable code
 // "collection_unconfirmed". Runs through any Querier so the approval handler
 // can re-check inside its FOR UPDATE tx.
 func (s *Server) requireCollectionReceiptConfirmed(w http.ResponseWriter, ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) bool {
@@ -127,8 +129,10 @@ func (s *Server) handleGetCollectionReceipt(w http.ResponseWriter, r *http.Reque
 
 type confirmCashSubmissionRequest struct {
 	ReceivedTotal decimalInput `json:"received_total"`
-	// Status is "received" (default) or "rejected"; a non-zero difference
-	// upgrades an accepted handover to approved_with_difference server-side.
+	// Status is "received" (default), "rejected", or "flagged" (under
+	// investigation, PRD §9.6); a non-zero difference upgrades an accepted
+	// handover to approved_with_difference server-side. Both rejected and
+	// flagged require a reason and leave the shift-approval gate closed.
 	Status            string  `json:"status,omitempty"`
 	Reason            string  `json:"reason,omitempty"`
 	SupervisorComment *string `json:"supervisor_comment,omitempty"`
@@ -151,8 +155,8 @@ func (s *Server) handleConfirmCashSubmission(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "received_total must be a non-negative decimal")
 		return
 	}
-	if req.Status != "" && req.Status != "received" && req.Status != "rejected" {
-		writeError(w, http.StatusBadRequest, "status must be received or rejected")
+	if req.Status != "" && req.Status != "received" && req.Status != "rejected" && req.Status != "flagged" {
+		writeError(w, http.StatusBadRequest, "status must be received, rejected, or flagged")
 		return
 	}
 	reason := strings.TrimSpace(req.Reason)
@@ -201,12 +205,16 @@ func (s *Server) handleConfirmCashSubmission(w http.ResponseWriter, r *http.Requ
 	switch {
 	case req.Status == "rejected":
 		status = "rejected"
+	case req.Status == "flagged":
+		// A flag is a supervisor hold independent of the figures — it stands
+		// whether or not the received total matched (PRD §9.6).
+		status = "flagged"
 	case !zero:
 		status = "approved_with_difference"
 	}
 	if status != "received" && reason == "" {
 		writeError(w, http.StatusBadRequest,
-			"reason is required when the received total differs from expected or the handover is rejected")
+			"reason is required when the received total differs from expected or the handover is rejected or flagged")
 		return
 	}
 	var reasonPtr *string
@@ -234,16 +242,41 @@ func (s *Server) handleConfirmCashSubmission(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	receipt, err := s.operations.InsertCollectionReceipt(ctx, tx, actor.TenantID, operations.CollectionReceiptInput{
+	receiptInput := operations.CollectionReceiptInput{
 		StationID: shift.StationID, ShiftID: shift.ID, CashSubmissionID: sub.ID,
 		ExpectedAmount:          sub.ExpectedCash,
 		AttendantSubmittedTotal: sub.SubmittedTotal,
 		SupervisorReceivedTotal: req.ReceivedTotal.String(),
 		Status:                  status, Reason: reasonPtr, SupervisorComment: req.SupervisorComment,
 		ReceivedBy: actor.UserID,
-	})
-	if isUniqueViolation(err) {
-		writeError(w, http.StatusConflict, "this cash submission already has a collection receipt")
+	}
+	// Insert inside a SAVEPOINT so a unique-violation (a receipt already exists)
+	// rolls back just the attempt instead of aborting the outer tx (SQLSTATE
+	// 25P02), letting the held-receipt overwrite run on the same connection.
+	receipt, err := func() (*operations.CollectionReceipt, error) {
+		sp, berr := tx.Begin(ctx)
+		if berr != nil {
+			return nil, berr
+		}
+		rc, ierr := s.operations.InsertCollectionReceipt(ctx, sp, actor.TenantID, receiptInput)
+		if ierr == nil {
+			if cerr := sp.Commit(ctx); cerr != nil {
+				return nil, cerr
+			}
+			return rc, nil
+		}
+		_ = sp.Rollback(ctx)
+		if !isUniqueViolation(ierr) {
+			return nil, ierr
+		}
+		// A receipt already exists. If it is a HOLD (rejected/flagged) the
+		// supervisor is re-confirming after settling the dispute — overwrite it.
+		// A TERMINAL-GOOD receipt ({received, approved_with_difference}) is a
+		// final handover and stays immutable → ErrTerminalReceipt → 409.
+		return s.operations.ReplaceHeldCollectionReceipt(ctx, tx, actor.TenantID, receiptInput)
+	}()
+	if errors.Is(err, operations.ErrTerminalReceipt) {
+		writeError(w, http.StatusConflict, "this cash submission already has a confirmed collection receipt")
 		return
 	}
 	if err != nil {

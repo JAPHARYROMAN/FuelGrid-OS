@@ -9,6 +9,7 @@ package operations
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +17,12 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/database"
 )
+
+// ErrTerminalReceipt is returned by ReplaceHeldCollectionReceipt when the cash
+// submission's existing receipt is already TERMINAL-GOOD ({received,
+// approved_with_difference}) and therefore must not be re-confirmed in place: a
+// confirmed handover is final. The caller surfaces this as a 409.
+var ErrTerminalReceipt = errors.New("operations: cash submission already has a confirmed receipt")
 
 // CollectionReceipt is one supervisor confirmation of a cash handover. Every
 // money field is an exact decimal STRING (numeric(14,2) read ::text).
@@ -90,6 +97,41 @@ func (r *Repo) InsertCollectionReceipt(ctx context.Context, tx pgx.Tx, tenantID 
 	return &c, nil
 }
 
+// ReplaceHeldCollectionReceipt re-confirms a cash submission whose current
+// receipt is a HOLD (rejected/flagged), overwriting that one receipt row in
+// place with the new verdict inside the caller's tx. This is how a supervisor
+// resolves a flagged/rejected handover: after the cash dispute is settled they
+// re-confirm with the actual received total. difference is recomputed in SQL
+// numeric. A receipt that is already TERMINAL-GOOD ({received,
+// approved_with_difference}) is immutable: the call returns ErrTerminalReceipt
+// and changes nothing. The hold-only WHERE enforces that in SQL.
+func (r *Repo) ReplaceHeldCollectionReceipt(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in CollectionReceiptInput) (*CollectionReceipt, error) {
+	var c CollectionReceipt
+	err := scanReceipt(tx.QueryRow(ctx, `
+		UPDATE collection_receipts
+		SET station_id = $2, shift_id = $3,
+		    expected_amount = $5::numeric,
+		    attendant_submitted_total = $6::numeric,
+		    supervisor_received_total = $7::numeric,
+		    difference = ($7::numeric - $5::numeric),
+		    status = $8, reason = $9, supervisor_comment = $10,
+		    received_by = $11, received_at = now()
+		WHERE tenant_id = $1 AND cash_submission_id = $4
+		  AND status IN ('rejected', 'flagged')
+		RETURNING `+receiptColumns,
+		tenantID, in.StationID, in.ShiftID, in.CashSubmissionID,
+		in.ExpectedAmount, in.AttendantSubmittedTotal, in.SupervisorReceivedTotal,
+		in.Status, in.Reason, in.SupervisorComment, in.ReceivedBy,
+	), &c)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTerminalReceipt
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // GetCollectionReceiptForShift returns the shift's receipt, or pgx.ErrNoRows.
 func (r *Repo) GetCollectionReceiptForShift(ctx context.Context, tenantID, shiftID uuid.UUID) (*CollectionReceipt, error) {
 	var c CollectionReceipt
@@ -103,9 +145,12 @@ func (r *Repo) GetCollectionReceiptForShift(ctx context.Context, tenantID, shift
 }
 
 // CashSubmissionAwaitingReceipt reports whether the shift has a cash
-// submission with no non-rejected collection receipt — the shift-approval
-// gate. It runs through any Querier so the approval handler can re-check
-// inside the tx that holds the shift's FOR UPDATE lock.
+// submission with no TERMINAL-GOOD collection receipt — the shift-approval
+// gate. A receipt counts only when its status is 'received' or
+// 'approved_with_difference'; a 'rejected' (refused) or 'flagged' (under
+// investigation, PRD §9.6) receipt leaves the submission awaiting. It runs
+// through any Querier so the approval handler can re-check inside the tx that
+// holds the shift's FOR UPDATE lock.
 func (r *Repo) CashSubmissionAwaitingReceipt(ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) (bool, error) {
 	var awaiting bool
 	err := q.QueryRow(ctx, `
@@ -116,7 +161,7 @@ func (r *Repo) CashSubmissionAwaitingReceipt(ctx context.Context, q database.Que
 			      SELECT 1 FROM collection_receipts cr
 			      WHERE cr.tenant_id = cs.tenant_id
 			        AND cr.cash_submission_id = cs.id
-			        AND cr.status <> 'rejected'
+			        AND cr.status IN ('received', 'approved_with_difference')
 			  )
 		)
 	`, tenantID, shiftID).Scan(&awaiting)

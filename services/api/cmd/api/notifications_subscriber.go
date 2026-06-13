@@ -109,7 +109,10 @@ var subscribedEventTypes = []string{
 	"RiskDetectionRun",
 	"IncidentOpened",
 	"ApprovalRequested",
+	"ReadingVerificationApproved",
 	"ReadingVerificationCorrected",
+	"ReadingVerificationRejected",
+	"ReadingVerificationFlagged",
 	"ShiftNozzleAssigned",
 	"ShiftNozzleUnassigned",
 	"CashCollectionConfirmed",
@@ -123,8 +126,14 @@ var subscribedEventTypes = []string{
 // rather than a bogus feed entry.
 func notifTargetsFor(e events.Event) []notifTarget {
 	switch e.Type {
+	case "ReadingVerificationApproved":
+		return readingApprovedTargets(e)
 	case "ReadingVerificationCorrected":
 		return readingVerificationTargets(e)
+	case "ReadingVerificationRejected":
+		return readingRejectedTargets(e)
+	case "ReadingVerificationFlagged":
+		return readingFlaggedTargets(e)
 	case "ShiftNozzleAssigned":
 		return nozzleAssignedTargets(e)
 	case "ShiftNozzleUnassigned":
@@ -201,27 +210,33 @@ func notifSpecFor(e events.Event) (notifSpec, bool) {
 
 // --- per-attendant mappings (Mobile Attendant Phase 7) ---
 
+// readingVerdictPayload is the shape every reading-verification event carries
+// (additively since Phase 7): the recorder of the underlying meter reading and
+// the verification's reading figures + reason. All four verdict mappings
+// (approved/corrected/rejected/flagged) unmarshal it.
+type readingVerdictPayload struct {
+	RecordedBy   *uuid.UUID `json:"recorded_by"`
+	Verification struct {
+		AttendantSubmittedReading string  `json:"attendant_submitted_reading"`
+		FinalApprovedReading      string  `json:"final_approved_reading"`
+		Reason                    *string `json:"reason"`
+	} `json:"verification"`
+}
+
 // readingVerificationTargets notifies the RECORDER of a closing reading that a
 // supervisor corrected it — PRD §7.8 "notify attendant of supervisor decision".
 // The recorder rides the event payload's recorded_by (added additively in Phase
 // 7); an old-shaped payload without it falls back to the Phase 3 tenant-wide
 // entry so in-flight events still surface.
 //
-// Only the "corrected" decision is wired: the verification write path emits
-// ReadingVerificationApproved and ReadingVerificationCorrected, and there is no
-// producer of a "rejected" decision today. A rejection mapping is intentionally
-// NOT subscribed (it would be dead wiring giving false confidence) — when a
-// rejection write path is added it must both emit the event AND register it in
-// subscribedEventTypes.
+// The verification write path emits ReadingVerificationApproved,
+// ReadingVerificationCorrected, ReadingVerificationRejected, and
+// ReadingVerificationFlagged — all four are now subscribed, each notifying the
+// recorder of the supervisor's decision (PRD §7.8/§9.5 closeout). The producer
+// guard test (TestSubscribedEventTypesHaveProducer) keeps every subscribed type
+// backed by a real emitter.
 func readingVerificationTargets(e events.Event) []notifTarget {
-	var p struct {
-		RecordedBy   *uuid.UUID `json:"recorded_by"`
-		Verification struct {
-			AttendantSubmittedReading string  `json:"attendant_submitted_reading"`
-			FinalApprovedReading      string  `json:"final_approved_reading"`
-			Reason                    *string `json:"reason"`
-		} `json:"verification"`
-	}
+	var p readingVerdictPayload
 	_ = json.Unmarshal(e.Payload, &p)
 
 	body := "A supervisor corrected your submitted closing meter reading"
@@ -235,15 +250,70 @@ func readingVerificationTargets(e events.Event) []notifTarget {
 	}
 	body += " Check the review status of your shift readings."
 
-	spec := notifSpec{
+	return readingVerdictTargets(p, notifSpec{
 		notifType: "reading.corrected",
 		title:     "Closing reading corrected",
 		body:      body,
 		severity:  notifications.SeverityWarning,
+	})
+}
+
+// readingApprovedTargets notifies the RECORDER that a supervisor APPROVED their
+// submitted closing reading as-is (PRD §7.8). Success severity — there is
+// nothing for the attendant to fix.
+func readingApprovedTargets(e events.Event) []notifTarget {
+	var p readingVerdictPayload
+	_ = json.Unmarshal(e.Payload, &p)
+	return readingVerdictTargets(p, notifSpec{
+		notifType: "reading.approved",
+		title:     "Closing reading approved",
+		body:      "Your submitted closing meter reading was approved by a supervisor.",
+		severity:  notifications.SeveritySuccess,
+	})
+}
+
+// readingRejectedTargets notifies the RECORDER that a supervisor REJECTED their
+// submitted closing reading and they must re-capture it (PRD §7.8). Warning
+// severity; the mandatory rejection reason is included.
+func readingRejectedTargets(e events.Event) []notifTarget {
+	var p readingVerdictPayload
+	_ = json.Unmarshal(e.Payload, &p)
+	body := "A supervisor rejected your submitted closing meter reading — please re-capture it."
+	if p.Verification.Reason != nil && *p.Verification.Reason != "" {
+		body += " Reason: " + *p.Verification.Reason + "."
 	}
+	return readingVerdictTargets(p, notifSpec{
+		notifType: "reading.rejected",
+		title:     "Closing reading rejected",
+		body:      body,
+		severity:  notifications.SeverityWarning,
+	})
+}
+
+// readingFlaggedTargets notifies the RECORDER that a supervisor FLAGGED their
+// submitted closing reading for investigation (PRD §9.5). Warning severity; the
+// mandatory flag reason is included.
+func readingFlaggedTargets(e events.Event) []notifTarget {
+	var p readingVerdictPayload
+	_ = json.Unmarshal(e.Payload, &p)
+	body := "A supervisor flagged your submitted closing meter reading for investigation."
+	if p.Verification.Reason != nil && *p.Verification.Reason != "" {
+		body += " Reason: " + *p.Verification.Reason + "."
+	}
+	return readingVerdictTargets(p, notifSpec{
+		notifType: "reading.flagged",
+		title:     "Closing reading flagged",
+		body:      body,
+		severity:  notifications.SeverityWarning,
+	})
+}
+
+// readingVerdictTargets resolves the recorder target shared by all four verdict
+// mappings: a personal notification to the recorder, falling back to the
+// tenant-wide feed when an old-shaped payload carries no recorded_by (so an
+// in-flight pre-Phase-7 event still surfaces rather than being dropped).
+func readingVerdictTargets(p readingVerdictPayload, spec notifSpec) []notifTarget {
 	if p.RecordedBy == nil || *p.RecordedBy == uuid.Nil {
-		// Old payload shape (pre-Phase 7) — keep the tenant-wide behaviour so
-		// the decision is still visible rather than silently dropped.
 		return []notifTarget{{spec: spec}}
 	}
 	return []notifTarget{{spec: spec, userID: p.RecordedBy}}

@@ -30,24 +30,50 @@ import (
 )
 
 // requireClosingReadingsVerified is the shift-approval gate (Mobile Attendant
-// Phase 0): every ACTIVE closing reading of the shift must carry a
-// verification row. Returns true when the gate passes; otherwise writes a 409
-// with the machine-readable code "readings_unverified" (plus the count) so
-// clients can branch to the verification flow. Runs through any Querier so
-// the approval handler can re-check inside its FOR UPDATE tx.
+// Phase 0, extended for the PRD §7.8/§9.5 closeout): every ACTIVE closing
+// reading of the shift must be in a TERMINAL-GOOD verification state
+// {approved, corrected}. A reading with no verification yet, or one held by a
+// 'rejected' (attendant must re-capture) or 'flagged' (under investigation)
+// verdict, blocks approval. Returns true when the gate passes; otherwise writes
+// a 409 with a machine-readable code so clients can branch to the right flow:
+//
+//	readings_unverified        — readings still need a supervisor verdict.
+//	readings_rejected_pending  — a rejected reading is awaiting attendant re-capture.
+//	readings_flagged_pending   — a flagged reading is under investigation.
+//
+// Rejected/flagged take precedence over plain unverified in the reported code
+// because a hold is a more specific (and more actionable) blocker. Runs through
+// any Querier so the approval handler can re-check inside its FOR UPDATE tx.
 func (s *Server) requireClosingReadingsVerified(w http.ResponseWriter, ctx context.Context, q database.Querier, tenantID, shiftID uuid.UUID) bool {
-	n, err := s.readings.UnverifiedClosingCountForShift(ctx, q, tenantID, shiftID)
+	unverified, rejected, flagged, err := s.readings.ClosingVerificationGateCounts(ctx, q, tenantID, shiftID)
 	if err != nil {
 		s.logger.Error("approval verification gate", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return false
 	}
-	if n > 0 {
+	switch {
+	case rejected > 0:
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":          "a rejected closing reading is awaiting attendant re-capture before approving",
+			"code":           "readings_rejected_pending",
+			"status":         http.StatusConflict,
+			"rejected_count": rejected,
+		})
+		return false
+	case flagged > 0:
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":         "a flagged closing reading is under investigation before approving",
+			"code":          "readings_flagged_pending",
+			"status":        http.StatusConflict,
+			"flagged_count": flagged,
+		})
+		return false
+	case unverified > 0:
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error":            "verify the shift's closing readings before approving",
 			"code":             "readings_unverified",
 			"status":           http.StatusConflict,
-			"unverified_count": n,
+			"unverified_count": unverified,
 		})
 		return false
 	}
@@ -212,11 +238,18 @@ func (s *Server) handleVerifyShiftReadings(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			newlyVerified++
+			// recorded_by rides the payload additively so the notification
+			// subscriber can target the recorder's feed ("your readings were
+			// approved", Phase 7 wiring) without re-reading the meter row.
+			approvedPayload := map[string]any{
+				"verification": toReadingVerificationDTO(v),
+				"recorded_by":  m.RecordedBy,
+			}
 			if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
 				TenantID: actor.TenantID, ActorID: actor.UserID,
 				Action: "reading_verification.approved", EventType: "ReadingVerificationApproved",
 				EntityType: "reading_verification", EntityID: v.ID.String(),
-				NewValue: toReadingVerificationDTO(v),
+				NewValue: approvedPayload,
 				IP:       clientIP(r), UserAgent: r.UserAgent(),
 				RequestID: chimiddleware.GetReqID(ctx),
 			}); err != nil {
@@ -362,7 +395,12 @@ func (s *Server) handleVerifyCorrectReading(w http.ResponseWriter, r *http.Reque
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	verified := req.VerifiedReading.String()
-	v, err := s.readings.InsertVerification(ctx, tx, actor.TenantID, readings.VerificationInput{
+	// A correction may also CLEAR a non-terminal hold (rejected/flagged) on the
+	// same active reading — that is how a supervisor resolves a flag (or a
+	// rejection they decide to fix themselves rather than wait for re-capture):
+	// the hold verification is overwritten with the corrected verdict. A
+	// terminal verification ({approved, corrected}) stays immutable → 409.
+	v, err := s.upsertVerificationClearingHold(ctx, tx, actor.TenantID, readings.VerificationInput{
 		StationID: shift.StationID, ShiftID: shift.ID, NozzleID: reading.NozzleID,
 		ReadingID:                 reading.ID,
 		AttendantSubmittedReading: reading.Reading,
@@ -372,7 +410,7 @@ func (s *Server) handleVerifyCorrectReading(w http.ResponseWriter, r *http.Reque
 		Reason:                    &reason,
 		VerifiedBy:                actor.UserID,
 	})
-	if isUniqueViolation(err) {
+	if errors.Is(err, readings.ErrTerminalVerification) {
 		writeError(w, http.StatusConflict, "reading is already verified")
 		return
 	}
@@ -422,6 +460,306 @@ func (s *Server) handleVerifyCorrectReading(w http.ResponseWriter, r *http.Reque
 		RequestID: chimiddleware.GetReqID(ctx),
 	}); err != nil {
 		s.logger.Error("verify-correct reading: audit", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toReadingVerificationDTO(v))
+}
+
+type readingVerdictRequest struct {
+	Reason string `json:"reason"`
+}
+
+// loadClosingForVerdict resolves the shift (authorizing reading.override at its
+// station) and the target reading for a hold verdict (reject/flag), running the
+// shared validations: the reading must belong to the shift, be an ACTIVE
+// closing, and the actor must not be its recorder (separation of duties). It
+// writes the error response and returns ok=false on any failure. A hold (or a
+// per-reading approval) may be recorded while the shift is open or closed — it
+// is the approval that the gate blocks, not the verdict — but NOT once the shift
+// is approved: its sales/revenue are posted from the frozen lines, so a verdict
+// then would desync approved facts (mirrors the verify-correct approved guard).
+func (s *Server) loadClosingForVerdict(w http.ResponseWriter, r *http.Request, actor identity.Actor, verb string) (*operations.Shift, *readings.MeterReading, bool) {
+	readingID, err := uuid.Parse(chi.URLParam(r, "readingID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid reading id")
+		return nil, nil, false
+	}
+	shift, ok := s.shiftForVerification(w, r, actor)
+	if !ok {
+		return nil, nil, false
+	}
+	if shift.Status == "approved" {
+		writeError(w, http.StatusConflict, "shift is already approved")
+		return nil, nil, false
+	}
+	ctx := r.Context()
+	reading, err := s.readings.Get(ctx, actor.TenantID, readingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "reading not found")
+		return nil, nil, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return nil, nil, false
+	}
+	if reading.ShiftID != shift.ID {
+		writeError(w, http.StatusBadRequest, "reading does not belong to this shift")
+		return nil, nil, false
+	}
+	if reading.ReadingType != "closing" {
+		writeError(w, http.StatusUnprocessableEntity, "only closing readings are verified")
+		return nil, nil, false
+	}
+	if reading.Status != "active" {
+		writeError(w, http.StatusConflict, "reading is superseded; "+verb+" its active correction instead")
+		return nil, nil, false
+	}
+	// Separation of duties: the verifier must not be the recorder.
+	if reading.RecordedBy == actor.UserID {
+		writeError(w, http.StatusForbidden,
+			"separation of duties: you cannot "+verb+" a reading you recorded")
+		return nil, nil, false
+	}
+	return shift, reading, true
+}
+
+// upsertVerificationClearingHold inserts a verification for a reading, or — when
+// the reading already carries a NON-TERMINAL hold (rejected/flagged) —
+// overwrites that hold row in place with the new verdict. A reading with a
+// TERMINAL verification ({approved, corrected}) is immutable: the call returns
+// readings.ErrTerminalVerification and changes nothing. This is the single
+// place that encodes "a hold can be re-decided, a final verdict cannot" so
+// every verdict path (approve-single, correct, reject, flag) shares it.
+func (s *Server) upsertVerificationClearingHold(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in readings.VerificationInput) (*readings.Verification, error) {
+	// Try the insert inside a SAVEPOINT (pgx nested Begin) so a unique-violation
+	// failure rolls back just the attempt — without it the violation aborts the
+	// whole outer tx (SQLSTATE 25P02) and the follow-up UPDATE can't run.
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	v, err := s.readings.InsertVerification(ctx, sp, tenantID, in)
+	if err == nil {
+		if cerr := sp.Commit(ctx); cerr != nil {
+			return nil, cerr
+		}
+		return v, nil
+	}
+	_ = sp.Rollback(ctx)
+	if !isUniqueViolation(err) {
+		return nil, err
+	}
+	// A verification already exists for this reading. Overwrite it only if it is
+	// a hold; ReplaceHoldVerification returns ErrTerminalVerification otherwise.
+	return s.readings.ReplaceHoldVerification(ctx, tx, tenantID, in)
+}
+
+// recordReadingVerdict writes one hold verification (rejected/flagged) and the
+// caller's prepared audit/outbox record in a single tx, then returns the created
+// row. final = the attendant's submission (the figure is unchanged — a hold
+// neither approves nor overrides it; downstream money math is gated off until
+// the hold clears). The caller builds `rec` with the literal Action + EventType
+// for its verdict (so the producer-guard test sees a real `EventType: "X"`
+// emitter); recorded_by rides the outbox payload additively so the notification
+// subscriber can target the attendant who submitted the reading.
+func (s *Server) recordReadingVerdict(
+	w http.ResponseWriter, r *http.Request, actor identity.Actor,
+	shift *operations.Shift, reading *readings.MeterReading,
+	status, reason string, rec audit.TxRecord,
+) {
+	ctx := r.Context()
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// A verdict may land on a reading that already carries a NON-TERMINAL hold:
+	// re-deciding a flag as a rejection, re-flagging, etc. In that case the hold
+	// row is overwritten in place (the audit/outbox trail keeps the history). A
+	// reading whose hold was already cleared by a TERMINAL verdict
+	// ({approved, corrected}) is immutable → 409.
+	v, err := s.upsertVerificationClearingHold(ctx, tx, actor.TenantID, readings.VerificationInput{
+		StationID: shift.StationID, ShiftID: shift.ID, NozzleID: reading.NozzleID,
+		ReadingID:                 reading.ID,
+		AttendantSubmittedReading: reading.Reading,
+		FinalApprovedReading:      reading.Reading,
+		Status:                    status,
+		Reason:                    &reason,
+		VerifiedBy:                actor.UserID,
+	})
+	if errors.Is(err, readings.ErrTerminalVerification) {
+		writeError(w, http.StatusConflict, "reading is already verified")
+		return
+	}
+	if err != nil {
+		s.logger.Error("record reading verdict", "error", err, "status", status)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Fill in the fields that depend on the freshly-inserted verification row.
+	// The caller supplied Action + EventType (as literals) and the common audit
+	// metadata. recorded_by rides the outbox payload additively so the
+	// notification subscriber can target the attendant's feed.
+	rec.EntityID = v.ID.String()
+	rec.PreviousValue = toMeterReadingDTO(reading)
+	rec.NewValue = map[string]any{
+		"verification": toReadingVerificationDTO(v),
+		"recorded_by":  reading.RecordedBy,
+	}
+	if err := audit.WriteWithOutbox(ctx, tx, rec); err != nil {
+		s.logger.Error("record reading verdict: audit", "error", err, "status", status)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, toReadingVerificationDTO(v))
+}
+
+// handleRejectReading records a supervisor REJECTION of one closing reading
+// (reading.override; PRD §7.8 "supervisors can approve, reject, or correct
+// readings"). A rejection is a NON-terminal hold: the meter reading is never
+// mutated, the verification snapshots the submission with status 'rejected' and
+// the mandatory reason, and it (a) blocks shift approval (the gate reports
+// readings_rejected_pending) and (b) unlocks the attendant's Phase 3
+// closing-submission lock for that nozzle so they can re-capture. The
+// re-captured closing supersedes the rejected one (the rejection stays on the
+// superseded row as history) and is unverified again, so re-verification
+// proceeds normally.
+func (s *Server) handleRejectReading(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var req readingVerdictRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required when rejecting a reading")
+		return
+	}
+	shift, reading, ok := s.loadClosingForVerdict(w, r, actor, "reject")
+	if !ok {
+		return
+	}
+	s.recordReadingVerdict(w, r, actor, shift, reading, "rejected", reason, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "reading_verification.rejected", EventType: "ReadingVerificationRejected",
+		EntityType: "reading_verification",
+		IP:         clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(r.Context()),
+	})
+}
+
+// handleFlagReading records a supervisor FLAG of one closing reading for
+// investigation (reading.override; PRD §9.5). Like a rejection it is a hold
+// that blocks approval (the gate reports readings_flagged_pending) and never
+// mutates the reading, but it does NOT unlock attendant resubmission — a flag
+// is the supervisor's own investigation, cleared by a terminal verdict
+// (correcting or, after re-capture, re-approving the reading).
+func (s *Server) handleFlagReading(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	var req readingVerdictRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	reason := strings.TrimSpace(req.Reason)
+	if reason == "" {
+		writeError(w, http.StatusBadRequest, "reason is required when flagging a reading")
+		return
+	}
+	shift, reading, ok := s.loadClosingForVerdict(w, r, actor, "flag")
+	if !ok {
+		return
+	}
+	s.recordReadingVerdict(w, r, actor, shift, reading, "flagged", reason, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "reading_verification.flagged", EventType: "ReadingVerificationFlagged",
+		EntityType: "reading_verification",
+		IP:         clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(r.Context()),
+	})
+}
+
+// handleApproveReading approves ONE active closing reading as-submitted
+// (reading.override). It is the per-reading counterpart to the batch
+// /readings/verify, and — crucially — the path that CLEARS a hold without a
+// figure change: a supervisor who flags a reading for investigation and then
+// finds the attendant's figure was right approves it here, overwriting the
+// flagged verdict with a terminal 'approved'. final = the attendant's
+// submission (unchanged). An already-terminal verification (approved/corrected)
+// is immutable → 409. SoD: the verifier must not be the recorder.
+func (s *Server) handleApproveReading(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	shift, reading, ok := s.loadClosingForVerdict(w, r, actor, "approve")
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	v, err := s.upsertVerificationClearingHold(ctx, tx, actor.TenantID, readings.VerificationInput{
+		StationID: shift.StationID, ShiftID: shift.ID, NozzleID: reading.NozzleID,
+		ReadingID:                 reading.ID,
+		AttendantSubmittedReading: reading.Reading,
+		FinalApprovedReading:      reading.Reading,
+		Status:                    "approved",
+		VerifiedBy:                actor.UserID,
+	})
+	if errors.Is(err, readings.ErrTerminalVerification) {
+		writeError(w, http.StatusConflict, "reading is already verified")
+		return
+	}
+	if err != nil {
+		s.logger.Error("approve reading", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// recorded_by rides the payload additively so the notification subscriber can
+	// target the recorder's feed ("your reading was approved", Phase 7).
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "reading_verification.approved", EventType: "ReadingVerificationApproved",
+		EntityType: "reading_verification", EntityID: v.ID.String(),
+		PreviousValue: toMeterReadingDTO(reading),
+		NewValue: map[string]any{
+			"verification": toReadingVerificationDTO(v),
+			"recorded_by":  reading.RecordedBy,
+		},
+		IP: clientIP(r), UserAgent: r.UserAgent(),
+		RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		s.logger.Error("approve reading: audit", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

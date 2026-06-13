@@ -84,11 +84,32 @@ func TestNotifTargetsFor(t *testing.T) {
 			wantType:  "assignment.changed", wantSeverity: notifications.SeverityInfo, wantUser: &attendant,
 		},
 		{
+			name:      "reading approved targets the recorder, success",
+			eventType: "ReadingVerificationApproved",
+			payload: `{"recorded_by":"` + attendant.String() + `",` +
+				`"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1500.000"}}`,
+			wantType: "reading.approved", wantSeverity: notifications.SeveritySuccess, wantUser: &attendant,
+		},
+		{
 			name:      "reading corrected targets the recorder, warning",
 			eventType: "ReadingVerificationCorrected",
 			payload: `{"recorded_by":"` + attendant.String() + `",` +
 				`"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1490.000","reason":"misread"}}`,
 			wantType: "reading.corrected", wantSeverity: notifications.SeverityWarning, wantUser: &attendant,
+		},
+		{
+			name:      "reading rejected targets the recorder, warning",
+			eventType: "ReadingVerificationRejected",
+			payload: `{"recorded_by":"` + attendant.String() + `",` +
+				`"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1500.000","reason":"meter photo unreadable"}}`,
+			wantType: "reading.rejected", wantSeverity: notifications.SeverityWarning, wantUser: &attendant,
+		},
+		{
+			name:      "reading flagged targets the recorder, warning",
+			eventType: "ReadingVerificationFlagged",
+			payload: `{"recorded_by":"` + attendant.String() + `",` +
+				`"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1500.000","reason":"possible tampering"}}`,
+			wantType: "reading.flagged", wantSeverity: notifications.SeverityWarning, wantUser: &attendant,
 		},
 		{
 			name:      "receipt with shortage targets the submitter, warning",
@@ -186,16 +207,26 @@ func TestNotifTargetsForFanOut(t *testing.T) {
 func TestNotifTargetsForFallbacks(t *testing.T) {
 	t.Parallel()
 
-	// Old-shaped correction payload (no recorded_by): tenant-wide fallback.
-	targets := notifTargetsFor(events.Event{
-		Type:    "ReadingVerificationCorrected",
-		Payload: json.RawMessage(`{"verification":{"reason":"misread"}}`),
-	})
-	if len(targets) != 1 || targets[0].userID != nil {
-		t.Fatalf("corrected without recorded_by = %+v, want one tenant-wide target", targets)
-	}
-	if targets[0].spec.notifType != "reading.corrected" || targets[0].spec.severity != notifications.SeverityWarning {
-		t.Fatalf("fallback spec = %+v, want reading.corrected/warning", targets[0].spec)
+	// Old-shaped verdict payloads (no recorded_by): tenant-wide fallback so the
+	// decision still surfaces. Every reading-verification verdict shares this.
+	for _, vc := range []struct {
+		eventType, wantType, wantSeverity string
+	}{
+		{"ReadingVerificationApproved", "reading.approved", notifications.SeveritySuccess},
+		{"ReadingVerificationCorrected", "reading.corrected", notifications.SeverityWarning},
+		{"ReadingVerificationRejected", "reading.rejected", notifications.SeverityWarning},
+		{"ReadingVerificationFlagged", "reading.flagged", notifications.SeverityWarning},
+	} {
+		targets := notifTargetsFor(events.Event{
+			Type:    vc.eventType,
+			Payload: json.RawMessage(`{"verification":{"reason":"misread"}}`),
+		})
+		if len(targets) != 1 || targets[0].userID != nil {
+			t.Fatalf("%s without recorded_by = %+v, want one tenant-wide target", vc.eventType, targets)
+		}
+		if targets[0].spec.notifType != vc.wantType || targets[0].spec.severity != vc.wantSeverity {
+			t.Fatalf("%s fallback spec = %+v, want %s/%s", vc.eventType, targets[0].spec, vc.wantType, vc.wantSeverity)
+		}
 	}
 
 	// Personal mappings without a resolvable user: no notification at all.
@@ -218,7 +249,10 @@ func TestSubscribedEventTypesAllMap(t *testing.T) {
 	t.Parallel()
 	u := uuid.NewString()
 	representative := map[string]string{
+		"ReadingVerificationApproved":  `{"recorded_by":"` + u + `"}`,
 		"ReadingVerificationCorrected": `{"recorded_by":"` + u + `"}`,
+		"ReadingVerificationRejected":  `{"recorded_by":"` + u + `"}`,
+		"ReadingVerificationFlagged":   `{"recorded_by":"` + u + `"}`,
 		"ShiftNozzleAssigned":          `{"attendant_id":"` + u + `"}`,
 		"ShiftNozzleUnassigned":        `{"attendant_id":"` + u + `"}`,
 		"CashCollectionConfirmed":      `{"submitted_by":"` + u + `"}`,

@@ -112,7 +112,7 @@ export default function ReviewStatusPage() {
             <div>
               <StatusBadge reading={reading} />
             </div>
-            <ReadingOutcome reading={reading} />
+            <ReadingOutcome reading={reading} shiftOpen={data.shift?.status === 'open'} />
           </CardContent>
         </Card>
       ))}
@@ -142,6 +142,8 @@ function StatusBadge({ reading }: { reading?: AttendantReading }) {
       return <Badge tone="warning">{t.review.badgeCorrected}</Badge>;
     case 'rejected':
       return <Badge tone="danger">{t.review.badgeRejected}</Badge>;
+    case 'flagged':
+      return <Badge tone="warning">{t.review.badgeFlagged}</Badge>;
     default:
       return <Badge tone="info">{t.review.badgePending}</Badge>;
   }
@@ -152,7 +154,13 @@ function StatusBadge({ reading }: { reading?: AttendantReading }) {
  * the attendant submitted (preserved forever) and what the supervisor
  * approved — plus the exact difference and the supervisor's reason.
  */
-function ReadingOutcome({ reading }: { reading?: AttendantReading }) {
+function ReadingOutcome({
+  reading,
+  shiftOpen,
+}: {
+  reading?: AttendantReading;
+  shiftOpen: boolean;
+}) {
   const t = useT();
   if (reading?.closing_reading == null) {
     return <p className="text-sm text-muted-foreground">{t.review.submitPrompt}</p>;
@@ -160,6 +168,8 @@ function ReadingOutcome({ reading }: { reading?: AttendantReading }) {
   const submitted = reading.closing_reading;
   const final = reading.final_reading;
   const corrected = reading.verification_status === 'corrected' && final != null;
+  const rejected = reading.verification_status === 'rejected';
+  const flagged = reading.verification_status === 'flagged';
 
   return (
     <div className="flex flex-col gap-1.5 text-base">
@@ -173,11 +183,51 @@ function ReadingOutcome({ reading }: { reading?: AttendantReading }) {
       {reading.verification_status === 'approved' && final != null ? (
         <Row label={t.review.approvedReading} value={final} />
       ) : null}
-      {reading.verification_reason ? (
+
+      {/* A rejection is sent back to the attendant: show WHY (supervisor's
+          reason). While the shift is OPEN the attendant re-captures via the
+          closing-readings screen (the backend unlocks /correct for that
+          nozzle); once the shift is CLOSED that path is gone and the supervisor
+          corrects the reading themselves — so we don't offer a dead CTA. */}
+      {rejected ? (
+        <div className="flex flex-col gap-2 rounded-md bg-danger/10 px-3 py-3">
+          <p className="text-sm font-medium text-danger">{t.review.rejectedTitle}</p>
+          {reading.verification_reason ? (
+            <p className="text-sm">
+              <span className="font-medium">{t.review.reasonLabel}</span>{' '}
+              {reading.verification_reason}
+            </p>
+          ) : null}
+          {shiftOpen ? (
+            <>
+              <p className="text-sm text-muted-foreground">{t.review.rejectedHelp}</p>
+              <Button asChild className="h-12 text-base">
+                <Link href="/attendant/closing-readings">
+                  {t.review.resubmitCta}
+                  <ArrowRight className="size-5" aria-hidden />
+                </Link>
+              </Button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">{t.review.rejectedClosedHelp}</p>
+          )}
+        </div>
+      ) : flagged ? (
+        <div className="flex flex-col gap-1.5 rounded-md bg-warning/10 px-3 py-3">
+          {reading.verification_reason ? (
+            <p className="text-sm">
+              <span className="font-medium">{t.review.reasonLabel}</span>{' '}
+              {reading.verification_reason}
+            </p>
+          ) : null}
+          <p className="text-sm text-muted-foreground">{t.review.flaggedHelp}</p>
+        </div>
+      ) : reading.verification_reason ? (
         <p className="rounded-md bg-muted px-3 py-2 text-sm">
           <span className="font-medium">{t.review.reasonLabel}</span> {reading.verification_reason}
         </p>
       ) : null}
+
       {reading.verification_status === 'pending' ? (
         <p className="text-sm text-muted-foreground">{t.review.notReviewedYet}</p>
       ) : null}

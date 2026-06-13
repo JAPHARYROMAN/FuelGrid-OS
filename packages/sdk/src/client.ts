@@ -1895,6 +1895,62 @@ export class Client {
     );
   }
 
+  /**
+   * Reject one closing reading and send it back to the attendant to re-capture
+   * (reading.override; PRD §7.8). A non-terminal HOLD: the meter reading is
+   * never mutated, the reason is mandatory, the rejection blocks shift approval
+   * (the approval call returns 409 readings_rejected_pending) and unlocks the
+   * attendant's closing-submission lock for that nozzle so they can resubmit.
+   */
+  rejectReading(
+    shiftID: string,
+    readingID: string,
+    req: { reason: string },
+    signal?: AbortSignal,
+  ): Promise<ReadingVerification> {
+    return this.request<ReadingVerification>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/readings/${encodeURIComponent(readingID)}/reject`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /**
+   * Flag one closing reading for investigation (reading.override; PRD §9.5). A
+   * non-terminal HOLD: the meter reading is never mutated, the reason is
+   * mandatory, and the flag blocks shift approval (the approval call returns
+   * 409 readings_flagged_pending). Unlike a rejection it does NOT unlock
+   * attendant resubmission.
+   */
+  flagReading(
+    shiftID: string,
+    readingID: string,
+    req: { reason: string },
+    signal?: AbortSignal,
+  ): Promise<ReadingVerification> {
+    return this.request<ReadingVerification>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/readings/${encodeURIComponent(readingID)}/flag`,
+      { method: 'POST', body: req, signal },
+    );
+  }
+
+  /**
+   * Approve ONE closing reading as-submitted (reading.override). The per-reading
+   * counterpart to verifyShiftReadings, and the path that CLEARS a hold: a
+   * flagged (or rejected) reading the supervisor decides is fine is approved
+   * here, overwriting the hold with a terminal 'approved' verdict (final = the
+   * attendant's submission, unchanged). An already-terminal verification 409s.
+   */
+  approveReading(
+    shiftID: string,
+    readingID: string,
+    signal?: AbortSignal,
+  ): Promise<ReadingVerification> {
+    return this.request<ReadingVerification>(
+      `/api/v1/shifts/${encodeURIComponent(shiftID)}/readings/${encodeURIComponent(readingID)}/approve`,
+      { method: 'POST', signal },
+    );
+  }
+
   // ----------- Shift close & cash -----------
 
   closeShift(shiftID: string, signal?: AbortSignal): Promise<ShiftCloseSummary> {

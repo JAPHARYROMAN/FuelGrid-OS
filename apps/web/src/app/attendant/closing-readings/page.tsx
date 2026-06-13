@@ -65,6 +65,7 @@ const HIGH_DELTA_MEDIAN_FACTOR = 10;
 /** Per-nozzle live status, always conveyed as text + colour (PRD §15.1). */
 type RowStatus =
   | { kind: 'submitted' } // a closing already exists server-side — locked
+  | { kind: 'rejected'; readingID: string; previous: string; reason?: string } // sent back — re-capturable
   | { kind: 'queued' } // saved on this phone, waiting to sync (Phase 6a)
   | { kind: 'no_opening' } // opening missing; closing cannot be validated
   | { kind: 'empty' }
@@ -119,6 +120,22 @@ function rowStatus(
   value: string,
   otherDeltas: string[],
 ): RowStatus {
+  // A REJECTED closing was sent back to re-capture (PRD §7.8): the server keeps
+  // the old figure on the row, but for the attendant it is re-capturable. The
+  // reading id lets the resubmit drive the /correct endpoint (the unlocked
+  // path) rather than capture (which 409s on the still-active submission).
+  if (
+    reading?.closing_reading != null &&
+    reading.verification_status === 'rejected' &&
+    reading.closing_reading_id != null
+  ) {
+    return {
+      kind: 'rejected',
+      readingID: reading.closing_reading_id,
+      previous: reading.closing_reading,
+      reason: reading.verification_reason,
+    };
+  }
   if (reading?.closing_reading != null) return { kind: 'submitted' };
   if (queued) return { kind: 'queued' };
   if (reading?.opening_reading == null) return { kind: 'no_opening' };
@@ -139,6 +156,32 @@ function submittable(status: RowStatus): status is { kind: 'ok' | 'high'; litres
   return status.kind === 'ok' || status.kind === 'high';
 }
 
+/**
+ * The validation status of a REJECTED nozzle's re-capture input — the same
+ * empty/invalid/scale/lower/high/ok ladder the fresh-capture rows use, so the
+ * resubmit obeys identical client-side rules before it hits the /correct
+ * endpoint. (`no_opening` cannot occur here: a rejected closing always had an
+ * opening.)
+ */
+function recaptureStatus(
+  assignment: AttendantAssignment,
+  opening: string | undefined,
+  value: string,
+  otherDeltas: string[],
+): RowStatus {
+  if (opening == null) return { kind: 'no_opening' };
+  const v = value.trim();
+  if (v === '') return { kind: 'empty' };
+  if (!isMeterDecimal(v)) return { kind: 'invalid' };
+  if (meterFractionDigits(v) > assignment.meter_decimal_places) {
+    return { kind: 'scale', places: assignment.meter_decimal_places };
+  }
+  if (compareMeterDecimals(v, opening) < 0) return { kind: 'lower' };
+  const litres = subtractMeterDecimals(v, opening);
+  if (isHighDelta(litres, otherDeltas)) return { kind: 'high', litres };
+  return { kind: 'ok', litres };
+}
+
 export default function ClosingReadingsPage() {
   const t = useT();
   const router = useRouter();
@@ -148,6 +191,8 @@ export default function ClosingReadingsPage() {
   const [results, setResults] = useState<Record<string, RowResult>>({});
   const [confirming, setConfirming] = useState(false);
   const [submitSummary, setSubmitSummary] = useState<string | null>(null);
+  // Per-reading resubmit failures, keyed by the rejected reading id.
+  const [resubmitErrors, setResubmitErrors] = useState<Record<string, string>>({});
 
   const snapshot = useAttendantSnapshot();
   const engineState = useSyncEngineState();
@@ -225,6 +270,33 @@ export default function ClosingReadingsPage() {
     onSettled: () => setConfirming(false),
   });
 
+  // Resubmit ONE rejected nozzle through the /correct endpoint (the path the
+  // backend unlocks after a rejection — capture would 409 on the still-active
+  // submission). Online-only: a rejection is rare and re-reading the meter
+  // already requires the attendant be at the pump, so we surface an honest
+  // "need a connection" message rather than queueing it through the offline
+  // engine (which only knows the capture path).
+  const resubmit = useMutation({
+    mutationFn: async ({ readingID, reading }: { readingID: string; reading: string }) => {
+      await api.correctMeterReading(shiftID, readingID, reading);
+    },
+    onSuccess: async (_v, { readingID }) => {
+      setResubmitErrors((p) => {
+        const next = { ...p };
+        delete next[readingID];
+        return next;
+      });
+      toast.success(t.closing.toastResubmittedTitle, t.closing.toastResubmittedBody);
+      await qc.invalidateQueries({ queryKey: QUERY_KEY });
+    },
+    onError: (e, { readingID }) => {
+      const message = isOfflineError(e)
+        ? t.closing.resubmitOfflineBody
+        : resubmitErrorMessage(e, t);
+      setResubmitErrors((p) => ({ ...p, [readingID]: message }));
+    },
+  });
+
   if (snapshot.isPending) {
     return (
       <div className="flex flex-col gap-4">
@@ -295,26 +367,65 @@ export default function ClosingReadingsPage() {
     };
   });
 
-  const pending = rows.filter((r) => r.status.kind !== 'submitted' && r.status.kind !== 'queued');
-  const submittedCount = rows.length - pending.length;
+  // A REJECTED nozzle has its own per-reading resubmit (the /correct path),
+  // separate from the bulk capture of fresh nozzles. It counts as work-to-do
+  // (not "submitted") but never joins the bulk submit set.
+  const rejectedRows = rows.filter((r) => r.status.kind === 'rejected');
+  const captureRows = rows.filter((r) => r.status.kind !== 'rejected');
+  const pending = captureRows.filter(
+    (r) => r.status.kind !== 'submitted' && r.status.kind !== 'queued',
+  );
+  const submittedCount = rows.length - pending.length - rejectedRows.length;
   // PRD §7.7: ALL assigned nozzles must be completed — every pending nozzle
   // needs a submittable figure before anything can be sent.
   const allSubmittable = pending.length > 0 && pending.every((r) => submittable(r.status));
 
   const queuedCount = rows.filter((r) => r.status.kind === 'queued').length;
 
-  // Done state: every assigned nozzle already has a closing reading.
-  if (pending.length === 0 && data.shift.status !== 'open') {
+  // Done state: every assigned nozzle already has a terminal-good closing
+  // reading (no rejections outstanding).
+  if (pending.length === 0 && rejectedRows.length === 0 && data.shift.status !== 'open') {
     return <AllSubmitted total={rows.length} queued={queuedCount} closed />;
   }
-  if (pending.length === 0) {
+  if (pending.length === 0 && rejectedRows.length === 0) {
     return <AllSubmitted total={rows.length} queued={queuedCount} />;
   }
+  // A closed shift can't take fresh closing captures, and /correct only runs
+  // while open — so a rejection on a CLOSED shift is the supervisor's to clear
+  // (correct/approve), not the attendant's to re-capture. Show that honestly
+  // instead of a dead resubmit control.
   if (data.shift.status !== 'open') {
     return (
       <div className="flex flex-col gap-4">
         <BackHome />
-        <EmptyState title={t.closing.shiftNotOpenTitle} description={t.closing.shiftNotOpenBody} />
+        {rejectedRows.length > 0 ? (
+          <>
+            {rejectedRows.map(({ assignment: a, status }) => {
+              const s = status as Extract<RowStatus, { kind: 'rejected' }>;
+              return (
+                <Card key={a.assignment_id}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">
+                      {t.common.pumpNozzle(a.pump_number, a.nozzle_number)} · {a.product_name}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-danger">{t.closing.badgeRejected}</p>
+                    {s.reason ? (
+                      <p className="text-sm">{t.closing.rejectedReason(s.reason)}</p>
+                    ) : null}
+                    <p className="text-sm text-muted-foreground">{t.closing.shiftNotOpenBody}</p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </>
+        ) : (
+          <EmptyState
+            title={t.closing.shiftNotOpenTitle}
+            description={t.closing.shiftNotOpenBody}
+          />
+        )}
       </div>
     );
   }
@@ -393,6 +504,24 @@ export default function ClosingReadingsPage() {
                     <SubmittedBadge status={reading.verification_status} />
                   </div>
                 </>
+              ) : status.kind === 'rejected' ? (
+                <RejectedCapture
+                  rejected={status}
+                  opening={reading?.opening_reading ?? undefined}
+                  meterDecimalPlaces={a.meter_decimal_places}
+                  inputID={inputID}
+                  value={value}
+                  otherDeltas={[...deltaByNozzle.entries()]
+                    .filter(([nozzleID]) => nozzleID !== a.nozzle_id)
+                    .map(([, litres]) => litres)}
+                  assignment={a}
+                  error={resubmitErrors[status.readingID]}
+                  busy={resubmit.isPending}
+                  onChange={(next) => setInputs((p) => ({ ...p, [a.nozzle_id]: next }))}
+                  onResubmit={(reading) =>
+                    resubmit.mutate({ readingID: status.readingID, reading })
+                  }
+                />
               ) : status.kind === 'queued' && queued ? (
                 <>
                   <p className="flex items-center justify-between text-base">
@@ -527,6 +656,93 @@ export default function ClosingReadingsPage() {
   );
 }
 
+/**
+ * The re-capture surface for a REJECTED closing (PRD §7.8). Shows the
+ * supervisor's reason and the figure the attendant originally submitted, then
+ * an editable meter input with the same validation ladder as a fresh capture,
+ * and a per-nozzle Resubmit that drives the /correct endpoint (the path the
+ * backend unlocks after a rejection). Online-only — see the resubmit mutation.
+ */
+function RejectedCapture({
+  rejected,
+  opening,
+  meterDecimalPlaces,
+  inputID,
+  value,
+  otherDeltas,
+  assignment,
+  error,
+  busy,
+  onChange,
+  onResubmit,
+}: {
+  rejected: Extract<RowStatus, { kind: 'rejected' }>;
+  opening: string | undefined;
+  meterDecimalPlaces: number;
+  inputID: string;
+  value: string;
+  otherDeltas: string[];
+  assignment: AttendantAssignment;
+  error?: string;
+  busy: boolean;
+  onChange: (next: string) => void;
+  onResubmit: (reading: string) => void;
+}) {
+  const t = useT();
+  const status = recaptureStatus(assignment, opening, value, otherDeltas);
+  const canResubmit = submittable(status) && !busy;
+  return (
+    <div className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-1.5 rounded-md bg-danger/10 px-3 py-2.5">
+        <p className="text-sm font-medium text-danger">{t.closing.rejectedTitle}</p>
+        {rejected.reason ? (
+          <p className="text-sm">{t.closing.rejectedReason(rejected.reason)}</p>
+        ) : null}
+        <p className="text-sm text-muted-foreground">
+          {t.closing.rejectedPrevious(rejected.previous)}
+        </p>
+      </div>
+      <label htmlFor={inputID} className="text-sm text-muted-foreground">
+        {t.closing.meterLabel(meterDecimalPlaces)}
+      </label>
+      <Input
+        id={inputID}
+        className="h-14 text-right font-mono text-lg tabular-nums"
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
+        value={value}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        aria-describedby={`${inputID}-status`}
+        aria-invalid={
+          status.kind === 'lower' || status.kind === 'invalid' || status.kind === 'scale'
+        }
+      />
+      <RowStatusLine id={`${inputID}-status`} status={status} />
+      {error ? (
+        <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <Button
+        className="h-14 text-lg"
+        disabled={!canResubmit}
+        onClick={() => onResubmit(value.trim())}
+      >
+        {busy ? <Loader2 className="size-5 animate-spin" aria-hidden /> : null}
+        {t.closing.resubmitButton}
+      </Button>
+    </div>
+  );
+}
+
+/** Maps a rejected-resubmit failure to a plain-language message. */
+function resubmitErrorMessage(e: unknown, t: Messages): string {
+  if (e instanceof SdkError && e.message) return e.message;
+  return t.closing.resubmitErr;
+}
+
 /** Maps a capture failure to a plain-language, per-nozzle message. */
 function captureErrorMessage(e: unknown, t: Messages): string {
   if (e instanceof SdkError) {
@@ -556,6 +772,8 @@ function SubmittedBadge({ status }: { status?: string }) {
       return <Badge tone="warning">{t.closing.badgeCorrected}</Badge>;
     case 'rejected':
       return <Badge tone="danger">{t.closing.badgeRejected}</Badge>;
+    case 'flagged':
+      return <Badge tone="warning">{t.closing.badgeFlagged}</Badge>;
     default:
       return <Badge tone="info">{t.closing.badgePending}</Badge>;
   }
