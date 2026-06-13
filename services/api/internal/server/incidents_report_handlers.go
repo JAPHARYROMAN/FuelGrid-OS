@@ -142,6 +142,21 @@ func (s *Server) handleReportIncident(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if res.Replayed {
+		// Defence-in-depth: CreateDeduped matches the existing row on
+		// (tenant_id, dedupe_key) alone, and the client supplies the key. If the
+		// matched incident belongs to a DIFFERENT station than the one just
+		// authorized for this actor, the key collided with a foreign-station
+		// incident — returning its DTO would leak that station's description,
+		// opener and station_id to an actor with no read scope there. Treat the
+		// collision as a conflict rather than a successful idempotent replay.
+		if res.Incident.StationID != shift.StationID {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error":  "dedupe_key already used for a different incident",
+				"code":   "dedupe_key_conflict",
+				"status": http.StatusConflict,
+			})
+			return
+		}
 		// Offline-queue replay: the incident (and its audit/outbox trail)
 		// already exists — answer idempotently without re-applying side effects.
 		writeJSON(w, http.StatusOK, toIncidentDTO(res.Incident))

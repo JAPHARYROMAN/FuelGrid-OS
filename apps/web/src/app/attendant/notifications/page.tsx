@@ -203,7 +203,7 @@ function NotificationRow({
               <Button
                 type="button"
                 variant="outline"
-                className="h-10 text-sm"
+                className="h-11 text-sm"
                 disabled={marking}
                 onClick={onMarkRead}
               >

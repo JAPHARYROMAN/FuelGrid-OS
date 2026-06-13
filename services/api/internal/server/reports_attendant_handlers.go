@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
+	"github.com/japharyroman/fuelgrid-os/internal/operations"
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
 )
 
@@ -159,8 +160,8 @@ func (s *Server) handleAttendanceReport(w http.ResponseWriter, r *http.Request) 
 	if noShow > 0 || late > 0 {
 		env.Insights = append(env.Insights, reporting.Insight{
 			Severity: reporting.SeverityWarning,
-			Message: fmt.Sprintf("%d late check-in(s) and %d no-show(s) in the window (late = more than %s after the shift opened).",
-				late, noShow, "15 minutes"),
+			Message: fmt.Sprintf("%d late check-in(s) and %d no-show(s) in the window (late = more than %d minutes after the shift opened).",
+				late, noShow, int(operations.LateCheckInGrace.Minutes())),
 			RecommendedAction: "Review the flagged shifts with the rostered attendants.",
 		})
 		env.RecommendedActions = append(env.RecommendedActions,

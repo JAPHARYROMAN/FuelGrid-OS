@@ -2,6 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -53,7 +58,7 @@ func TestNotifSpecFor(t *testing.T) {
 // TestNotifTargetsFor pins the per-attendant mappings (Mobile Attendant Phase
 // 7): each workflow event resolves the affected attendant from its payload and
 // produces a USER-TARGETED notification with the expected type and severity
-// (correction/rejection/shortage = warning).
+// (correction/shortage = warning).
 func TestNotifTargetsFor(t *testing.T) {
 	t.Parallel()
 	attendant := uuid.New()
@@ -84,12 +89,6 @@ func TestNotifTargetsFor(t *testing.T) {
 			payload: `{"recorded_by":"` + attendant.String() + `",` +
 				`"verification":{"attendant_submitted_reading":"1500.000","final_approved_reading":"1490.000","reason":"misread"}}`,
 			wantType: "reading.corrected", wantSeverity: notifications.SeverityWarning, wantUser: &attendant,
-		},
-		{
-			name:      "reading rejected targets the recorder, warning",
-			eventType: "ReadingVerificationRejected",
-			payload:   `{"recorded_by":"` + attendant.String() + `","verification":{"reason":"implausible"}}`,
-			wantType:  "reading.rejected", wantSeverity: notifications.SeverityWarning, wantUser: &attendant,
 		},
 		{
 			name:      "receipt with shortage targets the submitter, warning",
@@ -220,7 +219,6 @@ func TestSubscribedEventTypesAllMap(t *testing.T) {
 	u := uuid.NewString()
 	representative := map[string]string{
 		"ReadingVerificationCorrected": `{"recorded_by":"` + u + `"}`,
-		"ReadingVerificationRejected":  `{"recorded_by":"` + u + `"}`,
 		"ShiftNozzleAssigned":          `{"attendant_id":"` + u + `"}`,
 		"ShiftNozzleUnassigned":        `{"attendant_id":"` + u + `"}`,
 		"CashCollectionConfirmed":      `{"submitted_by":"` + u + `"}`,
@@ -231,6 +229,68 @@ func TestSubscribedEventTypesAllMap(t *testing.T) {
 		targets := notifTargetsFor(events.Event{Type: et, Payload: json.RawMessage(payload)})
 		if len(targets) == 0 {
 			t.Errorf("subscribed event %q has no mapping in notifTargetsFor", et)
+		}
+	}
+}
+
+// TestSubscribedEventTypesHaveProducer guards against dead wiring: every event
+// type the subscriber registers must have a PRODUCER somewhere in the Go source
+// (an `EventType: "X"` emitter), not just a mapping. A mapping without a
+// producer (the original ReadingVerificationRejected gap) makes a never-fired
+// notification look wired and turns the green mapping test into false
+// confidence. This scans source so adding a subscription without an emitter
+// fails the build.
+func TestSubscribedEventTypesHaveProducer(t *testing.T) {
+	t.Parallel()
+
+	// Repo root: this file lives at services/api/cmd/api, so root is four
+	// directories up. Resolve via the caller so the test is CWD-independent.
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
+
+	produced := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			// Skip vendored/cache trees and this very package's tests.
+			switch d.Name() {
+			case ".git", "node_modules", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Producers live in non-test Go files (the subscriber/mapping/tests
+		// reference the names too, which would mask a missing emitter).
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		base := filepath.Base(path)
+		if base == "notifications_subscriber.go" {
+			return nil // the consumer references every name; not a producer
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		for _, et := range subscribedEventTypes {
+			if strings.Contains(string(src), `EventType: "`+et+`"`) {
+				produced[et] = true
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk source tree: %v", err)
+	}
+
+	for _, et := range subscribedEventTypes {
+		if !produced[et] {
+			t.Errorf("subscribed event %q has no producer (no `EventType: %q` emitter) — dead wiring", et, et)
 		}
 	}
 }

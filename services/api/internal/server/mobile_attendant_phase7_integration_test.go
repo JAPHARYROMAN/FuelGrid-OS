@@ -174,6 +174,51 @@ func TestMobileAttendant_ReportIncidentDedupeReplay(t *testing.T) {
 	}
 }
 
+// TestMobileAttendant_ReportIncidentDedupeForeignStation: a dedupe_key that
+// collides with an incident at a DIFFERENT station is rejected (409
+// dedupe_key_conflict) rather than replayed — the client controls the key, so
+// the replay path must not surface a foreign-station incident's details to an
+// actor with no read scope there (defence-in-depth).
+func TestMobileAttendant_ReportIncidentDedupeForeignStation(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	// The station1 attendant who will attempt the colliding report.
+	emailA := fmt.Sprintf("att-p7-foreign-%d@it.local", time.Now().UnixNano())
+	h.openDayShiftWithAttendant(t, ctx, admin, emailA)
+	att := h.login(t, tenantSlug, emailA)
+
+	// Seed an incident at station2 carrying a known dedupe_key, opened by admin.
+	var adminID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, h.ids.adminEmail).Scan(&adminID); err != nil {
+		t.Fatalf("admin id: %v", err)
+	}
+	key := uuid.NewString()
+	const foreignDesc = "Foreign-station secret description"
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO incidents
+		    (tenant_id, station_id, type, severity, description, status, opened_by, dedupe_key)
+		VALUES ($1, $2, 'safety', 'medium', $3, 'open', $4, $5)`,
+		h.ids.tenantID, h.ids.station2, foreignDesc, adminID, key); err != nil {
+		t.Fatalf("seed foreign incident: %v", err)
+	}
+
+	// The station1 attendant replays a report with the SAME key. The server must
+	// not return the station2 incident — it is a key collision, not a replay.
+	code, body := h.postJSON(t, "/api/v1/incidents/report", att,
+		fmt.Sprintf(`{"type":"meter","description":"my own issue","dedupe_key":%q}`, key))
+	if code != http.StatusConflict || body["code"] != "dedupe_key_conflict" {
+		t.Fatalf("foreign-station dedupe = %d %v, want 409 dedupe_key_conflict", code, body)
+	}
+	// No foreign-station details leak in the response.
+	if body["station_id"] == h.ids.station2.String() || body["description"] == foreignDesc {
+		t.Fatalf("response leaked foreign-station incident: %v", body)
+	}
+}
+
 // TestMobileAttendant_Phase7EventPayloadsAndReports drives a full shift
 // (check-in -> readings -> unassign/reassign -> close -> verify-correct ->
 // cash -> receipt -> approve) and asserts (a) every Phase 7 outbox payload

@@ -35,7 +35,7 @@ type notifTarget struct {
 // event bus. It subscribes to the operator-facing events (revenue recognized,
 // shift closed, risk detection run, incident opened, approval requested) and
 // the per-attendant workflow events (nozzle assigned/unassigned, closing
-// reading corrected/rejected, collection receipt recorded, shift approved) and
+// reading corrected, collection receipt recorded, shift approved) and
 // writes one notification row per target — tenant-wide for the operator feed,
 // user-targeted for the attendant ones. Critical-severity notifications also
 // fan out to the tenant's active users by email (best-effort).
@@ -110,7 +110,6 @@ var subscribedEventTypes = []string{
 	"IncidentOpened",
 	"ApprovalRequested",
 	"ReadingVerificationCorrected",
-	"ReadingVerificationRejected",
 	"ShiftNozzleAssigned",
 	"ShiftNozzleUnassigned",
 	"CashCollectionConfirmed",
@@ -124,7 +123,7 @@ var subscribedEventTypes = []string{
 // rather than a bogus feed entry.
 func notifTargetsFor(e events.Event) []notifTarget {
 	switch e.Type {
-	case "ReadingVerificationCorrected", "ReadingVerificationRejected":
+	case "ReadingVerificationCorrected":
 		return readingVerificationTargets(e)
 	case "ShiftNozzleAssigned":
 		return nozzleAssignedTargets(e)
@@ -203,15 +202,18 @@ func notifSpecFor(e events.Event) (notifSpec, bool) {
 // --- per-attendant mappings (Mobile Attendant Phase 7) ---
 
 // readingVerificationTargets notifies the RECORDER of a closing reading that a
-// supervisor corrected (or rejected) it — PRD §7.8 "notify attendant of
-// supervisor decision". The recorder rides the event payload's recorded_by
-// (added additively in Phase 7); an old-shaped payload without it falls back
-// to the Phase 3 tenant-wide entry so in-flight events still surface.
+// supervisor corrected it — PRD §7.8 "notify attendant of supervisor decision".
+// The recorder rides the event payload's recorded_by (added additively in Phase
+// 7); an old-shaped payload without it falls back to the Phase 3 tenant-wide
+// entry so in-flight events still surface.
+//
+// Only the "corrected" decision is wired: the verification write path emits
+// ReadingVerificationApproved and ReadingVerificationCorrected, and there is no
+// producer of a "rejected" decision today. A rejection mapping is intentionally
+// NOT subscribed (it would be dead wiring giving false confidence) — when a
+// rejection write path is added it must both emit the event AND register it in
+// subscribedEventTypes.
 func readingVerificationTargets(e events.Event) []notifTarget {
-	decided := "corrected"
-	if e.Type == "ReadingVerificationRejected" {
-		decided = "rejected"
-	}
 	var p struct {
 		RecordedBy   *uuid.UUID `json:"recorded_by"`
 		Verification struct {
@@ -222,7 +224,7 @@ func readingVerificationTargets(e events.Event) []notifTarget {
 	}
 	_ = json.Unmarshal(e.Payload, &p)
 
-	body := "A supervisor " + decided + " your submitted closing meter reading"
+	body := "A supervisor corrected your submitted closing meter reading"
 	if p.Verification.AttendantSubmittedReading != "" && p.Verification.FinalApprovedReading != "" {
 		body += ": submitted " + p.Verification.AttendantSubmittedReading +
 			", final " + p.Verification.FinalApprovedReading
@@ -234,8 +236,8 @@ func readingVerificationTargets(e events.Event) []notifTarget {
 	body += " Check the review status of your shift readings."
 
 	spec := notifSpec{
-		notifType: "reading." + decided,
-		title:     "Closing reading " + decided,
+		notifType: "reading.corrected",
+		title:     "Closing reading corrected",
 		body:      body,
 		severity:  notifications.SeverityWarning,
 	}

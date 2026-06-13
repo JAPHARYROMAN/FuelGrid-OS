@@ -1258,7 +1258,7 @@ paths:
         '200': { description: Replayed — the dedupe_key matched an existing incident, content: { application/json: { schema: { $ref: '#/components/schemas/Incident' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { description: Forbidden, or the asserted station_id is not the caller's current-shift station }
-        '409': { description: 'The caller has no current shift (code: no_active_shift)' }
+        '409': { description: 'The caller has no current shift (code: no_active_shift), or the dedupe_key already maps to an incident at a different station (code: dedupe_key_conflict)' }
 
   /api/v1/incidents/{id}/status:
     patch:
