@@ -509,16 +509,32 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// Bank deposits give the "deposited" leg of the cash flow (a deposit is only
+	// settled once its status is 'posted'). Never fatal to the report — if the
+	// deposits read fails we degrade to a no-deposit picture + a DQ note.
+	deposits, derr := s.banking.ListDeposits(ctx, actor.TenantID, stationID)
+	if derr != nil {
+		s.logger.Error("cash report: deposits", "error", derr)
+		deposits = nil
+	}
 
+	// Per-reconciliation flow rows (expected -> submitted -> variance) drive the
+	// drillable table + the §20.5 cash-flow bar. Figures stay decimal strings;
+	// the float coercion below is for the display-only headline aggregates, never
+	// fed back into a persisted figure.
 	env.Table.Columns = []string{"created_at", "status", "expected", "submitted", "variance", "shortage", "excess"}
-	type chartRow struct {
+	type flowRow struct {
 		CreatedAt string `json:"created_at"`
+		Status    string `json:"status"`
 		Expected  string `json:"expected"`
 		Submitted string `json:"submitted"`
 		Variance  string `json:"variance"`
+		Shortage  string `json:"shortage"`
+		Excess    string `json:"excess"`
 	}
-	chart := make([]chartRow, 0, len(recons))
+	flow := make([]flowRow, 0, len(recons))
 	var totalExpected, totalSubmitted, totalShortage, totalExcess float64
+	var anyPosted, anyUnsubmitted bool
 	for i := range recons {
 		c := recons[i]
 		variance := c.Variance
@@ -537,40 +553,221 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 		if cv, ok := parseFloatSafe(c.CountedCash); ok {
 			totalSubmitted += cv
 		}
+		switch c.Status {
+		case "posted":
+			anyPosted = true
+		case "draft", "rejected":
+			anyUnsubmitted = true
+		}
 		env.Table.Rows = append(env.Table.Rows, []string{
 			c.CreatedAt.Format(time.RFC3339), c.Status, c.ExpectedCash, c.CountedCash,
 			variance, shortage, excess,
 		})
-		chart = append(chart, chartRow{
-			CreatedAt: c.CreatedAt.Format(time.RFC3339), Expected: c.ExpectedCash,
-			Submitted: c.CountedCash, Variance: variance,
+		flow = append(flow, flowRow{
+			CreatedAt: c.CreatedAt.Format(time.RFC3339), Status: c.Status,
+			Expected: c.ExpectedCash, Submitted: c.CountedCash, Variance: variance,
+			Shortage: shortage, Excess: excess,
 		})
 	}
-	env.ChartData = chart
+
+	// Deposited cash = sum of POSTED bank deposits; pending = everything still in
+	// draft/prepared/in_transit/confirmed (not yet hit the bank).
+	var totalDeposited, pendingDeposited float64
+	var postedDeposits, pendingDeposits int
+	for i := range deposits {
+		d := deposits[i]
+		amt, _ := parseFloatSafe(d.Amount)
+		if d.Status == "posted" {
+			totalDeposited += amt
+			postedDeposits++
+		} else if d.Status != "voided" {
+			pendingDeposited += amt
+			pendingDeposits++
+		}
+	}
+
+	// KPI hero (§20.5): expected, submitted, deposited, variance, and the
+	// shortage/excess status word. Variance = submitted − expected over the
+	// window; the status reads short / over / balanced for the headline.
+	netVariance := totalSubmitted - totalExpected
+	varStatus := "Balanced"
+	if totalShortage > totalExcess {
+		varStatus = "Shortage"
+	} else if totalExcess > totalShortage {
+		varStatus = "Excess"
+	}
 	env.Summary = []summaryMetric{
-		{Label: "Reconciliations", Value: strconv.Itoa(len(recons)), Unit: "count"},
-		{Label: "Total expected", Value: strconv.FormatFloat(totalExpected, 'f', 2, 64), Unit: "TZS"},
-		{Label: "Total submitted", Value: strconv.FormatFloat(totalSubmitted, 'f', 2, 64), Unit: "TZS"},
+		{Label: "Expected cash", Value: strconv.FormatFloat(totalExpected, 'f', 2, 64), Unit: "TZS"},
+		{Label: "Submitted cash", Value: strconv.FormatFloat(totalSubmitted, 'f', 2, 64), Unit: "TZS"},
+		{Label: "Deposited cash", Value: strconv.FormatFloat(totalDeposited, 'f', 2, 64), Unit: "TZS"},
+		{Label: "Net variance", Value: strconv.FormatFloat(netVariance, 'f', 2, 64), Unit: "TZS"},
 		{Label: "Total shortage", Value: strconv.FormatFloat(totalShortage, 'f', 2, 64), Unit: "TZS"},
 		{Label: "Total excess", Value: strconv.FormatFloat(totalExcess, 'f', 2, 64), Unit: "TZS"},
+		{Label: "Variance status", Value: varStatus},
+		{Label: "Reconciliations", Value: strconv.Itoa(len(recons)), Unit: "count"},
 	}
+
+	// Tender mix from the latest revenue day powers the signature tender-split
+	// donut + the mobile-money / card settlement chips. Read straight from the
+	// revenue_days rollup (decimal strings, no recompute), exactly like the close
+	// report. The latest day also tells us if the period is locked.
+	pts, latestLocked, _ := s.loadRevenuePoints(ctx, actor.TenantID, stationID)
+	cashPts := grossSeries(pts, func(p reportingRevenuePoint) string { return p.cash })
+	var mmTotal, cardTotal float64
+	if days, derr := s.revenue.RecentDays(ctx, actor.TenantID, stationID, 1); derr == nil && len(days) > 0 {
+		d := days[0]
+		env.TenderMix = &tenderMix{
+			Cash: d.CashTotal, MobileMoney: d.MobileMoneyTotal, Card: d.CardTotal,
+			Credit: d.CreditTotal, Voucher: d.VoucherTotal, Total: d.TenderTotal,
+		}
+		mmTotal, _ = parseFloatSafe(d.MobileMoneyTotal)
+		cardTotal, _ = parseFloatSafe(d.CardTotal)
+	}
+
+	// Settlement-status board (§20.5, net-new): cash / mobile-money / card / bank
+	// deposit chips, each settled or pending derived deterministically from the
+	// real domain state (no settlement-batch table exists, so the honest signal
+	// is the cash-reconciliation/deposit lifecycle + the day-lock state). The
+	// figures are exact decimal strings; the tone/status are text, never
+	// colour-alone, so the front-end board reads accessibly.
+	settlement := []settlementChip{
+		cashSettlementChip(anyPosted, anyUnsubmitted, len(recons), strconv.FormatFloat(totalSubmitted, 'f', 2, 64)),
+		mediumSettlementChip("mobile_money", "Mobile money", mmTotal, latestLocked),
+		mediumSettlementChip("card", "Card", cardTotal, latestLocked),
+		depositSettlementChip(postedDeposits, pendingDeposits,
+			strconv.FormatFloat(totalDeposited, 'f', 2, 64),
+			strconv.FormatFloat(pendingDeposited, 'f', 2, 64)),
+	}
+
+	env.ChartData = struct {
+		Flow       []flowRow        `json:"flow"`
+		Settlement []settlementChip `json:"settlement"`
+	}{Flow: flow, Settlement: settlement}
 
 	// Latest variance feeds the reusable cash-recon insight composer.
 	latestVariance := ""
 	if len(recons) > 0 {
 		latestVariance = recons[0].Variance
 	}
-	pts, latestLocked, _ := s.loadRevenuePoints(ctx, actor.TenantID, stationID)
-	cashPts := grossSeries(pts, func(p reportingRevenuePoint) string { return p.cash })
 	env.applyReport(reporting.CashReconciliation(reporting.CashReconInput{
 		Variance: latestVariance, GrossSeries: cashPts, PeriodLocked: latestLocked,
 	}))
 
+	// Harden data-quality for the §20.5 gaps the composer does not see: no cash
+	// submitted, mobile-money/card settlement still pending (day unlocked while
+	// non-cash tenders exist), and deposits prepared-but-not-posted. Each tempers
+	// the headline so the report never reads as final while money is in flight.
+	if len(recons) == 0 {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: "No cash reconciliation has been recorded for this station yet — the cash position is unverified.",
+		})
+	} else if anyUnsubmitted {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: "Cash has not been submitted for every reconciliation — figures may change once the drawer is counted.",
+		})
+	}
+	if !latestLocked && (mmTotal > 0 || cardTotal > 0) {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: "Mobile-money/card settlement is pending — the operating day is not locked, so non-cash tenders are unconfirmed.",
+		})
+	}
+	if pendingDeposits > 0 {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "warning",
+			Message: fmt.Sprintf("%d bank deposit(s) are prepared but not yet posted — banked cash is not confirmed.", pendingDeposits),
+		})
+	}
+
 	env.Drilldown = []drilldownLink{
 		{Label: "Cash reconciliations", Href: fmt.Sprintf("/api/v1/stations/%s/cash-reconciliations", sid)},
+		{Label: "Collection receipts", Href: fmt.Sprintf("/api/v1/stations/%s/collection-receipts", sid)},
+		{Label: "Bank deposits", Href: fmt.Sprintf("/api/v1/stations/%s/bank-deposits", sid)},
 		{Label: "Operations overview", Href: fmt.Sprintf("/api/v1/stations/%s/operations/overview", sid)},
 	}
 	writeJSON(w, http.StatusOK, env)
+}
+
+// settlementChip is one medium on the Cash Reconciliation settlement-status
+// board (§20.5): a payment medium with its settled/pending status as TEXT, a
+// semantic tone, and the exact decimal-string amount. Carried in the cash
+// report's chart_data (the envelope wire shape is unchanged — chart_data is
+// generic), it powers the reusable @fuelgrid/ui StatusBoard.
+type settlementChip struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Status string `json:"status"`
+	Tone   string `json:"tone"` // settled | pending | at_risk | neutral
+	Amount string `json:"amount"`
+	Detail string `json:"detail"`
+}
+
+// cashSettlementChip describes the cash medium's settlement state from the
+// reconciliation lifecycle: posted reconciliations are settled, unsubmitted
+// drawers are pending, an all-submitted-but-not-posted state is "submitted".
+func cashSettlementChip(anyPosted, anyUnsubmitted bool, count int, submitted string) settlementChip {
+	chip := settlementChip{Key: "cash", Label: "Cash", Amount: submitted}
+	switch {
+	case count == 0:
+		chip.Status, chip.Tone, chip.Detail = "No data", "neutral", "No cash reconciliation recorded"
+	case anyUnsubmitted:
+		chip.Status, chip.Tone, chip.Detail = "Pending", "pending", "Drawer not yet counted/submitted"
+	case anyPosted:
+		chip.Status, chip.Tone, chip.Detail = "Settled", "settled", "Reconciliation posted to the ledger"
+	default:
+		chip.Status, chip.Tone, chip.Detail = "Submitted", "pending", "Submitted, awaiting approval/posting"
+	}
+	return chip
+}
+
+// mediumSettlementChip describes a non-cash tender medium (mobile money / card).
+// With no settlement-batch table, the honest signal is the day-lock state: a
+// locked day means the non-cash tenders are confirmed/settled; an unlocked day
+// with recorded tenders is pending. A zero medium reads as "None".
+func mediumSettlementChip(key, label string, total float64, dayLocked bool) settlementChip {
+	amt := strconv.FormatFloat(total, 'f', 2, 64)
+	switch {
+	case total <= 0:
+		return settlementChip{
+			Key: key, Label: label, Status: "None", Tone: "neutral", Amount: amt,
+			Detail: "No " + label + " tendered",
+		}
+	case dayLocked:
+		return settlementChip{
+			Key: key, Label: label, Status: "Settled", Tone: "settled", Amount: amt,
+			Detail: "Day locked — tenders confirmed",
+		}
+	default:
+		return settlementChip{
+			Key: key, Label: label, Status: "Pending", Tone: "pending", Amount: amt,
+			Detail: "Day not locked — awaiting settlement",
+		}
+	}
+}
+
+// depositSettlementChip describes the bank-deposit medium: posted deposits are
+// settled (cash hit the bank); deposits still in draft/prepared/in_transit are
+// at risk (prepared but not posted).
+func depositSettlementChip(posted, pending int, postedAmt, pendingAmt string) settlementChip {
+	switch {
+	case pending > 0:
+		return settlementChip{
+			Key: "bank_deposit", Label: "Bank deposit", Status: "Not posted", Tone: "at_risk",
+			Amount: pendingAmt, Detail: fmt.Sprintf("%d deposit(s) prepared, not yet posted", pending),
+		}
+	case posted > 0:
+		return settlementChip{
+			Key: "bank_deposit", Label: "Bank deposit", Status: "Posted", Tone: "settled",
+			Amount: postedAmt, Detail: fmt.Sprintf("%d deposit(s) posted to the bank", posted),
+		}
+	default:
+		return settlementChip{
+			Key: "bank_deposit", Label: "Bank deposit", Status: "None", Tone: "neutral",
+			Amount: "0", Detail: "No bank deposit recorded",
+		}
+	}
 }
 
 // ---- Fuel loss report ----

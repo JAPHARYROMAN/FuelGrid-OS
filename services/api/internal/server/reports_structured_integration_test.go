@@ -139,6 +139,96 @@ func TestReportsReconciliation_EnvelopeShape(t *testing.T) {
 	}
 }
 
+// TestReportsCashReconciliation_EnvelopeShape asserts the Cash Reconciliation
+// report returns the signature §20.5 envelope: a permission-gated 200 for an
+// actor holding finance.read, with the KPI-hero summary carrying the blueprint
+// headline labels (expected / submitted / deposited cash, net variance, the
+// shortage/excess variance status) and the always-present envelope slices. With
+// no reconciliation seeded for the station, the report degrades honestly — the
+// base KPIs are still present, the settlement-status board still renders its
+// medium chips in chart_data, and a data-quality warning explains the empty
+// state (so the report never reads as final when it has no data).
+func TestReportsCashReconciliation_EnvelopeShape(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	tenantSlug := slug(h)
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	code, body := h.getJSON(t, "/api/v1/reports/cash-reconciliation?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin cash-reconciliation report = %d, want 200", code)
+	}
+
+	meta, ok := body["metadata"].(map[string]any)
+	if !ok || meta["report_key"] != "cash-reconciliation" {
+		t.Fatalf("metadata.report_key = %v, want cash-reconciliation", body["metadata"])
+	}
+
+	// The canonical envelope slices are always present (never null).
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table", "chart_data", "drilldown", "export_options"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section: %v", key, body)
+		}
+	}
+
+	// The KPI hero carries the blueprint §20.5 headline labels.
+	summary, ok := body["summary"].([]any)
+	if !ok || len(summary) == 0 {
+		t.Fatalf("summary = %v, want a non-empty KPI hero", body["summary"])
+	}
+	got := map[string]bool{}
+	for _, m := range summary {
+		if row, ok := m.(map[string]any); ok {
+			if label, ok := row["label"].(string); ok {
+				got[label] = true
+			}
+		}
+	}
+	for _, want := range []string{"Expected cash", "Submitted cash", "Deposited cash", "Net variance", "Variance status"} {
+		if !got[want] {
+			t.Fatalf("KPI hero is missing the %q metric: %v", want, summary)
+		}
+	}
+
+	// The settlement-status board rides in chart_data.settlement — a chip per
+	// medium (cash / mobile-money / card / bank deposit), each carrying a text
+	// status (never colour-alone) so the front-end StatusBoard reads accessibly.
+	chart, ok := body["chart_data"].(map[string]any)
+	if !ok {
+		t.Fatalf("chart_data = %v, want a {flow, settlement} object", body["chart_data"])
+	}
+	board, ok := chart["settlement"].([]any)
+	if !ok || len(board) != 4 {
+		t.Fatalf("chart_data.settlement = %v, want 4 medium chips", chart["settlement"])
+	}
+	keys := map[string]bool{}
+	for _, c := range board {
+		chip, ok := c.(map[string]any)
+		if !ok {
+			t.Fatalf("settlement chip is not an object: %v", c)
+		}
+		if chip["status"] == nil || chip["status"] == "" {
+			t.Fatalf("settlement chip is missing a text status (colour must not be the only signal): %v", chip)
+		}
+		if k, ok := chip["key"].(string); ok {
+			keys[k] = true
+		}
+	}
+	for _, want := range []string{"cash", "mobile_money", "card", "bank_deposit"} {
+		if !keys[want] {
+			t.Fatalf("settlement board is missing the %q medium chip: %v", want, board)
+		}
+	}
+
+	// With no reconciliation recorded, the report raises a data-quality warning
+	// rather than reading as a clean, final cash position.
+	dq, ok := body["data_quality"].([]any)
+	if !ok || len(dq) == 0 {
+		t.Fatalf("data_quality = %v, want an empty-state warning", body["data_quality"])
+	}
+}
+
 func TestReportsStructured_TenantScopingAndPermissions(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()

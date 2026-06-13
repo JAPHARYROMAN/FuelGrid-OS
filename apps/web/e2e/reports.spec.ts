@@ -137,6 +137,97 @@ const RECON_ENVELOPE = {
   ],
 };
 
+// A §20.5 cash-reconciliation envelope: KPI hero, the per-reconciliation flow,
+// and the settlement-status board (the net-new signature visual).
+const CASH_ENVELOPE = {
+  metadata: {
+    report_key: 'cash-reconciliation',
+    title: 'Cash Reconciliation',
+    generated_at: '2026-06-01T00:00:00Z',
+    station_id: STATION.id,
+    period: 'current',
+  },
+  filters_used: { station_id: STATION.id, period: 'current' },
+  data_quality: [],
+  summary: [
+    { label: 'Expected cash', value: '600000.00', unit: 'TZS' },
+    { label: 'Submitted cash', value: '595000.00', unit: 'TZS' },
+    { label: 'Deposited cash', value: '500000.00', unit: 'TZS' },
+    { label: 'Net variance', value: '-5000.00', unit: 'TZS' },
+    { label: 'Total shortage', value: '5000.00', unit: 'TZS' },
+    { label: 'Total excess', value: '0.00', unit: 'TZS' },
+    { label: 'Variance status', value: 'Shortage' },
+    { label: 'Reconciliations', value: '1', unit: 'count' },
+  ],
+  chart_data: {
+    flow: [
+      {
+        created_at: '2026-06-01T08:00:00Z',
+        status: 'submitted',
+        expected: '600000.00',
+        submitted: '595000.00',
+        variance: '-5000.00',
+        shortage: '5000.00',
+        excess: '0',
+      },
+    ],
+    settlement: [
+      {
+        key: 'cash',
+        label: 'Cash',
+        status: 'Pending',
+        tone: 'pending',
+        amount: '595000.00',
+        detail: 'Submitted, awaiting approval/posting',
+      },
+      {
+        key: 'mobile_money',
+        label: 'Mobile money',
+        status: 'Settled',
+        tone: 'settled',
+        amount: '250000.00',
+        detail: 'Day locked — tenders confirmed',
+      },
+      {
+        key: 'card',
+        label: 'Card',
+        status: 'None',
+        tone: 'neutral',
+        amount: '0',
+        detail: 'No Card tendered',
+      },
+      {
+        key: 'bank_deposit',
+        label: 'Bank deposit',
+        status: 'Not posted',
+        tone: 'at_risk',
+        amount: '100000.00',
+        detail: '1 deposit(s) prepared, not yet posted',
+      },
+    ],
+  },
+  tender_mix: {
+    cash: '600000.00',
+    mobile_money: '250000.00',
+    card: '0',
+    credit: '150000.00',
+    voucher: '0',
+    total: '1000000.00',
+  },
+  table: {
+    columns: ['created_at', 'status', 'expected', 'submitted', 'variance', 'shortage', 'excess'],
+    rows: [
+      ['2026-06-01T08:00:00Z', 'submitted', '600000.00', '595000.00', '-5000.00', '5000.00', '0'],
+    ],
+  },
+  insights: [],
+  recommended_actions: [],
+  drilldown: [],
+  export_options: [
+    { format: 'csv', url: `/api/v1/stations/${STATION.id}/reports/cash-reconciliation.csv` },
+  ],
+};
+
 test.describe('reports', () => {
   test('hub lists categories and a report view exports CSV', async ({ page }) => {
     await authedSession(page);
@@ -144,6 +235,9 @@ test.describe('reports', () => {
     await page.route('**/api/bff/api/v1/reports/catalog', (route) => json(route, CATALOG));
     await page.route('**/api/bff/api/v1/reports/inventory/reconciliation**', (route) =>
       json(route, RECON_ENVELOPE),
+    );
+    await page.route('**/api/bff/api/v1/reports/cash-reconciliation**', (route) =>
+      json(route, CASH_ENVELOPE),
     );
 
     // The unified export endpoint audits the request and returns the file URL.
@@ -194,6 +288,18 @@ test.describe('reports', () => {
     await expect(page.getByText('Per-tank reconciliation waterfall')).toBeVisible();
     // The signature §20.3 layout also renders the new variance heatmap.
     await expect(page.getByRole('heading', { name: 'Variance heatmap' })).toBeVisible();
+
+    // ---- Signature §20.5 cash-reconciliation view ----
+    await page.goto('/reports/cash-reconciliation');
+    await expect(
+      page.getByRole('heading', { name: 'Cash Reconciliation', exact: true }),
+    ).toBeVisible();
+    await expect(page.getByText('Cash reconciliation flow')).toBeVisible();
+    // The net-new settlement-status board renders a chip per medium with a TEXT
+    // status (colour is never the only signal).
+    await expect(page.getByRole('heading', { name: 'Settlement status' })).toBeVisible();
+    await expect(page.getByText('Bank deposit', { exact: true })).toBeVisible();
+    await expect(page.getByText('Not posted', { exact: true })).toBeVisible();
 
     // The export group's CSV button POSTs the unified export then downloads.
     const downloadPromise = page.waitForEvent('download');
