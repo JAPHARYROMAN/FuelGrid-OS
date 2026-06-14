@@ -55,16 +55,19 @@ type lossEventRow struct {
 	LossLitres   string // |variance| when a shortage, else "0"
 	LossValue    string // |variance|×price when a shortage AND priced, else ""
 	VariancePct  string
-	ShiftLabels  []string // shift name(s) on the event's operating day
-	Attendants   []string // attendant name(s) on the event's operating day
+	ShiftLabels  []string // shift name(s) that ran a nozzle on the event's tank that day
+	Attendants   []string // attendant name(s) assigned to a nozzle on the event's tank that day
 }
 
 // loadRiskLossEvents reads the station's variance events over the window with the
 // dimension labels (station / product / pump / shift / attendant) the §5.11
 // pattern intelligence is computed from. Every figure is computed in SQL numeric
 // and returned as an exact decimal string; the per-event shift/attendant labels
-// come from the shifts on the event's operating day (the linkage the
-// repeated_cash_shortage evaluator documents). Returns events newest-first.
+// are CAUSALLY linked to the event — only shifts/attendants that operated a
+// nozzle pulling from the event's tank on that operating day, via
+// shift_nozzle_assignments → nozzles → tank, so the "% of related events" tally
+// reflects who ran the affected tank rather than everyone rostered that day.
+// Returns events newest-first.
 func (s *Server) loadRiskLossEvents(ctx context.Context, tenantID, stationID uuid.UUID) ([]lossEventRow, error) {
 	rows, err := s.deps.DB.Query(ctx, `
 		WITH ev AS (
@@ -89,21 +92,30 @@ func (s *Server) loadRiskLossEvents(ctx context.Context, tenantID, stationID uui
 			JOIN tanks t ON t.id = d.tank_id AND t.tenant_id = d.tenant_id
 			WHERE d.tenant_id = $1 AND d.status = 'active' AND t.station_id = $2
 		),
+		-- Shifts/attendants are attributed to a variance event ONLY through the
+		-- nozzle(s) that actually pull from the event's tank — a shift that ran a
+		-- nozzle drawing the affected tank's product on that operating day, and the
+		-- attendant assigned to that nozzle. This ties the §5.11 "% of related
+		-- events" tally to who OPERATED the affected tank, not to everyone rostered
+		-- that day (which would credit unrelated staff with another tank's loss).
 		shifts_agg AS (
-			SELECT sh.operating_day_id,
+			SELECT sh.operating_day_id, n.tank_id,
 			       array_agg(DISTINCT sh.name) AS shift_names
 			FROM shifts sh
+			JOIN shift_nozzle_assignments sna ON sna.shift_id = sh.id AND sna.tenant_id = sh.tenant_id
+			JOIN nozzles n                    ON n.id = sna.nozzle_id AND n.tenant_id = sh.tenant_id
 			WHERE sh.tenant_id = $1
-			GROUP BY sh.operating_day_id
+			GROUP BY sh.operating_day_id, n.tank_id
 		),
 		att_agg AS (
-			SELECT sh.operating_day_id,
-			       array_agg(DISTINCT COALESCE(u.full_name, u.email, sa.user_id::text)) AS attendants
+			SELECT sh.operating_day_id, n.tank_id,
+			       array_agg(DISTINCT COALESCE(u.full_name, u.email, sna.attendant_id::text)) AS attendants
 			FROM shifts sh
-			JOIN shift_attendants sa ON sa.shift_id = sh.id AND sa.tenant_id = sh.tenant_id
-			JOIN users u             ON u.id = sa.user_id AND u.tenant_id = sh.tenant_id
+			JOIN shift_nozzle_assignments sna ON sna.shift_id = sh.id AND sna.tenant_id = sh.tenant_id
+			JOIN nozzles n                    ON n.id = sna.nozzle_id AND n.tenant_id = sh.tenant_id
+			JOIN users u                      ON u.id = sna.attendant_id AND u.tenant_id = sh.tenant_id
 			WHERE sh.tenant_id = $1
-			GROUP BY sh.operating_day_id
+			GROUP BY sh.operating_day_id, n.tank_id
 		)
 		SELECT ev.recon_id, ev.station_id, st.name AS station_name, ev.business_date,
 		       ev.tank_code, ev.product_name, ev.product_color,
@@ -121,8 +133,8 @@ func (s *Server) loadRiskLossEvents(ctx context.Context, tenantID, stationID uui
 		FROM ev
 		JOIN stations st         ON st.id = ev.station_id AND st.tenant_id = $1
 		LEFT JOIN dips d         ON d.tank_id = ev.tank_id
-		LEFT JOIN shifts_agg sg  ON sg.operating_day_id = ev.operating_day_id
-		LEFT JOIN att_agg aa     ON aa.operating_day_id = ev.operating_day_id
+		LEFT JOIN shifts_agg sg  ON sg.operating_day_id = ev.operating_day_id AND sg.tank_id = ev.tank_id
+		LEFT JOIN att_agg aa     ON aa.operating_day_id = ev.operating_day_id AND aa.tank_id = ev.tank_id
 		ORDER BY ev.business_date DESC, ev.tank_code
 	`, tenantID, stationID, riskLossWindowDays)
 	if err != nil {
@@ -236,6 +248,16 @@ func (s *Server) handleRiskLossReport(w http.ResponseWriter, r *http.Request) {
 	env.FiltersUsed["period"] = period
 
 	valueShown := s.canViewMarginAtStation(ctx, actor, stationID)
+	// The cross-station risk ranking, the highest-risk-station KPI and the
+	// investigation timeline (with case titles) are sourced from the risk.* repos,
+	// which are themselves gated by risk.read / investigation.read — permissions a
+	// reconciliation.read-only actor (station_manager / supervisor) does NOT hold.
+	// Surfacing them through this report would leak risk.read-gated, tenant-wide
+	// data (other stations' scores, bands, open-alert counts and case titles) to an
+	// actor who is 403'd at /risk/scores and /risk/cases. Gate them here: omit (not
+	// zero) for non-holders, with a data-quality note, mirroring the margin gate.
+	riskShown := s.canViewRiskIntel(ctx, actor)
+	investShown := s.canViewInvestigations(ctx, actor)
 
 	events, eerr := s.loadRiskLossEvents(ctx, actor.TenantID, stationID)
 	if eerr != nil {
@@ -342,12 +364,19 @@ func (s *Server) handleRiskLossReport(w http.ResponseWriter, r *http.Request) {
 	in.OpenAlerts = openAlerts
 
 	// ---- Open investigations (tenant-scoped; the lifecycle timeline) ----
+	// Investigation cases carry no station id, so the list is inherently
+	// tenant-wide; surface it ONLY to holders of investigation.read (the same gate
+	// /investigations enforces). A non-holder sees neither the count nor the
+	// case-title timeline — omit, not zero.
 	openInvest := 0
-	cases, _ := s.risk.ListCases(ctx, actor.TenantID, "")
-	investSteps := investigationTimeline(cases)
-	for i := range cases {
-		if !caseTerminal(cases[i].Status) {
-			openInvest++
+	investSteps := []riskInvestigationStep{}
+	if investShown {
+		cases, _ := s.risk.ListCases(ctx, actor.TenantID, "")
+		investSteps = investigationTimeline(cases)
+		for i := range cases {
+			if !caseTerminal(cases[i].Status) {
+				openInvest++
+			}
 		}
 	}
 	in.OpenInvestations = openInvest
@@ -362,10 +391,32 @@ func (s *Server) handleRiskLossReport(w http.ResponseWriter, r *http.Request) {
 	env.applyReport(rep)
 	patterns := reporting.RiskLossPatterns(in)
 
+	// Omit-not-zero data-quality notes for the risk.read / investigation.read
+	// gated sections, so a non-holder understands what is hidden (rather than
+	// reading a missing ranking/timeline as "no data").
+	if !riskShown {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "info",
+			Message: "The cross-station risk ranking and highest-risk station are hidden — they require the risk.read permission. This station's own loss and pattern figures are shown in full.",
+		})
+	}
+	if !investShown {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "info",
+			Message: "Open investigations are hidden — they require the investigation.read permission.",
+		})
+	}
+
 	// ---- KPI hero (§5.11): loss litres + value (gated), variance %, open
 	// alerts, open investigations, repeated incidents, highest-risk station ----
-	scores, _ := s.risk.ListScores(ctx, actor.TenantID, "station")
-	ranking, highestRisk := stationRanking(ctx, s, actor.TenantID, scores, stationID)
+	// The station risk ranking + highest-risk KPI are risk.read-gated, tenant-wide
+	// leadership data; resolve them only for holders of risk.read (omit, not zero).
+	var ranking []riskStationRank
+	highestRisk := ""
+	if riskShown {
+		scores, _ := s.risk.ListScores(ctx, actor.TenantID, "station")
+		ranking, highestRisk = stationRanking(ctx, s, actor.TenantID, scores, stationID)
+	}
 
 	env.Summary = []summaryMetric{
 		{Label: "Total loss litres", Value: in.LossLitres, Unit: "L"},
@@ -379,8 +430,11 @@ func (s *Server) handleRiskLossReport(w http.ResponseWriter, r *http.Request) {
 		summaryMetric{Label: "Over-tolerance events", Value: strconv.Itoa(totalEvents), Unit: "count"},
 		summaryMetric{Label: "Repeated-incident tanks", Value: strconv.Itoa(in.RepeatedTanks), Unit: "count"},
 		summaryMetric{Label: "Open risk alerts", Value: strconv.Itoa(openAlerts), Unit: "count"},
-		summaryMetric{Label: "Open investigations", Value: strconv.Itoa(openInvest), Unit: "count"},
 	)
+	if investShown {
+		env.Summary = append(env.Summary,
+			summaryMetric{Label: "Open investigations", Value: strconv.Itoa(openInvest), Unit: "count"})
+	}
 	if highestRisk != "" {
 		env.Summary = append(env.Summary, summaryMetric{Label: "Highest-risk station", Value: highestRisk})
 	}
@@ -674,6 +728,30 @@ func strFromAny(v any) string {
 	default:
 		return ""
 	}
+}
+
+// canViewRiskIntel reports whether the actor may see the risk.read-gated, tenant
+// wide risk intelligence (the cross-station score ranking + highest-risk-station
+// KPI). System admins always may; otherwise the actor must hold risk.read — the
+// same permission that guards /risk/scores. Fails closed on a policy-load error.
+func (s *Server) canViewRiskIntel(ctx context.Context, actor identity.Actor) bool {
+	ps, err := s.policy.LoadFor(ctx, actor)
+	if err != nil {
+		return false
+	}
+	return ps.IsSystemAdmin || ps.HasPermission("risk.read")
+}
+
+// canViewInvestigations reports whether the actor may see investigation cases
+// (the tenant-wide open-investigation count + the case-title timeline). System
+// admins always may; otherwise the actor must hold investigation.read — the same
+// permission that guards /investigations. Fails closed on a policy-load error.
+func (s *Server) canViewInvestigations(ctx context.Context, actor identity.Actor) bool {
+	ps, err := s.policy.LoadFor(ctx, actor)
+	if err != nil {
+		return false
+	}
+	return ps.IsSystemAdmin || ps.HasPermission("investigation.read")
 }
 
 // stationRanking builds the station risk-ranking rows from the risk scores,

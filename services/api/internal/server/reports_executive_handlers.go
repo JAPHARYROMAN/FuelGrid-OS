@@ -93,7 +93,11 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 	// can't see individually). Tenant-wide margin.view shows it; otherwise we
 	// require the grant on all in-scope stations.
 	marginShown := s.canViewMarginAcrossStations(ctx, actor, stationIDs)
-	exposureShown := s.canViewCreditExposure(ctx, actor)
+	// exposurePermitted is the raw customer_credit.read grant; exposureShown is
+	// additionally narrowed to tenant-wide actors below (AR can't be decomposed
+	// per station). Keeping both lets the composer explain the omission reason.
+	exposurePermitted := s.canViewCreditExposure(ctx, actor)
+	exposureShown := exposurePermitted
 
 	// ---- The cross-station rollup (CURRENT period) — reuse the station-comparison
 	// repo so every figure is the SAME decimal string the per-station reports use.
@@ -113,7 +117,7 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 
 	// Aggregate the current-period decimal-string figures (display-only float sums,
 	// exactly as every other structured report does for its headline aggregates).
-	var totalRevenue, totalLitres, totalMargin, totalNetOp, totalExpenses, totalStockVar, totalCollections float64
+	var totalRevenue, totalLitres, totalMargin, totalNetOp, totalExpenses, totalStockVar float64
 	var stationsWithActivity, stationsNoData int
 	stationLines := make([]reporting.ExecStationLine, 0, len(rows))
 	rollups := make([]execStationRollup, 0, len(rows))
@@ -125,14 +129,12 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 		net, _ := parseFloatSafe(c.NetOperating)
 		exp, _ := parseFloatSafe(c.Expenses)
 		sv, _ := parseFloatSafe(c.StockVariance)
-		col, _ := parseFloatSafe(c.Collections)
 		totalRevenue += rev
 		totalLitres += lit
 		totalMargin += mar
 		totalNetOp += net
 		totalExpenses += exp
 		totalStockVar += sv
-		totalCollections += col
 		hasActivity := rev != 0 || lit != 0 || c.RiskAlerts > 0
 		if hasActivity {
 			stationsWithActivity++
@@ -166,18 +168,29 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 
 	// ---- Loss litres + value (gated), cash shortages, stockout risk, approvals,
 	// open alerts/investigations across the scope ----
-	lossLitres, lossValue := s.executiveLossTotals(ctx, actor.TenantID, stationIDs, marginShown)
-	cashShortages := s.executiveCashShortages(ctx, actor.TenantID, stationIDs)
+	lossLitres, lossValue := s.executiveLossTotals(ctx, actor.TenantID, stationIDs, marginShown, from, to)
+	cashShortages := s.executiveCashShortages(ctx, actor.TenantID, stationIDs, from, to)
 	stockoutRisk := s.executiveStockoutRisk(ctx, actor.TenantID, stationIDs)
 	pendingApprovals, unlockedDays := s.executiveApprovals(ctx, actor.TenantID, stationIDs, from, to)
-	openAlerts, openInvest := s.executiveRiskCounts(ctx, actor.TenantID, stationIDs, tenantWide)
+	// Open investigations are risk.read/investigation.read-gated, tenant-wide data
+	// (cases carry no station id); count them only for an actor permitted to see
+	// investigations, so a scoped/under-permissioned cockpit never leaks the whole
+	// tenant's open-case volume. investShown gates the KPI + narrative focus.
+	investShown := s.canViewInvestigations(ctx, actor)
+	openAlerts, openInvest := s.executiveRiskCounts(ctx, actor.TenantID, stationIDs, tenantWide, investShown)
 	supplierIssues := s.executiveSupplierIssues(ctx, actor.TenantID, stationIDs, from, to)
 
-	// ---- Credit exposure: scope-correct. A tenant-wide actor uses the tenant-wide
-	// AR aging; a scoped actor uses the sum of the in-scope stations' collections
-	// (outstanding AR keyed to the station's invoices) so no tenant-wide AR leaks
-	// to a regional manager. Gated by customer_credit.read regardless.
-	creditExposure := s.executiveCreditExposure(ctx, actor.TenantID, tenantWide, totalCollections)
+	// ---- Credit exposure. AR is a CUSTOMER ledger (ar_entries is keyed by
+	// customer, with no station column), so it is inherently tenant-level and
+	// cannot be correctly decomposed per station. A tenant-wide actor sees the
+	// authoritative ar_entries aging; for a SCOPED actor we OMIT the figure rather
+	// than present a station-approximation (sum of in-scope invoices' outstanding)
+	// that would not reconcile with the tenant-wide ar_entries total — surfacing
+	// two different numbers to a CFO vs a regional manager undermines the cockpit.
+	// Gated by customer_credit.read AND tenant-wide reach; a DQ note explains the
+	// omission for scoped actors.
+	exposureShown = exposureShown && tenantWide
+	creditExposure := s.executiveCreditExposure(ctx, actor.TenantID, tenantWide)
 
 	// ---- Assemble the composer input + the deterministic narrative ----
 	in := reporting.ExecutiveInput{
@@ -194,6 +207,7 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 		LossValueShown:     marginShown,
 		CreditExposure:     creditExposure,
 		ExposureShown:      exposureShown,
+		ExposurePermitted:  exposurePermitted,
 		CashShortages:      cashShortages,
 		StockoutRisk:       stockoutRisk,
 		OpenAlerts:         openAlerts,
@@ -231,7 +245,12 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 		summaryMetric{Label: "Cash shortages", Value: cashShortages, Unit: "TZS"},
 		summaryMetric{Label: "Stockout risk", Value: strconv.Itoa(stockoutRisk), Unit: "count"},
 		summaryMetric{Label: "Open risk alerts", Value: strconv.Itoa(openAlerts), Unit: "count"},
-		summaryMetric{Label: "Open investigations", Value: strconv.Itoa(openInvest), Unit: "count"},
+	)
+	if investShown {
+		env.Summary = append(env.Summary,
+			summaryMetric{Label: "Open investigations", Value: strconv.Itoa(openInvest), Unit: "count"})
+	}
+	env.Summary = append(env.Summary,
 		summaryMetric{Label: "Pending approvals", Value: strconv.Itoa(pendingApprovals), Unit: "count"},
 		summaryMetric{Label: "Supplier issues", Value: strconv.Itoa(supplierIssues), Unit: "count"},
 		summaryMetric{Label: "Stations in scope", Value: strconv.Itoa(len(stationIDs)), Unit: "count"},
@@ -248,6 +267,12 @@ func (s *Server) handleExecutiveReport(w http.ResponseWriter, r *http.Request) {
 
 	// ---- Compose the deterministic insights + data-quality ----
 	env.applyReport(reporting.Executive(in))
+	if !investShown {
+		env.DataQuality = append(env.DataQuality, dataQualityItem{
+			Level:   "info",
+			Message: "Open investigations are hidden — they require the investigation.read permission.",
+		})
+	}
 
 	// ---- Chart payload: the cross-domain visuals (revenue+volume trend, P&L
 	// waterfall steps, station ranking, period-comparison cards, loss summary). ----
@@ -380,9 +405,13 @@ func (s *Server) executiveProductGrowth(ctx context.Context, tenantID uuid.UUID,
 // executiveLossTotals sums fuel-loss litres (always) and loss value (gated) over
 // the in-scope stations from the reconciliation variance history — the SAME
 // shortage definition the fuel-loss/risk-loss reports use (negative variance,
-// priced in SQL). Loss VALUE is summed ONLY when marginShown, so a non-holder
-// never receives a money figure; loss LITRES are always returned.
-func (s *Server) executiveLossTotals(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, marginShown bool) (litres, value string) {
+// priced in SQL). The events are restricted to the report's PERIOD window (the
+// operating day's business_date) so the loss figure matches the period header and
+// every other windowed cockpit figure (revenue / litres / margin / stock
+// variance), rather than reading as an all-time lifetime total. Loss VALUE is
+// summed ONLY when marginShown, so a non-holder never receives a money figure;
+// loss LITRES are always returned.
+func (s *Server) executiveLossTotals(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, marginShown bool, from, to time.Time) (litres, value string) {
 	if len(stationIDs) == 0 {
 		return "0.000", ""
 	}
@@ -396,11 +425,12 @@ func (s *Server) executiveLossTotals(ctx context.Context, tenantID uuid.UUID, st
 			JOIN operating_days od ON od.id = tr.operating_day_id AND od.tenant_id = tr.tenant_id
 			JOIN products p        ON p.id = t.product_id AND p.tenant_id = t.tenant_id
 			WHERE tr.tenant_id = $1 AND od.station_id = ANY($2) AND tr.variance_litres < 0
+			  AND od.business_date BETWEEN $3 AND $4
 		)
 		SELECT COALESCE(SUM(ABS(variance_litres)), 0)::float8,
 		       COALESCE(SUM(CASE WHEN price IS NOT NULL THEN ABS(variance_litres) * price ELSE 0 END), 0)::float8
 		FROM ev
-	`, tenantID, stationIDs).Scan(&l, &v)
+	`, tenantID, stationIDs, from, to).Scan(&l, &v)
 	litres = f3(l)
 	if marginShown {
 		value = f2(v)
@@ -410,19 +440,24 @@ func (s *Server) executiveLossTotals(ctx context.Context, tenantID uuid.UUID, st
 
 // executiveCashShortages sums the absolute cash shortage (counted shortfall) over
 // the in-scope stations' counted reconciliations — the same counted definition
-// the cash-reconciliation report uses (submitted/approved/posted only). Returns a
+// the cash-reconciliation report uses (submitted/approved/posted only). The
+// reconciliations are restricted to the report's PERIOD window (the operating
+// day's business_date), so the figure matches the period header and the other
+// windowed cockpit metrics instead of being an all-time lifetime total. Returns a
 // decimal string.
-func (s *Server) executiveCashShortages(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID) string {
+func (s *Server) executiveCashShortages(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, from, to time.Time) string {
 	if len(stationIDs) == 0 {
 		return "0.00"
 	}
 	var shortage float64
 	_ = s.deps.DB.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN variance < 0 THEN ABS(variance) ELSE 0 END), 0)::float8
-		FROM cash_reconciliations
-		WHERE tenant_id = $1 AND station_id = ANY($2)
-		  AND status IN ('submitted', 'approved', 'posted')
-	`, tenantID, stationIDs).Scan(&shortage)
+		SELECT COALESCE(SUM(CASE WHEN cr.variance < 0 THEN ABS(cr.variance) ELSE 0 END), 0)::float8
+		FROM cash_reconciliations cr
+		JOIN operating_days od ON od.id = cr.operating_day_id AND od.tenant_id = cr.tenant_id
+		WHERE cr.tenant_id = $1 AND cr.station_id = ANY($2)
+		  AND cr.status IN ('submitted', 'approved', 'posted')
+		  AND od.business_date BETWEEN $3 AND $4
+	`, tenantID, stationIDs, from, to).Scan(&shortage)
 	return f2(shortage)
 }
 
@@ -454,22 +489,33 @@ func (s *Server) executiveStockoutRisk(ctx context.Context, tenantID uuid.UUID, 
 	return n
 }
 
-// executiveApprovals counts pending approvals (unlocked operating days awaiting
-// lock) and the unlocked-revenue-day count (the provisional-figures data-quality
-// signal) over the in-scope stations in the window. Reuses the same business-date
-// window the rollup uses.
+// executiveApprovals counts two DISTINCT sign-off signals over the in-scope
+// stations in the window: pending approvals — closed shifts that have not yet been
+// approved (a real approval queue: status 'closed', not 'approved'/'open') — and
+// the unlocked-revenue-day count (operating days not yet locked: the provisional
+// figures data-quality signal). These are different predicates over different
+// tables, so the two figures are independent (a previous version derived both
+// from the same `od.status <> 'locked'` filter, making them trivially identical
+// and the "approvals" KPI uninformative). Reuses the rollup's business-date window.
 func (s *Server) executiveApprovals(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, from, to time.Time) (pending, unlockedDays int) {
 	if len(stationIDs) == 0 {
 		return 0, 0
 	}
 	_ = s.deps.DB.QueryRow(ctx, `
-		SELECT
-			COUNT(*) FILTER (WHERE od.status <> 'locked'),
-			COUNT(*) FILTER (WHERE od.status <> 'locked')
+		SELECT COUNT(*)
+		FROM shifts sh
+		JOIN operating_days od ON od.id = sh.operating_day_id AND od.tenant_id = sh.tenant_id
+		WHERE sh.tenant_id = $1 AND sh.station_id = ANY($2)
+		  AND sh.status = 'closed'
+		  AND od.business_date BETWEEN $3 AND $4
+	`, tenantID, stationIDs, from, to).Scan(&pending)
+	_ = s.deps.DB.QueryRow(ctx, `
+		SELECT COUNT(*)
 		FROM operating_days od
 		WHERE od.tenant_id = $1 AND od.station_id = ANY($2)
+		  AND od.status <> 'locked'
 		  AND od.business_date BETWEEN $3 AND $4
-	`, tenantID, stationIDs, from, to).Scan(&pending, &unlockedDays)
+	`, tenantID, stationIDs, from, to).Scan(&unlockedDays)
 	return pending, unlockedDays
 }
 
@@ -477,8 +523,12 @@ func (s *Server) executiveApprovals(ctx context.Context, tenantID uuid.UUID, sta
 // and open investigation cases. Alerts carry a nullable station id; only alerts
 // whose station is in scope are counted, so a scoped actor never sees an
 // out-of-scope station's alerts. A tenant-wide actor counts alerts with no
-// station too (tenant-level alerts). Investigation cases are tenant-scoped.
-func (s *Server) executiveRiskCounts(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, tenantWide bool) (openAlerts, openInvest int) {
+// station too (tenant-level alerts). Investigation cases carry no station id (the
+// list is inherently tenant-wide), so the open-investigation count is computed
+// ONLY when investShown — an actor holding investigation.read; otherwise it is
+// left at 0 and omitted upstream, so a scoped/under-permissioned cockpit never
+// leaks the whole tenant's open-case volume.
+func (s *Server) executiveRiskCounts(ctx context.Context, tenantID uuid.UUID, stationIDs []uuid.UUID, tenantWide, investShown bool) (openAlerts, openInvest int) {
 	inScope := map[uuid.UUID]bool{}
 	for _, id := range stationIDs {
 		inScope[id] = true
@@ -497,10 +547,12 @@ func (s *Server) executiveRiskCounts(ctx context.Context, tenantID uuid.UUID, st
 			}
 		}
 	}
-	if cases, cerr := s.risk.ListCases(ctx, tenantID, ""); cerr == nil {
-		for i := range cases {
-			if !caseTerminal(cases[i].Status) {
-				openInvest++
+	if investShown {
+		if cases, cerr := s.risk.ListCases(ctx, tenantID, ""); cerr == nil {
+			for i := range cases {
+				if !caseTerminal(cases[i].Status) {
+					openInvest++
+				}
 			}
 		}
 	}
@@ -530,13 +582,14 @@ func (s *Server) executiveSupplierIssues(ctx context.Context, tenantID uuid.UUID
 	return n
 }
 
-// executiveCreditExposure returns the network's credit exposure, scope-correct.
-// A tenant-wide actor uses the tenant-wide AR aging total; a scoped actor uses
-// the sum of the in-scope stations' outstanding collections (already aggregated
-// from the station-comparison rollup) so no out-of-scope AR leaks. Decimal string.
-func (s *Server) executiveCreditExposure(ctx context.Context, tenantID uuid.UUID, tenantWide bool, scopedCollections float64) string {
+// executiveCreditExposure returns the tenant's authoritative credit exposure from
+// the ar_entries aging ledger (the customer AR balance). It is only computed for a
+// tenant-wide actor — AR is a customer ledger with no station column, so it cannot
+// be correctly decomposed per station; a scoped actor's exposure is omitted by the
+// caller (exposureShown && tenantWide) rather than approximated. Decimal string.
+func (s *Server) executiveCreditExposure(ctx context.Context, tenantID uuid.UUID, tenantWide bool) string {
 	if !tenantWide {
-		return f2(scopedCollections)
+		return ""
 	}
 	var total float64
 	if rows, rerr := s.receivables.Aging(ctx, tenantID); rerr == nil {

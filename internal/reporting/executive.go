@@ -79,8 +79,9 @@ type ExecutiveInput struct {
 	LossValueShown bool
 
 	// Sensitive: only set + only narrated when ExposureShown is true.
-	CreditExposure string // total outstanding receivable (gated)
-	ExposureShown  bool
+	CreditExposure    string // total outstanding receivable (gated)
+	ExposureShown     bool
+	ExposurePermitted bool // the actor holds customer_credit.read (drives the omission reason)
 
 	CashShortages      string // total cash shortage across the scope (always shown)
 	StockoutRisk       int    // tanks/stations flagged at stockout risk
@@ -322,9 +323,14 @@ func Executive(in ExecutiveInput) Report {
 		})
 	}
 	if !in.ExposureShown {
-		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
-			Message: "Credit exposure is hidden — it requires the customer credit permission.",
-		})
+		// Hidden either because the actor lacks customer_credit.read, or because the
+		// actor is station-scoped (AR is a tenant-level customer ledger that cannot be
+		// decomposed per station, so a scoped approximation would not reconcile).
+		msg := "Credit exposure is hidden — it requires the customer credit permission."
+		if in.ExposurePermitted && in.Scoped {
+			msg = "Credit exposure is hidden for a scoped view — accounts-receivable is a tenant-level customer ledger and cannot be split per station. It is shown in the whole-network cockpit."
+		}
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{Message: msg})
 	}
 	return rep
 }
