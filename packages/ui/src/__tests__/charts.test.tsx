@@ -7,6 +7,7 @@ import {
   DonutChart,
   LineChart,
   Sparkline,
+  StackedBarChart,
   TenderMixDonut,
   chartColors,
 } from '../index';
@@ -77,10 +78,32 @@ describe('charts', () => {
       renderToStaticMarkup(<LineChart data={[]} xKey="day" series={series} />),
       renderToStaticMarkup(<AreaChart data={[]} xKey="day" series={series} />),
       renderToStaticMarkup(<BarChart data={[]} xKey="day" series={series} />),
+      renderToStaticMarkup(<StackedBarChart data={[]} xKey="day" series={series} />),
     ]) {
       expect(html).toContain('<div');
       expect(html).not.toContain('NaN');
     }
+  });
+
+  it('StackedBarChart renders a multi-series product-mix column with no NaN', () => {
+    // A single category (period total) whose segments are per-product revenue —
+    // the §5.2 product-mix shape. Each series carries a decimal-string value.
+    const mix = [{ bucket: 'Period total', petrol: '4200000.00', diesel: '3100500.25' }];
+    const mixSeries = [
+      { key: 'petrol', label: 'Petrol', color: chartColors.accent },
+      { key: 'diesel', label: 'Diesel', color: chartColors.success },
+    ];
+    const html = renderToStaticMarkup(
+      <StackedBarChart
+        data={mix}
+        xKey="bucket"
+        series={mixSeries}
+        valueFormatter={(v) => `TZS ${String(v)}`}
+        height={200}
+      />,
+    );
+    expect(html).toContain('<div');
+    expect(html).not.toContain('NaN');
   });
 
   it('coerces garbled/empty cell values to a finite 0 (no NaN) for geometry', () => {

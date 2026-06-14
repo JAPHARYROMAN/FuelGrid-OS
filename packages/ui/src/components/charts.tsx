@@ -335,6 +335,97 @@ export function BarChart<T extends Datum>({
   );
 }
 
+/**
+ * StackedBarChart — multi-series bars stacked on a shared baseline per category
+ * (e.g. a product-mix bar where each station/day column stacks its products).
+ * Built as a clean shared primitive distinct from BarChart (which groups series
+ * side by side): the Sales §5.2 product-mix visual stacks, later phases reuse it
+ * for any part-to-whole-by-category breakdown.
+ *
+ * Values arrive as decimal STRINGS (the numeric->text money/litre contract); the
+ * float coercion recharts needs for geometry stays at the dataKey accessor and
+ * never leaks into the displayed number — pass a `valueFormatter` (formatMoney/
+ * formatLitres) for the tooltip + Y axis.
+ */
+export function StackedBarChart<T extends Datum>({
+  data,
+  xKey,
+  series,
+  xFormatter = identity,
+  valueFormatter,
+  height = 220,
+  layout = 'horizontal',
+  className,
+}: BaseChartProps<T> & {
+  series: ChartSeries[];
+  /** 'vertical' draws horizontal stacked bars (good for long category labels). */
+  layout?: 'horizontal' | 'vertical';
+}) {
+  const vertical = layout === 'vertical';
+  return (
+    <div className={cn('w-full', className)} style={{ height }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <RBarChart data={data} layout={layout} margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}>
+          <CartesianGrid stroke={chartColors.grid} vertical={vertical} horizontal={!vertical} />
+          {vertical ? (
+            <>
+              <XAxis
+                type="number"
+                tick={axisTick}
+                tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                type="category"
+                dataKey={xKey}
+                tick={axisTick}
+                tickFormatter={(v) => xFormatter(v)}
+                tickLine={false}
+                axisLine={{ stroke: chartColors.grid }}
+                width={120}
+              />
+            </>
+          ) : (
+            <>
+              <XAxis
+                dataKey={xKey}
+                tick={axisTick}
+                tickFormatter={(v) => xFormatter(v)}
+                tickLine={false}
+                axisLine={{ stroke: chartColors.grid }}
+                minTickGap={8}
+              />
+              <YAxis
+                tick={axisTick}
+                tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
+                tickLine={false}
+                axisLine={false}
+                width={56}
+              />
+            </>
+          )}
+          <Tooltip
+            cursor={{ fill: chartColors.grid, fillOpacity: 0.25 }}
+            content={renderTooltip(xFormatter, valueFormatter)}
+          />
+          {series.map((s, i) => (
+            <Bar
+              key={s.key}
+              dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
+              name={s.label}
+              stackId="stack"
+              fill={s.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length]}
+              isAnimationActive={false}
+              maxBarSize={64}
+            />
+          ))}
+        </RBarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 /** Per-row colored bar chart — one series, color resolved per datum. */
 export function CategoricalBarChart<T extends Datum>({
   data,

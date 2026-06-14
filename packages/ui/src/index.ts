@@ -161,6 +161,7 @@ export {
   LineChart,
   AreaChart,
   BarChart,
+  StackedBarChart,
   CategoricalBarChart,
   Sparkline,
   DonutChart,

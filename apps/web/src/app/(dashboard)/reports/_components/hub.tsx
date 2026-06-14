@@ -64,6 +64,7 @@ export function categoryIcon(key: string): React.ReactNode {
  */
 const ROUTES_WITH_PAGE = new Set<string>([
   '/reports/executive',
+  '/reports/sales',
   '/reports/sales-summary',
   '/reports/inventory/reconciliation',
   '/reports/station-close',

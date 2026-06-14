@@ -3402,6 +3402,28 @@ export class Client {
   }
 
   /**
+   * Fetch the §5.2 Sales report for a station as a structured
+   * {@link ReportEnvelope}: litres, revenue, average selling price, transaction
+   * count and period-over-period growth KPIs; a revenue trend; product /
+   * payment-method / shift / attendant / nozzle breakdowns; a peak-hours grid;
+   * and (for tenant-wide actors) a cross-station ranking. Station-scoped (gated
+   * by revenue.read); `period` selects the date window (this-month default).
+   * Margin/cost are only present when the actor holds margin.view. `chart_data`
+   * carries `{trend, by_product, by_shift, by_attendant, by_nozzle, by_hour,
+   * stations, margin_shown}`; `tender_mix` carries the payment-method split.
+   */
+  getSalesReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/sales${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
    * Fetch the profitability report (revenue, COGS, gross margin, operating
    * expenses, net operating result, and a per-product breakdown) for a station
    * over a period as a structured envelope. Station-scoped (gated by

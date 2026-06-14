@@ -2524,6 +2524,26 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/sales:
+    get:
+      tags: [Reports]
+      summary: Structured Sales report (§5.2) — litres, revenue, average selling price, transaction count, growth, with product mix, payment breakdown, shift / attendant / nozzle drill-down and a peak-hours grid — as a drillable envelope
+      description: >-
+        Station-scoped via station_id. Gated by revenue.read; an out-of-scope
+        station 403s, a cross-tenant one 404s. period selects the business-date
+        window (this-month default). Every money/litre figure is an exact decimal
+        string. Margin and COGS are sensitive and only included for actors
+        holding margin.view. chart_data carries
+        {trend, by_product, by_shift, by_attendant, by_nozzle, by_hour, stations,
+        margin_shown}; tender_mix carries the payment-method split for the donut.
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/reports/profitability:
     get:
       tags: [Reports]

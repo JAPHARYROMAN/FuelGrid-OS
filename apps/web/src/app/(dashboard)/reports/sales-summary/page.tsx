@@ -1,10 +1,10 @@
 import { redirect } from 'next/navigation';
 
 /**
- * Sales summary is folded into the Phase-16 Daily Station Close report (sales,
- * litres and margin with a recent-day trend). Redirect the old path to it so the
- * hub has no dead links.
+ * The Sales report now lives at /reports/sales (the signature §5.2 suite). The
+ * old /reports/sales-summary path redirects there so any saved link or bookmark
+ * resolves to the live report and the hub has no dead links.
  */
 export default function SalesSummaryRedirect() {
-  redirect('/reports/station-close');
+  redirect('/reports/sales');
 }

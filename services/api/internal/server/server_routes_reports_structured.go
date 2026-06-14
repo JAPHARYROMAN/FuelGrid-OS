@@ -40,6 +40,13 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("reconciliation.read")).
 		Get("/reports/fuel-loss", s.handleFuelLossReport)
 
+	// Sales report (§5.2) — litres/revenue/avg-price/txn-count/growth KPIs, the
+	// revenue trend, product / payment / shift / attendant / nozzle breakdowns, a
+	// peak-hours grid and an optional cross-station ranking. Station-scoped via
+	// ?station_id; margin/cost are margin.view-gated in-handler.
+	r.With(s.requirePermissionHeld("revenue.read")).
+		Get("/reports/sales", s.handleSalesReport)
+
 	// Profitability P&L (station-scoped via ?station_id; Feature 10.4).
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/profitability", s.handleProfitabilityReport)
