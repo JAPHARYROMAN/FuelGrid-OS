@@ -3403,6 +3403,32 @@ export class Client {
   }
 
   /**
+   * Fetch the §5.11 / §20.4 Risk & Loss intelligence report for a station as a
+   * structured {@link ReportEnvelope}: a loss litres + value, variance %, open
+   * alerts / investigations, repeated-incident and highest-risk-station KPI hero;
+   * the DETERMINISTIC §5.11 pattern intelligence (variance events counted by
+   * station / product / pump / shift / attendant over a fixed window, turned into
+   * "<x> appeared in <pct>% of related events" findings); and the reusable visuals
+   * — a station × risk-type heatmap, a loss trend, a station risk ranking, a
+   * root-cause distribution donut, an alert-severity board and an investigation
+   * timeline — plus a read-only risk-rules tuning context. Station-scoped (gated
+   * by reconciliation.read). The loss VALUE is sensitive: it is margin.view-gated
+   * and OMITTED for non-holders. `chart_data` carries `{heatmap, heat_types,
+   * trend, ranking, distribution, alert_board, investigations, patterns, rules,
+   * value_shown}`.
+   */
+  getRiskLossReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/risk-loss${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
    * Fetch the §5.2 Sales report for a station as a structured
    * {@link ReportEnvelope}: litres, revenue, average selling price, transaction
    * count and period-over-period growth KPIs; a revenue trend; product /
@@ -3553,6 +3579,33 @@ export class Client {
     if (opts?.period) qs.set('period', opts.period);
     const q = qs.toString();
     return this.request<ReportEnvelope>(`/api/v1/reports/station-comparison${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  /**
+   * Fetch the §5.1 / §20.1 Executive Business Report — the cross-domain
+   * leadership cockpit that CONSOLIDATES the per-domain reports into one
+   * company-wide (or scope-wide) rollup. Returns a structured
+   * {@link ReportEnvelope}: a revenue / litres / margin (gated) / loss (value
+   * gated) / cash / stockout / risk / approvals / credit (gated) KPI hero; the
+   * DETERMINISTIC §5.1 automated management narrative (period-over-period prose,
+   * every sentence traceable to a computed figure — no AI); and the reusable
+   * visuals (per-station ranking, P&L waterfall, period-comparison cards, loss
+   * summary). REUSES the existing report figures (the same repos, decimal
+   * strings aggregated — money is never recomputed). TENANT-WIDE gate
+   * (finance.read held anywhere); the ROLLUP is restricted server-side to the
+   * actor's accessible stations, so a regional manager sees only their region
+   * (cross-scope leakage is impossible). MARGIN, LOSS VALUE and CREDIT EXPOSURE
+   * are omitted (not zeroed) for non-holders (margin.view / customer_credit.read).
+   * `chart_data` carries `{narrative, stations, waterfall, comparison,
+   * loss_summary, margin_shown}`.
+   */
+  getExecutiveReport(opts?: { period?: string }, signal?: AbortSignal): Promise<ReportEnvelope> {
+    const qs = new URLSearchParams();
+    if (opts?.period) qs.set('period', opts.period);
+    const q = qs.toString();
+    return this.request<ReportEnvelope>(`/api/v1/reports/executive${q ? `?${q}` : ''}`, {
       signal,
     });
   }

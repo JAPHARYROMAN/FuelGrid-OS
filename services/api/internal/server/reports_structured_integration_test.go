@@ -19,10 +19,15 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 )
 
 // TestReportsStationClose_EnvelopeShape asserts the Daily Station Close report
@@ -405,4 +410,481 @@ func TestReportsStationClose_DayAlignedCash(t *testing.T) {
 	if v := summaryValue(body, "Expected cash"); v != "500000.00" {
 		t.Fatalf("Expected cash = %q, want 500000.00 (the headline day's recon expected)", v)
 	}
+}
+
+// seedVarianceEvent seeds one over-tolerance tank reconciliation for station1 on
+// a fresh operating day, with a closed shift staffed by the given attendant, so
+// the Risk & Loss report's §5.11 pattern joins (event → shift → attendant) have
+// real rows to count. variance is negative (a shortage/loss). Returns the day id.
+func seedVarianceEvent(t *testing.T, ctx context.Context, h *harness, openedBy, attendant uuid.UUID, businessDate, shiftName string, variance float64) uuid.UUID {
+	t.Helper()
+	var dayID, shiftID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
+		VALUES ($1, $2, $3, $4) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, businessDate, openedBy).Scan(&dayID); err != nil {
+		t.Fatalf("seed operating day: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by, status, closed_by, closed_at)
+		VALUES ($1, $2, $3, $4, $5, 'closed', $5, now()) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, dayID, shiftName, openedBy).Scan(&shiftID); err != nil {
+		t.Fatalf("seed shift: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO shift_attendants (shift_id, user_id, tenant_id, assigned_by)
+		VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING
+	`, shiftID, attendant, h.ids.tenantID, openedBy); err != nil {
+		t.Fatalf("seed shift attendant: %v", err)
+	}
+	// Assign the attendant to a nozzle that pulls from the AFFECTED tank (tankPMS),
+	// so the §5.11 shift/attendant attribution — which now joins the variance event
+	// to who operated the event's tank via shift_nozzle_assignments → nozzles →
+	// tank — has a real causal link to count (not a day-level roster guess).
+	var nozzlePMS uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`SELECT id FROM nozzles WHERE tenant_id = $1 AND tank_id = $2 ORDER BY number LIMIT 1`,
+		h.ids.tenantID, h.ids.tankPMS).Scan(&nozzlePMS); err != nil {
+		t.Fatalf("lookup PMS nozzle: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO shift_nozzle_assignments (tenant_id, station_id, shift_id, nozzle_id, attendant_id, assigned_by)
+		VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING
+	`, h.ids.tenantID, h.ids.station1, shiftID, nozzlePMS, attendant, openedBy); err != nil {
+		t.Fatalf("seed shift nozzle assignment: %v", err)
+	}
+	// An over-tolerance shortage: variance well beyond the 1% tolerance on a 5,000 L
+	// book, status 'exception'. closing_physical = closing_book + variance.
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO tank_reconciliations
+		    (tenant_id, tank_id, operating_day_id, opening_book, deliveries_total, sales_total,
+		     adjustments_total, closing_book, closing_physical, variance_litres, variance_percent,
+		     tolerance_percent, status)
+		VALUES ($1, $2, $3, 5000, 0, 0, 0, 5000, 5000 + $4, $4, $4/5000*100, 1.0, 'exception')
+	`, h.ids.tenantID, h.ids.tankPMS, dayID, variance); err != nil {
+		t.Fatalf("seed reconciliation: %v", err)
+	}
+	return dayID
+}
+
+// TestReportsRiskLoss_EnvelopeAndPatterns asserts the §5.11 / §20.4 Risk & Loss
+// report returns the signature envelope with the KPI hero, the deterministic
+// chart payload (heatmap / trend / ranking / distribution / alert board /
+// investigation timeline / patterns / rules) and the drillable table; that a
+// recurring over-tolerance loss is surfaced; and that the sensitive loss VALUE is
+// OMITTED for the operator (who lacks margin.view) but shown to the admin.
+func TestReportsRiskLoss_EnvelopeAndPatterns(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// A SUPERVISOR scoped to station1: holds reconciliation.read (so the report
+	// succeeds) but NOT margin.view (so the loss VALUE must be omitted). The
+	// station_manager operator the harness seeds DOES hold margin.view, so it is
+	// the wrong actor for the value-gating assertion.
+	hash, herr := password.New(password.DefaultParams, "").Hash(testPassword)
+	if herr != nil {
+		t.Fatalf("hash: %v", herr)
+	}
+	supEmail := fmt.Sprintf("sup-%d@it.local", time.Now().UnixNano())
+	var supID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'IT Supervisor', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, supEmail, hash).Scan(&supID); err != nil {
+		t.Fatalf("seed supervisor: %v", err)
+	}
+	grantRole(t, ctx, h.pool, h.ids.tenantID, supID, "supervisor")
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`,
+		supID, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("seed supervisor station access: %v", err)
+	}
+	sup := h.login(t, tenantSlug, supEmail)
+
+	// Three over-tolerance shortages on the same tank across days, two of them on
+	// the EVENING shift staffed by the operator — a recurring, concentrated loss.
+	// Dates are RELATIVE to now (within the report's rolling 30-day window) so the
+	// test never rots when the wall clock advances past a fixed calendar string.
+	day := func(ago int) string { return time.Now().AddDate(0, 0, -ago).Format("2006-01-02") }
+	seedVarianceEvent(t, ctx, h, adminID, h.ids.opID, day(5), "Evening", -300)
+	seedVarianceEvent(t, ctx, h, adminID, h.ids.opID, day(4), "Evening", -250)
+	seedVarianceEvent(t, ctx, h, adminID, adminID, day(3), "Morning", -200)
+
+	// Seed a risk SCORE for the OUT-OF-SCOPE station2 and an OPEN investigation
+	// case (cases are tenant-wide). Both are risk.read / investigation.read-gated:
+	// a reconciliation.read-only supervisor must NOT receive either through the
+	// risk-loss report (the cross-permission leak the gating fixes). The admin
+	// (system) must still see them.
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO risk_scores (tenant_id, dimension, entity_id, score, band, open_alerts)
+		VALUES ($1, 'station', $2, 88, 'high', 4)
+		ON CONFLICT (tenant_id, dimension, entity_id) DO UPDATE SET score = EXCLUDED.score
+	`, h.ids.tenantID, h.ids.station2); err != nil {
+		t.Fatalf("seed station2 risk score: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO investigation_cases (tenant_id, title, case_type, status, severity, opened_by)
+		VALUES ($1, 'Confidential station2 shrinkage probe', 'fuel_loss', 'open', 'high', $2)
+	`, h.ids.tenantID, adminID); err != nil {
+		t.Fatalf("seed investigation case: %v", err)
+	}
+
+	// (1) Admin (holds reconciliation.read + margin.view) gets the full report.
+	code, body := h.getJSON(t, "/api/v1/reports/risk-loss?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin risk-loss report = %d, want 200", code)
+	}
+	meta, _ := body["metadata"].(map[string]any)
+	if meta == nil || meta["report_key"] != "risk-loss" {
+		t.Fatalf("metadata.report_key = %v, want risk-loss", body["metadata"])
+	}
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table", "chart_data"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section", key)
+		}
+	}
+	// KPI hero: loss litres (3 shortages totalling 750 L) and the repeated-incident
+	// count are present; the admin (margin.view) sees the loss VALUE.
+	if v := summaryValue(body, "Total loss litres"); v != "750.000" {
+		t.Fatalf("Total loss litres = %q, want 750.000", v)
+	}
+	if v := summaryValue(body, "Repeated-incident tanks"); v != "1" {
+		t.Fatalf("Repeated-incident tanks = %q, want 1 (the tank breached on 3 days)", v)
+	}
+	if v := summaryValue(body, "Loss value"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Loss value KPI")
+	}
+	// chart_data carries every §5.11 visual section.
+	chart, _ := body["chart_data"].(map[string]any)
+	if chart == nil {
+		t.Fatalf("chart_data is not an object: %v", body["chart_data"])
+	}
+	for _, key := range []string{"heatmap", "heat_types", "trend", "ranking", "distribution", "alert_board", "investigations", "patterns", "rules", "value_shown"} {
+		if _, present := chart[key]; !present {
+			t.Fatalf("chart_data missing %q section", key)
+		}
+	}
+	if shown, _ := chart["value_shown"].(bool); !shown {
+		t.Fatalf("value_shown must be true for the admin (margin.view)")
+	}
+	// The deterministic pattern intelligence found the Evening-shift concentration
+	// (2 of 3 events). Patterns are traceable findings with a share %.
+	patterns, _ := chart["patterns"].([]any)
+	if len(patterns) == 0 {
+		t.Fatalf("expected at least one §5.11 pattern finding, got none")
+	}
+	// The admin (system) DOES see the risk.read-gated cross-station ranking (the
+	// seeded station2 score), the highest-risk KPI, and the investigation.read-gated
+	// open-investigation count + timeline.
+	if ranking, _ := chart["ranking"].([]any); len(ranking) == 0 {
+		t.Fatalf("admin must see the station risk ranking (station2 score seeded), got empty")
+	}
+	if v := summaryValue(body, "Highest-risk station"); v == "" {
+		t.Fatalf("admin must see the Highest-risk station KPI")
+	}
+	if v := summaryValue(body, "Open investigations"); v != "1" {
+		t.Fatalf("admin Open investigations = %q, want 1 (the seeded open case)", v)
+	}
+	if invs, _ := chart["investigations"].([]any); len(invs) == 0 {
+		t.Fatalf("admin must see the investigation timeline, got empty")
+	}
+
+	// (2) Supervisor holds reconciliation.read (scoped to station1) but NOT
+	// margin.view — the report succeeds, but the loss VALUE is OMITTED (not zeroed).
+	code, supBody := h.getJSON(t, "/api/v1/reports/risk-loss?station_id="+h.ids.station1.String(), sup)
+	if code != http.StatusOK {
+		t.Fatalf("supervisor risk-loss report (own station) = %d, want 200", code)
+	}
+	if v := summaryValue(supBody, "Loss value"); v != "" {
+		t.Fatalf("supervisor (no margin.view) must NOT see the Loss value KPI, got %q", v)
+	}
+	supChart, _ := supBody["chart_data"].(map[string]any)
+	if shown, _ := supChart["value_shown"].(bool); shown {
+		t.Fatalf("value_shown must be false for the supervisor (no margin.view)")
+	}
+	// The loss LITRES are still fully shown to the non-margin holder.
+	if v := summaryValue(supBody, "Total loss litres"); v != "750.000" {
+		t.Fatalf("supervisor must still see loss litres in full, got %q", v)
+	}
+	// A data-quality note must explain the hidden value (omit-not-zero).
+	if !dataQualityContains(supBody, "margin.view") {
+		t.Fatalf("expected a data-quality note explaining the hidden loss value")
+	}
+
+	// CROSS-PERMISSION LEAKAGE GUARD: the supervisor holds reconciliation.read but
+	// NOT risk.read / investigation.read. The risk.read-gated cross-station ranking
+	// + highest-risk KPI and the investigation.read-gated open-investigation count +
+	// case-title timeline must be OMITTED — a reconciliation reader must never learn
+	// station2's risk score/band or read a confidential case title through this
+	// report (it is 403'd for them at /risk/scores and /investigations).
+	if ranking, _ := supChart["ranking"].([]any); len(ranking) != 0 {
+		t.Fatalf("LEAKAGE: supervisor (no risk.read) must NOT see the station risk ranking, got %v", ranking)
+	}
+	if v := summaryValue(supBody, "Highest-risk station"); v != "" {
+		t.Fatalf("LEAKAGE: supervisor (no risk.read) must NOT see the Highest-risk station KPI, got %q", v)
+	}
+	if invs, _ := supChart["investigations"].([]any); len(invs) != 0 {
+		t.Fatalf("LEAKAGE: supervisor (no investigation.read) must NOT see the investigation timeline, got %v", invs)
+	}
+	if v := summaryValue(supBody, "Open investigations"); v != "" {
+		t.Fatalf("LEAKAGE: supervisor (no investigation.read) must NOT see the Open investigations KPI, got %q", v)
+	}
+	// And the omission is explained (omit-not-zero), not silently dropped.
+	if !dataQualityContains(supBody, "risk.read") {
+		t.Fatalf("expected a data-quality note explaining the hidden risk ranking")
+	}
+	if !dataQualityContains(supBody, "investigation.read") {
+		t.Fatalf("expected a data-quality note explaining the hidden investigations")
+	}
+
+	// (3) Station scoping: station2 is out of the supervisor's scope → 403.
+	if code, _ := h.getJSON(t, "/api/v1/reports/risk-loss?station_id="+h.ids.station2.String(), sup); code != http.StatusForbidden {
+		t.Fatalf("supervisor risk-loss report (out-of-scope station) = %d, want 403", code)
+	}
+}
+
+// grantFinanceOnlyRole creates (idempotently) a tenant-scoped custom role that
+// holds ONLY finance.read — no margin.view — and assigns it to the user. Used to
+// seed a finance-reader who must not see the sensitive margin / loss-value
+// figures (every system role with finance.read also carries margin.view).
+func grantFinanceOnlyRole(t *testing.T, ctx context.Context, h *harness, userID uuid.UUID) {
+	t.Helper()
+	var roleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO roles (tenant_id, code, name, is_system)
+		VALUES ($1, 'finance_read_only', 'Finance Read Only', false)
+		ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id`, h.ids.tenantID).Scan(&roleID); err != nil {
+		t.Fatalf("seed finance-only role: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO role_permissions (role_id, permission_id)
+		SELECT $1, p.id FROM permissions p WHERE p.code = 'finance.read'
+		ON CONFLICT DO NOTHING`, roleID); err != nil {
+		t.Fatalf("grant finance.read to custom role: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		userID, roleID, h.ids.tenantID); err != nil {
+		t.Fatalf("assign finance-only role: %v", err)
+	}
+}
+
+// TestReportsExecutive_RollupScopeAndGating asserts the §5.1 / §20.1 Executive
+// cockpit: the envelope shape with the KPI hero + the deterministic management
+// narrative; that MARGIN and LOSS VALUE are gated (a supervisor without
+// margin.view sees neither, an admin sees both); and — CRITICALLY — that the
+// rollup aggregates ONLY the actor's permitted station scope, so cross-scope
+// leakage is impossible (a supervisor scoped to station1 must NEVER see station2
+// in the rollup, even though station2 has activity).
+func TestReportsExecutive_RollupScopeAndGating(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	adminID := adminUserID(t, ctx, h.pool, h.ids.tenantID)
+
+	// Activity on BOTH stations: station1 sells more (net 1000) than station2
+	// (net 500), so a whole-tenant rollup sees a total revenue of 1500 across 2
+	// stations, while a station1-scoped actor sees 1000 across 1 station.
+	seedProfitSale(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, h.ids.tankPMS, h.ids.pmsProduct, adminID,
+		"1180", "180", "1000", "700", "400.000")
+	seedProfitSale(t, ctx, h.pool, h.ids.tenantID, h.ids.station2, h.ids.tankMSA, h.ids.pmsProduct, adminID,
+		"590", "90", "500", "300", "200.000")
+
+	// One OPEN investigation case (tenant-wide; cases carry no station). The admin
+	// (system, holds investigation.read) must see the Open-investigations KPI; the
+	// scoped finance-only supervisor (no investigation.read) must NOT — the count is
+	// the whole tenant's open-case volume and would otherwise leak past their scope.
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO investigation_cases (tenant_id, title, case_type, status, severity, opened_by)
+		VALUES ($1, 'Network shrinkage probe', 'fuel_loss', 'open', 'high', $2)
+	`, h.ids.tenantID, adminID); err != nil {
+		t.Fatalf("seed investigation case: %v", err)
+	}
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	// (1) Admin (tenant-wide; holds finance.read + margin.view) gets the full
+	// rollup: the envelope, the KPI hero, the narrative, and the gated figures.
+	code, body := h.getJSON(t, "/api/v1/reports/executive?period=this-month", admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin executive report = %d, want 200 (%v)", code, body)
+	}
+	meta, _ := body["metadata"].(map[string]any)
+	if meta == nil || meta["report_key"] != "executive" {
+		t.Fatalf("metadata.report_key = %v, want executive", body["metadata"])
+	}
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table", "chart_data"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section", key)
+		}
+	}
+	// KPI hero: total revenue is the SCOPE-WIDE sum (1000 + 500 = 1500), litres
+	// (400 + 200 = 600), and 2 stations in scope — the figures are aggregated from
+	// the same station-comparison decimal strings, never recomputed.
+	if v := summaryValue(body, "Total revenue"); v != "1500.00" {
+		t.Fatalf("admin Total revenue = %q, want 1500.00 (scope-wide sum)", v)
+	}
+	if v := summaryValue(body, "Total litres"); v != "600.000" {
+		t.Fatalf("admin Total litres = %q, want 600.000", v)
+	}
+	if v := summaryValue(body, "Stations in scope"); v != "2" {
+		t.Fatalf("admin Stations in scope = %q, want 2", v)
+	}
+	// Admin holds margin.view tenant-wide → the gross/net margin + loss value KPIs
+	// are present.
+	if v := summaryValue(body, "Gross margin"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Gross margin KPI")
+	}
+	if v := summaryValue(body, "Net margin"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Net margin KPI")
+	}
+	// Admin (system → investigation.read) sees the tenant-wide open-investigation
+	// count (the one open case seeded).
+	if v := summaryValue(body, "Open investigations"); v != "1" {
+		t.Fatalf("admin Open investigations = %q, want 1 (the seeded open case)", v)
+	}
+	if v := summaryValue(body, "Loss value"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Loss value KPI")
+	}
+	// The chart payload carries the §5.1 management narrative + the cross-domain
+	// visuals; the narrative is deterministic prose traceable to the figures.
+	chart, _ := body["chart_data"].(map[string]any)
+	if chart == nil {
+		t.Fatalf("chart_data is not an object: %v", body["chart_data"])
+	}
+	for _, key := range []string{"narrative", "stations", "waterfall", "comparison", "loss_summary", "margin_shown"} {
+		if _, present := chart[key]; !present {
+			t.Fatalf("chart_data missing %q section", key)
+		}
+	}
+	narr, _ := chart["narrative"].(map[string]any)
+	sentences, _ := narr["sentences"].([]any)
+	if len(sentences) == 0 {
+		t.Fatalf("the management narrative must have at least one sentence")
+	}
+	var narrativeText string
+	for _, sNode := range sentences {
+		if str, ok := sNode.(string); ok {
+			narrativeText += str + " "
+		}
+	}
+	if !strings.Contains(narrativeText, "across 2 stations") {
+		t.Fatalf("admin narrative should mention 2 stations in scope, got: %s", narrativeText)
+	}
+	// margin_shown true for the admin: the P&L waterfall is populated.
+	if shown, _ := chart["margin_shown"].(bool); !shown {
+		t.Fatalf("margin_shown must be true for the admin (margin.view)")
+	}
+
+	// (2) Supervisor scoped to station1, holds finance.read but NOT margin.view —
+	// the rollup succeeds, but margin / loss value are OMITTED (not zeroed), and
+	// CRITICALLY the rollup only includes station1 (no cross-scope leakage).
+	supEmail := fmt.Sprintf("exec-sup-%d@it.local", time.Now().UnixNano())
+	hash, herr := password.New(password.DefaultParams, "").Hash(testPassword)
+	if herr != nil {
+		t.Fatalf("hash: %v", herr)
+	}
+	var supID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'Exec Supervisor', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, supEmail, hash).Scan(&supID); err != nil {
+		t.Fatalf("seed supervisor: %v", err)
+	}
+	// Grant a tenant-scoped custom role holding ONLY finance.read (no margin.view),
+	// scoped to station1, so the actor is station-restricted (not tenant-wide),
+	// passes the finance.read held-anywhere gate, but must NOT see margin / loss
+	// value — the exact actor the gating + leakage assertions require. (Every
+	// system role that holds finance.read also holds margin.view, so a custom role
+	// is the only way to seed a finance-reader without margin sight.)
+	grantFinanceOnlyRole(t, ctx, h, supID)
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`,
+		supID, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("seed supervisor station access: %v", err)
+	}
+	sup := h.login(t, tenantSlug, supEmail)
+
+	code, supBody := h.getJSON(t, "/api/v1/reports/executive?period=this-month", sup)
+	if code != http.StatusOK {
+		t.Fatalf("scoped executive report = %d, want 200 (%v)", code, supBody)
+	}
+	// LEAKAGE GUARD: the scoped actor's rollup must include EXACTLY their one
+	// station — total revenue 1000 (station1 only), 1 station in scope, never the
+	// 1500/2-station whole-tenant view. This proves station2's figures cannot leak
+	// into a station1-scoped manager's aggregate.
+	if v := summaryValue(supBody, "Total revenue"); v != "1000.00" {
+		t.Fatalf("scoped Total revenue = %q, want 1000.00 (station1 only — station2 must NOT leak)", v)
+	}
+	if v := summaryValue(supBody, "Stations in scope"); v != "1" {
+		t.Fatalf("scoped Stations in scope = %q, want 1 (own station only)", v)
+	}
+	// And the per-station table must contain ONLY station1's row, never station2.
+	tbl, _ := supBody["table"].(map[string]any)
+	rows, _ := tbl["rows"].([]any)
+	for _, rNode := range rows {
+		row, _ := rNode.([]any)
+		if len(row) > 0 {
+			if station, _ := row[0].(string); station == "MSA-01" || station == "MSA" {
+				t.Fatalf("LEAKAGE: scoped rollup table contains the out-of-scope station2 row: %v", rows)
+			}
+		}
+	}
+	// Margin gating: the supervisor (no margin.view) must NOT see margin or loss
+	// value, and a data-quality note must explain each omission (omit, never zero).
+	if v := summaryValue(supBody, "Gross margin"); v != "" {
+		t.Fatalf("scoped actor without margin.view must NOT see Gross margin, got %q", v)
+	}
+	if v := summaryValue(supBody, "Loss value"); v != "" {
+		t.Fatalf("scoped actor without margin.view must NOT see Loss value, got %q", v)
+	}
+	if !dataQualityContains(supBody, "margin.view") {
+		t.Fatalf("expected a data-quality note explaining the hidden margin")
+	}
+	if !dataQualityContains(supBody, "limited to the stations you have access to") {
+		t.Fatalf("a scoped cockpit must carry the scoped-view data-quality note")
+	}
+	supChart, _ := supBody["chart_data"].(map[string]any)
+	if shown, _ := supChart["margin_shown"].(bool); shown {
+		t.Fatalf("margin_shown must be false for the scoped non-margin actor")
+	}
+	// INVESTIGATION LEAKAGE GUARD: the scoped finance-only actor holds no
+	// investigation.read, so the tenant-wide Open-investigations KPI must be OMITTED
+	// (it would otherwise disclose the whole tenant's open-case volume past their
+	// scope), with a data-quality note explaining the omission.
+	if v := summaryValue(supBody, "Open investigations"); v != "" {
+		t.Fatalf("LEAKAGE: scoped actor without investigation.read must NOT see Open investigations, got %q", v)
+	}
+	if !dataQualityContains(supBody, "investigation.read") {
+		t.Fatalf("expected a data-quality note explaining the hidden investigations")
+	}
+
+	// (3) Permission gate: a freshly-created attendant holds no finance.read → 403.
+	att := freshAttendant(t, ctx, h, tenantSlug)
+	if code, _ := h.getJSON(t, "/api/v1/reports/executive", att); code != http.StatusForbidden {
+		t.Fatalf("attendant executive report = %d, want 403 (no finance.read)", code)
+	}
+}
+
+// dataQualityContains reports whether any data_quality message contains substr.
+func dataQualityContains(m map[string]any, substr string) bool {
+	arr, ok := m["data_quality"].([]any)
+	if !ok {
+		return false
+	}
+	for _, it := range arr {
+		row, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg, ok := row["message"].(string); ok && strings.Contains(msg, substr) {
+			return true
+		}
+	}
+	return false
 }
