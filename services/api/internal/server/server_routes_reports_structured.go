@@ -47,6 +47,13 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/sales", s.handleSalesReport)
 
+	// Delivery & Procurement report (§5.7) — ordered/loaded/received comparison,
+	// delivery variance, delivery delays, PO pipeline and a deterministic supplier
+	// scorecard. Station-scoped via ?station_id; supplier cost / price
+	// competitiveness are margin.view-gated in-handler.
+	r.With(s.requirePermissionHeld("station.read")).
+		Get("/reports/delivery", s.handleDeliveryReport)
+
 	// Profitability P&L (station-scoped via ?station_id; Feature 10.4).
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/profitability", s.handleProfitabilityReport)

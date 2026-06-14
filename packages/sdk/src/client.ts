@@ -3424,6 +3424,25 @@ export class Client {
   }
 
   /**
+   * Fetch the Delivery & Procurement report (§5.7) for a station over a period
+   * as a structured {@link ReportEnvelope}: an ordered/loaded/received +
+   * variance + delivery-count KPI hero (supplier cost gated behind margin.view),
+   * the ordered-vs-received comparison, per-delivery variance, the procurement
+   * pipeline, and a deterministic supplier scorecard. Station-scoped (gated by
+   * station.read); `period` selects the date window.
+   */
+  getDeliveryReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/delivery${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
    * Fetch the profitability report (revenue, COGS, gross margin, operating
    * expenses, net operating result, and a per-product breakdown) for a station
    * over a period as a structured envelope. Station-scoped (gated by

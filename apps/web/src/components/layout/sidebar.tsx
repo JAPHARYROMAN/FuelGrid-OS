@@ -65,6 +65,7 @@ const REPORTS_TREE: { label: string; href: string }[] = [
   { label: 'Sales', href: '/reports/sales' },
   { label: 'Inventory', href: '/reports/inventory/reconciliation' },
   { label: 'Shifts', href: '/reports/station-close' },
+  { label: 'Delivery', href: '/reports/delivery' },
   { label: 'Cash', href: '/reports/cash-reconciliation' },
   { label: 'Finance', href: '/reports/profitability' },
   { label: 'Customer Credit', href: '/reports/customer-aging' },
