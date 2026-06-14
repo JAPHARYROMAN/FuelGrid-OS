@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { BarChart3, FileText, Landmark, ListTree } from 'lucide-react';
+import { ArrowUpRight, BarChart3, FileText, Landmark, ListTree } from 'lucide-react';
 
 import type { ReportEnvelope, ReportPeriod } from '@fuelgrid/sdk';
 import {
@@ -22,7 +22,7 @@ import {
 
 import { api } from '@/lib/api';
 import { formatMoney } from '@/lib/money';
-import { usePermission } from '@/hooks/use-permissions';
+import { canUsePermission, usePermission, usePermissions } from '@/hooks/use-permissions';
 
 import { useStationSelection } from '../_components/filters';
 import { PageHeader, ReportFilterBar, ReportStates } from '../_components/report-shell';
@@ -142,6 +142,10 @@ function ProductBars({
       xKey="product"
       valueFormatter={(v) => formatMoney(v as string)}
       series={series}
+      // With two series (Revenue + Gross margin) the bars are otherwise
+      // distinguishable by colour alone (WCAG 1.4.1); the text+swatch legend
+      // disambiguates them on print / touch / for CVD users.
+      legend={costShown}
       height={260}
     />
   );
@@ -150,7 +154,12 @@ function ProductBars({
 export default function FinancePage() {
   const { stations, items, stationId, setStationId } = useStationSelection();
   const [period, setPeriod] = React.useState<ReportPeriod>('this-month');
-  const allowed = usePermission('finance.read', { stationID: stationId });
+  // The export + statement routes are gated requirePermissionHeld("finance.read")
+  // — held tenant-wide, station-agnostic — so gate their UI affordances the same
+  // way ("held" mode) rather than against the currently-viewed station, which
+  // would otherwise hide an action the server would allow.
+  const allowed = usePermission('finance.read', { mode: 'held' });
+  const perms = usePermissions();
 
   const report = useQuery<ReportEnvelope>({
     queryKey: ['report', 'finance', stationId, period],
@@ -263,21 +272,43 @@ export default function FinancePage() {
                       </CardHeader>
                       <CardContent>
                         <p className="mb-3 text-sm text-muted-foreground">
-                          The underlying ledger statements, gated by your finance permission.
+                          The underlying ledger statements (JSON), gated by your finance permission.
                         </p>
                         <ul className="flex flex-col gap-2">
-                          {data.statements.map((st) => (
-                            <li key={st.key}>
-                              <span className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground">
-                                {st.key === 'general-ledger' ? (
-                                  <ListTree className="size-3.5 shrink-0 text-muted-foreground" />
+                          {data.statements.map((st) => {
+                            const Icon = st.key === 'general-ledger' ? ListTree : FileText;
+                            // Gate each statement link on the permission the route
+                            // carries (held tenant-wide, matching the API gate). A
+                            // statement the actor can't open renders disabled rather
+                            // than as a dead link.
+                            const canOpen = perms.data
+                              ? canUsePermission(perms.data, st.permission, { mode: 'held' })
+                              : false;
+                            return (
+                              <li key={st.key}>
+                                {canOpen ? (
+                                  <a
+                                    href={st.endpoint}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex items-center gap-2 rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground hover:bg-accent-muted/40"
+                                  >
+                                    <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                                    <span className="flex-1">{st.label}</span>
+                                    <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                                  </a>
                                 ) : (
-                                  <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                                  <span
+                                    className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 text-sm text-muted-foreground"
+                                    title={`Requires the ${st.permission} permission`}
+                                  >
+                                    <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                                    <span className="flex-1">{st.label}</span>
+                                  </span>
                                 )}
-                                {st.label}
-                              </span>
-                            </li>
-                          ))}
+                              </li>
+                            );
+                          })}
                         </ul>
                       </CardContent>
                     </Card>

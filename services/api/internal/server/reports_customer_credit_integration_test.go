@@ -20,6 +20,7 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -181,6 +182,97 @@ func TestReportsCustomerCredit_BucketsAndExposureGating(t *testing.T) {
 	att := freshAttendant(t, ctx, h, tenantSlug)
 	if code, _ := h.getJSON(t, "/api/v1/reports/customer-credit", att); code != http.StatusForbidden {
 		t.Fatalf("attendant customer-credit report = %d, want 403", code)
+	}
+}
+
+// TestReportsCustomerCredit_ScopeReconciliation guards the two figures-integrity
+// fixes: (a) the KPI hero and the per-customer bucket table use the IDENTICAL
+// non-deleted-customer scope, so a soft-deleted customer's outstanding invoice is
+// dropped from BOTH (Σ table rows == hero "Total receivable"); and (b) a zero
+// credit-limit ("cash-only") customer with an AR charge is NOT flagged over-limit
+// — neither the per-row over_limit flag nor the tenant-wide "Customers over limit"
+// count treats a zero limit as exceeded.
+func TestReportsCustomerCredit_ScopeReconciliation(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	adminID := adminUserID(t, ctx, h.pool, h.ids.tenantID)
+
+	// (1) A live cash-only customer: credit_limit = 0, but an AR charge of 500.
+	//     A zero limit is cash-only, NOT over limit.
+	var cashID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO customers (tenant_id, code, name, credit_limit, status)
+		VALUES ($1, 'CASHONLY', 'Cash Only Co', 0, 'active') RETURNING id`,
+		h.ids.tenantID).Scan(&cashID); err != nil {
+		t.Fatalf("seed cash-only customer: %v", err)
+	}
+	seedCreditInvoice(t, ctx, h.pool, h.ids.tenantID, cashID, adminID, -10, "500")
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO ar_entries (tenant_id, customer_id, entry_type, amount, balance_after, recorded_by)
+		VALUES ($1, $2, 'charge', 500, 500, $3)`,
+		h.ids.tenantID, cashID, adminID); err != nil {
+		t.Fatalf("seed cash-only ar charge: %v", err)
+	}
+
+	// (2) A soft-deleted customer still holding an outstanding invoice. It must be
+	//     dropped from BOTH the hero and the table (consistent scope).
+	var delID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO customers (tenant_id, code, name, credit_limit, status)
+		VALUES ($1, 'DELETED', 'Deleted Co', 2000, 'deleted') RETURNING id`,
+		h.ids.tenantID).Scan(&delID); err != nil {
+		t.Fatalf("seed deleted customer: %v", err)
+	}
+	seedCreditInvoice(t, ctx, h.pool, h.ids.tenantID, delID, adminID, -10, "1000")
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	code, body := h.getJSON(t, "/api/v1/reports/customer-credit?period=this-month", admin)
+	if code != http.StatusOK {
+		t.Fatalf("customer-credit report = %d, want 200 (%v)", code, body)
+	}
+
+	// The hero "Total receivable" excludes the soft-deleted customer's 1000, so it
+	// equals just the cash-only customer's 500 (the only visible balance).
+	if got := summaryValue(body, "Total receivable"); got != "500.00" {
+		t.Fatalf("total receivable = %q, want 500.00 (deleted customer excluded from hero)", got)
+	}
+	if got := summaryValue(body, "Customers with balance"); got != "1" {
+		t.Fatalf("customers with balance = %q, want 1 (deleted excluded)", got)
+	}
+	// A zero credit limit is cash-only, never over limit.
+	if got := summaryValue(body, "Customers over limit"); got != "0" {
+		t.Fatalf("customers over limit = %q, want 0 (zero limit is cash-only)", got)
+	}
+
+	chart, _ := body["chart_data"].(map[string]any)
+	custs, _ := chart["customers"].([]any)
+	// Exactly one row: the cash-only customer. The deleted customer is absent.
+	if len(custs) != 1 {
+		t.Fatalf("table rows = %d, want 1 (deleted customer must not appear)", len(custs))
+	}
+	row0, _ := custs[0].(map[string]any)
+	if name, _ := row0["name"].(string); name != "Cash Only Co" {
+		t.Fatalf("visible row = %q, want \"Cash Only Co\"", name)
+	}
+	// Σ(table outstanding) reconciles to the hero total receivable.
+	sum := 0.0
+	for _, c := range custs {
+		r, _ := c.(map[string]any)
+		var v float64
+		if s, ok := r["outstanding"].(string); ok {
+			_, _ = fmt.Sscanf(s, "%f", &v)
+		}
+		sum += v
+	}
+	if sum != 500.0 {
+		t.Fatalf("Σ(table outstanding) = %v, want 500 (must reconcile to the hero)", sum)
+	}
+	// The cash-only row is NOT flagged over_limit (admin holds exposure, so the
+	// gated bool is present and must be false).
+	if over, present := row0["over_limit"].(bool); present && over {
+		t.Fatalf("cash-only row flagged over_limit (zero limit must be false): %v", row0)
 	}
 }
 

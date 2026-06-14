@@ -156,31 +156,45 @@ export function FinancialWaterfall({
     };
   });
 
-  // The bar scale spans the full range the cascade travels through (including
-  // intermediate running totals), so floating delta bars sit proportionally.
-  let scale = 1;
+  // The track maps a numeric DOMAIN onto [0,100%]. The domain spans every value
+  // the cascade reaches (running totals, before/after of each delta) AND always
+  // includes 0, so a zero-crossing cascade (a loss, or a delta that bridges
+  // positive→negative) is positioned relative to a real zero baseline instead of
+  // collapsing its negative portion to the left edge. Bars sit on the correct
+  // side of zero, so a loss no longer looks like a same-sized gain.
+  let domainMin = 0;
+  let domainMax = 0;
   for (const s of resolved) {
-    scale = Math.max(scale, Math.abs(s.runningAfter), Math.abs(s.runningBefore), Math.abs(s.value));
+    domainMin = Math.min(domainMin, s.runningAfter, s.runningBefore);
+    domainMax = Math.max(domainMax, s.runningAfter, s.runningBefore);
   }
+  const span = domainMax - domainMin || 1;
+  // Fraction (0..1) of the track at which a domain value sits.
+  const fracOf = (v: number) => clamp01((v - domainMin) / span);
+  // Where the zero baseline falls on the track; shown when the domain crosses it.
+  const zeroFrac = fracOf(0);
+  const crossesZero = domainMin < 0 && domainMax > 0;
 
   return (
     <div className={cn('flex flex-col gap-2.5', className)} role="group" aria-label={ariaLabel}>
       <ol className="flex flex-col gap-2.5" role="list">
         {resolved.map((s) => {
           const tone = toneOf(s);
-          // Geometry: result bars fill from the baseline (0..|after|); a delta is a
-          // floating bar spanning [min(before,after), max(before,after)].
-          let leftFrac: number;
-          let widthFrac: number;
+          // Geometry: an absolute bar (base/total) spans [0, runningAfter] — drawn
+          // on the correct side of the zero baseline; a delta spans
+          // [runningBefore, runningAfter]. Both are positioned in DOMAIN space so
+          // negatives render to the left of zero.
+          let lo: number;
+          let hi: number;
           if (s.kind === 'delta') {
-            const lo = Math.min(s.runningBefore, s.runningAfter);
-            const hi = Math.max(s.runningBefore, s.runningAfter);
-            leftFrac = clamp01(lo / scale);
-            widthFrac = clamp01((hi - lo) / scale);
+            lo = Math.min(s.runningBefore, s.runningAfter);
+            hi = Math.max(s.runningBefore, s.runningAfter);
           } else {
-            leftFrac = 0;
-            widthFrac = clamp01(Math.abs(s.runningAfter) / scale);
+            lo = Math.min(0, s.runningAfter);
+            hi = Math.max(0, s.runningAfter);
           }
+          const leftFrac = fracOf(lo);
+          const widthFrac = fracOf(hi) - leftFrac;
           const ariaLine = `${s.label}: ${s.sign ? `${s.sign} ` : ''}${s.display}${
             unit ? ` ${unit}` : ''
           }`;
@@ -203,6 +217,14 @@ export function FinancialWaterfall({
                 </span>
               </span>
               <div className="relative h-5 flex-1 overflow-hidden rounded bg-muted/40">
+                {/* Zero baseline: the eye's anchor when the cascade crosses zero. */}
+                {crossesZero ? (
+                  <div
+                    className="absolute inset-y-0 w-px bg-border"
+                    style={{ left: `${zeroFrac * 100}%` }}
+                    aria-hidden
+                  />
+                ) : null}
                 <div
                   className={cn(
                     'absolute inset-y-0 rounded',

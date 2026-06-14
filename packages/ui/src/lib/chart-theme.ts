@@ -24,6 +24,15 @@ export const chartColors = {
   success: 'hsl(var(--color-success))',
   warning: 'hsl(var(--color-warning))',
   danger: 'hsl(var(--color-danger))',
+  /**
+   * Severity-ramp tints (a lightened warning / danger) so an ordered severity
+   * scale (e.g. AR aging Current→90+) can escalate monotonically through
+   * success → warning-tint → warning → danger-tint → danger without dropping a
+   * neutral grey mid-ramp. Derived from the same tokens via alpha, so they track
+   * the live theme — no hard-coded hex.
+   */
+  warningSoft: 'hsl(var(--color-warning) / 0.55)',
+  dangerSoft: 'hsl(var(--color-danger) / 0.55)',
 } as const;
 
 /** Shared tick styling for X/Y axes. */

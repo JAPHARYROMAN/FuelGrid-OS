@@ -95,6 +95,28 @@ describe('FinancialWaterfall', () => {
     expect(html).toContain('text-danger');
   });
 
+  it('draws a zero baseline when the cascade crosses zero (loss legible in geometry)', () => {
+    // rev 500 (base) → −700 (delta) → −200 (total): the running total bridges
+    // positive→negative, so a zero reference line anchors the negative region.
+    const loss: FinancialWaterfallStep[] = [
+      { key: 'rev', label: 'Net revenue', value: '500.00', kind: 'base' },
+      { key: 'cogs', label: 'COGS', value: '-700.00', kind: 'delta' },
+      { key: 'net', label: 'Net operating result', value: '-200.00', kind: 'total' },
+    ];
+    const crossing = renderToStaticMarkup(
+      <FinancialWaterfall steps={loss} valueFormatter={(v) => fmt(v)} />,
+    );
+    // The zero baseline (a thin vertical rule) is present only when the domain
+    // straddles zero, so the negative running total renders left of it.
+    expect(crossing).toContain('w-px');
+
+    // An all-positive cascade needs no zero baseline (domain never crosses zero).
+    const positive = renderToStaticMarkup(
+      <FinancialWaterfall steps={steps} valueFormatter={(v) => fmt(v)} />,
+    );
+    expect(positive).not.toContain('w-px');
+  });
+
   it('renders nothing for an empty step list (honest empty state)', () => {
     const html = renderToStaticMarkup(<FinancialWaterfall steps={[]} />);
     expect(html).toBe('');

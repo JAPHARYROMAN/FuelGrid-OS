@@ -120,11 +120,15 @@ function AgingBucketChart({ buckets }: { buckets: AgingBucketSlice[] }) {
     <StackedBarChart
       data={[row]}
       xKey="label"
+      // Monotonic severity ramp Current→90+: success → warning-tint → warning →
+      // danger-tint → danger, so colour reads as an escalating-risk gradient (no
+      // calmer grey mid-ramp). The always-on legend keeps it text+colour, never
+      // colour alone.
       series={[
         { key: 'Current', label: 'Current', color: chartColors.success },
-        { key: '1-30', label: '1-30 days', color: chartColors.accent },
+        { key: '1-30', label: '1-30 days', color: chartColors.warningSoft },
         { key: '31-60', label: '31-60 days', color: chartColors.warning },
-        { key: '61-90', label: '61-90 days', color: chartColors.muted },
+        { key: '61-90', label: '61-90 days', color: chartColors.dangerSoft },
         { key: '90+', label: '90+ days', color: chartColors.danger },
       ]}
       valueFormatter={(v) => formatMoney(v as string)}

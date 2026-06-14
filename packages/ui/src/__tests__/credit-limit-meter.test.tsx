@@ -60,9 +60,14 @@ describe('CreditLimitMeter', () => {
     expect(html).toContain('role="meter"');
     expect(html).toContain('aria-valuemin="0"');
     expect(html).toContain('aria-valuemax="100"');
-    // aria-valuenow carries the rounded utilization figure.
+    // aria-valuenow carries the rounded utilization figure, CLAMPED into the
+    // declared [0,100] range (WAI-ARIA requires valuenow ≤ valuemax).
     expect(html).toContain('aria-valuenow="42"');
-    expect(html).toContain('aria-valuenow="125"');
+    // An over-limit customer (125%) clamps valuenow to 100 (never out of range)…
+    expect(html).toContain('aria-valuenow="100"');
+    expect(html).not.toContain('aria-valuenow="125"');
+    // …while the TRUE percent is still printed as text and narrated in valuetext.
+    expect(html).toContain('125%');
     // aria-valuetext narrates the figure + status for screen readers.
     expect(html).toContain('of credit limit used');
   });

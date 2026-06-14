@@ -121,7 +121,10 @@ func (r *Repo) AgingBuckets(ctx context.Context, tenantID uuid.UUID, asOf time.T
 		         THEN ROUND(x.exposure / c.credit_limit * 100, 2)::text
 		         ELSE '0' END,
 		    COALESCE(p.warning_threshold_pct, 80)::text,
-		    (x.exposure > c.credit_limit),
+		    -- A zero credit limit is "cash-only", not "over limit"; the credit_limit > 0
+		    -- guard keeps the per-row flag identical to the tenant-wide over-limit count
+		    -- (AgingSummary) so the risk badge can't contradict the KPI.
+		    (c.credit_limit > 0 AND x.exposure > c.credit_limit),
 		    (COALESCE(p.hold, false) OR c.status IN ('on_hold', 'suspended')),
 		    p.hold_reason,
 		    COALESCE(p.risk_category, 'standard'),
@@ -197,6 +200,11 @@ func (r *Repo) AgingSummary(ctx context.Context, tenantID uuid.UUID, asOf time.T
 		    WHERE ci.tenant_id = $1
 		      AND ci.status IN ('issued', 'partially_paid')
 		      AND ci.outstanding_amount > 0
+		      -- Scope to the SAME non-deleted customers the per-customer bucket table
+		      -- shows, so the hero KPIs and Σ(table rows) can never disagree.
+		      AND EXISTS (SELECT 1 FROM customers c
+		                  WHERE c.id = ci.customer_id AND c.tenant_id = $1
+		                    AND c.status <> 'deleted')
 		),
 		per_customer AS (
 		    SELECT customer_id, SUM(amt) AS outstanding
@@ -251,8 +259,12 @@ func (r *Repo) AgingSummary(ctx context.Context, tenantID uuid.UUID, asOf time.T
 	// but not yet applied, a data-quality signal that the aging may overstate.
 	err = r.pool.QueryRow(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(amount - allocated_amount), 0)::text
-		FROM customer_payments
-		WHERE tenant_id = $1 AND status = 'posted' AND allocated_amount < amount
+		FROM customer_payments cp
+		WHERE cp.tenant_id = $1 AND cp.status = 'posted' AND cp.allocated_amount < cp.amount
+		  -- Same non-deleted customer scope as the aging table / hero.
+		  AND EXISTS (SELECT 1 FROM customers c
+		              WHERE c.id = cp.customer_id AND c.tenant_id = $1
+		                AND c.status <> 'deleted')
 	`, tenantID).Scan(&t.UnallocatedPayments, &t.UnallocatedAmount)
 	if err != nil {
 		return AgingTotals{}, err

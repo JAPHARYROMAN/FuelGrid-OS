@@ -118,7 +118,11 @@ export function CreditLimitMeter({ items, className }: CreditLimitMeterProps) {
             <div
               className="h-2 w-full overflow-hidden rounded-full bg-muted"
               role="meter"
-              aria-valuenow={Math.round(it.utilization)}
+              // Clamp aria-valuenow into the declared [0,100] range (WAI-ARIA
+              // requires valuenow ≤ valuemax). The TRUE percent (e.g. 125%) is
+              // still announced via aria-valuetext and printed as text, so an
+              // over-limit customer reads honestly without an out-of-range value.
+              aria-valuenow={Math.round(clamp(it.utilization, 0, 100))}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuetext={ariaText}

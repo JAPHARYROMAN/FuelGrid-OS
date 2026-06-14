@@ -16,8 +16,16 @@ vi.mock('@/lib/api', () => ({
 }));
 
 let permitted: boolean | null = true;
+// The page also reads the full permission set (usePermissions) + canUsePermission
+// to gate each financial-statement link on the route's permission. The mock
+// returns a loaded set and a permissive check so the statement links render.
 vi.mock('@/hooks/use-permissions', () => ({
   usePermission: () => permitted,
+  usePermissions: () => ({
+    data: { tenant_wide: true, station_ids: [], permissions: [], is_system_admin: true },
+    isLoading: false,
+  }),
+  canUsePermission: () => true,
 }));
 
 import FinancePage from './page';
