@@ -1945,6 +1945,8 @@ export type StructuredReportKey =
   | 'station-close'
   | 'cash-reconciliation'
   | 'fuel-loss'
+  | 'sales'
+  | 'delivery'
   | 'profitability'
   | 'station-comparison';
 

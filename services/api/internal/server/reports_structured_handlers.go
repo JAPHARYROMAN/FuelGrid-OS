@@ -1037,7 +1037,10 @@ func buildExportURL(req exportReportRequest) (string, bool) {
 		periodQS = "?period=" + period
 	}
 	switch req.ReportKey {
-	case "revenue", "station-close":
+	case "revenue", "station-close", "sales":
+		// Sales (§5.2) reuses the recognized-sales export endpoints: the revenue
+		// CSV/XLSX cover the sale facts and the daily-close PDF is the printable
+		// sales summary — the same files the daily-close report streams.
 		if station == "" {
 			return "", false
 		}
@@ -1054,6 +1057,19 @@ func buildExportURL(req exportReportRequest) (string, bool) {
 			return "", false
 		}
 		return fmt.Sprintf("/api/v1/stations/%s/reports/inventory.csv", station), true
+	case "delivery":
+		// Delivery & Procurement (§5.7) reuses the station inventory exports: the
+		// inventory CSV and reconciliation XLSX cover the delivery/stock movement
+		// facts (deliveries post +volume movements into the same ledger).
+		if station == "" {
+			return "", false
+		}
+		switch req.Format {
+		case "csv":
+			return fmt.Sprintf("/api/v1/stations/%s/reports/inventory.csv", station), true
+		case "xlsx":
+			return fmt.Sprintf("/api/v1/stations/%s/reports/reconciliation.xlsx%s", station, stationQS), true
+		}
 	case "reconciliation", "inventory-reconciliation":
 		if station == "" {
 			return "", false

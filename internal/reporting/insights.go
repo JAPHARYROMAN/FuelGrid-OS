@@ -79,6 +79,26 @@ func fmtPct(p float64) string {
 	return fmt.Sprintf("%s%.1f%%", sign, p)
 }
 
+// fmtPctMagnitude renders an UNSIGNED percentage magnitude with one decimal
+// (e.g. "5.0%") — for phrases that already state direction in words ("less than",
+// "more than"), so a positive magnitude reads naturally without a leading sign.
+func fmtPctMagnitude(p float64) string {
+	return fmt.Sprintf("%.1f%%", math.Abs(p))
+}
+
+// fmtLitres renders a litre magnitude with up to three decimals, trimming
+// trailing zeros (e.g. 400 → "400", 23.5 → "23.5"). Used for insight prose; the
+// displayed report figures themselves always come from the exact decimal strings.
+func fmtLitres(v float64) string {
+	s := strconv.FormatFloat(math.Abs(v), 'f', 3, 64)
+	s = strings.TrimRight(s, "0")
+	s = strings.TrimRight(s, ".")
+	if s == "" {
+		s = "0"
+	}
+	return s
+}
+
 // severityForDeltaPct grades a period-over-period swing: large moves warn.
 func severityForDeltaPct(p float64) Severity {
 	a := math.Abs(p)

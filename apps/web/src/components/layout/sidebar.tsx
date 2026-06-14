@@ -62,9 +62,10 @@ interface NavGroup {
 const REPORTS_TREE: { label: string; href: string }[] = [
   { label: 'Overview', href: '/reports' },
   { label: 'Executive', href: '/reports/executive' },
-  { label: 'Sales', href: '/reports/sales-summary' },
+  { label: 'Sales', href: '/reports/sales' },
   { label: 'Inventory', href: '/reports/inventory/reconciliation' },
   { label: 'Shifts', href: '/reports/station-close' },
+  { label: 'Delivery', href: '/reports/delivery' },
   { label: 'Cash', href: '/reports/cash-reconciliation' },
   { label: 'Finance', href: '/reports/profitability' },
   { label: 'Customer Credit', href: '/reports/customer-aging' },

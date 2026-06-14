@@ -70,6 +70,14 @@ export type { HeatmapProps, HeatmapRow, HeatmapCell, HeatmapTone } from './compo
 export { StatusBoard, statusToneColor } from './components/status-board';
 export type { StatusBoardProps, StatusBoardItem, StatusTone } from './components/status-board';
 
+export { SupplierScorecard } from './components/supplier-scorecard';
+export type {
+  SupplierScorecardProps,
+  SupplierScorecardItem,
+  ScorecardDimension,
+  ScorecardTone,
+} from './components/supplier-scorecard';
+
 export { ShiftTimeline } from './components/shift-timeline';
 export type {
   ShiftTimelineProps,
@@ -161,6 +169,7 @@ export {
   LineChart,
   AreaChart,
   BarChart,
+  StackedBarChart,
   CategoricalBarChart,
   Sparkline,
   DonutChart,
