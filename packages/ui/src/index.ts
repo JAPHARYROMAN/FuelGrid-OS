@@ -70,6 +70,13 @@ export type { HeatmapProps, HeatmapRow, HeatmapCell, HeatmapTone } from './compo
 export { StatusBoard, statusToneColor } from './components/status-board';
 export type { StatusBoardProps, StatusBoardItem, StatusTone } from './components/status-board';
 
+export { CreditLimitMeter, creditMeterTone } from './components/credit-limit-meter';
+export type {
+  CreditLimitMeterProps,
+  CreditLimitMeterItem,
+  CreditMeterTone,
+} from './components/credit-limit-meter';
+
 export { SupplierScorecard } from './components/supplier-scorecard';
 export type {
   SupplierScorecardProps,

@@ -301,6 +301,144 @@ func CustomerAging(in CustomerAgingInput) Report {
 	return rep
 }
 
+// ---- Customer Credit (blueprint §5.9) ----
+
+// CustomerCreditInput is the already-computed, tenant-wide aging + credit slice
+// for the Customer Credit report. Every money figure is an exact decimal string
+// (summed in SQL ::numeric); the heuristics below parse to float64 for DISPLAY
+// math (shares, ratios) only — no money is recomputed. The bucket figures are the
+// tenant-wide aging rollup; the counts drive the KPI hero.
+type CustomerCreditInput struct {
+	Outstanding string // total outstanding receivable
+	Overdue     string // outstanding past due (sum of the 1-30..90+ buckets)
+	Days61To90  string // 61-90 days past due
+	Days90Plus  string // 90+ days past due
+	TopName     string // largest-balance customer
+	TopBalance  string // their outstanding balance
+
+	CustomersWithBalance int
+	CustomersOverLimit   int
+	CustomersOnHold      int
+
+	// Data-quality signals.
+	InvoicesWithoutDueDate int
+	UnallocatedPayments    int
+
+	ExposureShown bool // CREDIT EXPOSURE figures are gated; note when hidden
+}
+
+// CustomerCredit builds the §5.9 Customer Credit annotations from the aging
+// buckets + credit standing: it summarizes the receivable population, escalates
+// on the overdue share (warning, critical when >= 50% of outstanding is overdue),
+// flags severely-aged balances (61-90 / 90+), names a concentrated single
+// customer, warns on over-limit / on-hold customers, and raises honest
+// data-quality notes for invoices missing a due date, unallocated payments, and a
+// gated credit-exposure view. Every rule is a transparent threshold — no engine.
+func CustomerCredit(in CustomerCreditInput) Report {
+	var rep Report
+
+	outstanding, okOut := parseDec(in.Outstanding)
+	if in.CustomersWithBalance == 0 || !okOut || outstanding <= 0 {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "No credit customer carries an outstanding receivable balance for this period.",
+		})
+		appendCreditDataQuality(&rep, in)
+		return rep
+	}
+
+	rep.Insights = append(rep.Insights, Insight{
+		Severity: SeverityInfo,
+		Message:  fmt.Sprintf("%d customer(s) carry an outstanding receivable balance.", in.CustomersWithBalance),
+	})
+
+	if overdue, ok := parseDec(in.Overdue); ok && overdue > 0 {
+		sev := SeverityWarning
+		share := overdue / outstanding * 100
+		if share >= 50 {
+			sev = SeverityCritical
+		}
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          sev,
+			Message:           fmt.Sprintf("%s of receivables is overdue (%.0f%% of outstanding).", in.Overdue, share),
+			RecommendedAction: "Chase the overdue balances and review the affected customers' credit standing.",
+		})
+	}
+
+	// Severely aged debt (61-90 + 90+) is the genuine collection risk.
+	d6190, _ := parseDec(in.Days61To90)
+	d90, ok90 := parseDec(in.Days90Plus)
+	if ok90 && (d90 > 0 || d6190 > 0) {
+		if d90 > 0 {
+			rep.Insights = append(rep.Insights, Insight{
+				Severity:          SeverityCritical,
+				Message:           fmt.Sprintf("%s is 90+ days overdue — at material risk of becoming a bad debt.", in.Days90Plus),
+				RecommendedAction: "Escalate the 90+ bucket to formal collection or provision for the loss.",
+			})
+		} else {
+			rep.Insights = append(rep.Insights, Insight{
+				Severity: SeverityWarning,
+				Message:  fmt.Sprintf("%s has aged into the 61-90 day bucket.", in.Days61To90),
+			})
+		}
+	}
+
+	if top, ok := parseDec(in.TopBalance); ok && top > 0 && in.CustomersWithBalance > 1 {
+		if share := top / outstanding * 100; share >= 50 {
+			rep.Insights = append(rep.Insights, Insight{
+				Severity: SeverityWarning,
+				Message: fmt.Sprintf(
+					"%s alone holds %.0f%% of total receivables — concentrated credit risk.",
+					in.TopName, share),
+				RecommendedAction: "Review the customer's credit limit and chase the overdue balance.",
+			})
+		}
+	}
+
+	if in.CustomersOverLimit > 0 {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity:          SeverityWarning,
+			Message:           fmt.Sprintf("%d customer(s) are over their credit limit.", in.CustomersOverLimit),
+			RecommendedAction: "Pause further credit sales for over-limit customers until they pay down.",
+		})
+	}
+	if in.CustomersOnHold > 0 {
+		rep.Insights = append(rep.Insights, Insight{
+			Severity: SeverityInfo,
+			Message:  fmt.Sprintf("%d customer(s) are on credit hold.", in.CustomersOnHold),
+		})
+	}
+
+	appendCreditDataQuality(&rep, in)
+	return rep
+}
+
+// appendCreditDataQuality adds the honest data-quality notes shared by both the
+// empty and the populated Customer Credit report: invoices without a due date
+// (which fall into Current and may understate the overdue buckets), posted
+// payments not yet allocated (which may overstate outstanding), and a gated
+// credit-exposure view (figures omitted, not zeroed).
+func appendCreditDataQuality(rep *Report, in CustomerCreditInput) {
+	if in.InvoicesWithoutDueDate > 0 {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: fmt.Sprintf(
+				"%d invoice(s) have no due date — they are counted as Current, so the overdue buckets may understate.",
+				in.InvoicesWithoutDueDate),
+		})
+	}
+	if in.UnallocatedPayments > 0 {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: fmt.Sprintf(
+				"%d posted payment(s) are not fully allocated to invoices — outstanding balances may overstate until they are applied.",
+				in.UnallocatedPayments),
+		})
+	}
+	if !in.ExposureShown {
+		rep.DataQuality = append(rep.DataQuality, DataQualityWarning{
+			Message: "Credit exposure, limit and utilization are hidden — they require the customer credit permission.",
+		})
+	}
+}
+
 // ---- Profitability (Feature 10.4) ----
 
 // ProfitabilityInput is a station's already-computed P&L slice over a window.

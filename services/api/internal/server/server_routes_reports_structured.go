@@ -54,6 +54,16 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("station.read")).
 		Get("/reports/delivery", s.handleDeliveryReport)
 
+	// Customer Credit (§5.9) — tenant-wide receivables aging into Current /
+	// 1-30 / 31-60 / 61-90 / 90+ buckets, credit-limit utilization, top-overdue
+	// ranking, risk badges and a per-customer drilldown. Gated by customer.read
+	// (the receivables permission); CREDIT EXPOSURE figures are gated in-handler
+	// by customer_credit.read.
+	r.With(s.requirePermissionHeld("customer.read")).
+		Get("/reports/customer-credit", s.handleCustomerCreditReport)
+	r.With(s.requirePermissionHeld("customer.read")).
+		Get("/reports/customer-credit/drilldown", s.handleCustomerCreditDrilldown)
+
 	// Profitability P&L (station-scoped via ?station_id; Feature 10.4).
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/profitability", s.handleProfitabilityReport)
