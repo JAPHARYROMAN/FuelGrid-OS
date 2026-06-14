@@ -3461,6 +3461,26 @@ export class Client {
   }
 
   /**
+   * Fetch the Finance P&L report (§5.8) for a station over a period as a
+   * structured {@link ReportEnvelope}: a revenue / gross-margin / net-margin /
+   * expenses / cash-position KPI hero, the P&L waterfall (revenue → COGS → gross
+   * margin → expenses → net operating result), a per-product breakdown,
+   * settlement / accounting-period status chips and the embedded finance
+   * statements. Station-scoped (gated by finance.read); COGS and margin are
+   * margin.view-gated and OMITTED for non-holders. `period` selects the window.
+   */
+  getFinanceReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/finance${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
    * Fetch the credit & cashflow report for a station as a structured
    * {@link ReportEnvelope}: sales by tender, collections, outstanding + overdue
    * receivables, supplier payments, cash variance and the projected cash

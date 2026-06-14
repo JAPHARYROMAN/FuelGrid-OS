@@ -71,6 +71,7 @@ const ROUTES_WITH_PAGE = new Set<string>([
   '/reports/delivery',
   '/reports/cash-reconciliation',
   '/reports/credit-cashflow',
+  '/reports/finance',
   '/reports/profitability',
   '/reports/customer-credit',
   '/reports/customer-aging',

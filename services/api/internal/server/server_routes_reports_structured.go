@@ -68,6 +68,14 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/profitability", s.handleProfitabilityReport)
 
+	// Finance P&L (§5.8) — station-scoped via ?station_id: a revenue → COGS →
+	// gross margin → expenses → net operating result P&L waterfall, period
+	// comparison, cash position, per-product breakdown, settlement/period status
+	// chips and the embedded finance statements. Gated by finance.read; COGS /
+	// margin are margin.view-gated in-handler.
+	r.With(s.requirePermissionHeld("finance.read")).
+		Get("/reports/finance", s.handleFinanceReport)
+
 	// Credit & cashflow (station-scoped via ?station_id; Feature 10.5).
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/credit-cashflow", s.handleCreditCashflowReport)

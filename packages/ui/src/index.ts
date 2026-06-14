@@ -64,6 +64,13 @@ export type { RiskAlertCardProps } from './components/risk-alert-card';
 export { ReconciliationWaterfall } from './components/reconciliation-waterfall';
 export type { ReconciliationWaterfallProps } from './components/reconciliation-waterfall';
 
+export { FinancialWaterfall } from './components/financial-waterfall';
+export type {
+  FinancialWaterfallProps,
+  FinancialWaterfallStep,
+  WaterfallStepKind,
+} from './components/financial-waterfall';
+
 export { Heatmap, heatmapToneColor } from './components/heatmap';
 export type { HeatmapProps, HeatmapRow, HeatmapCell, HeatmapTone } from './components/heatmap';
 

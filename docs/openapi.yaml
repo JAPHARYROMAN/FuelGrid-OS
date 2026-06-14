@@ -2577,6 +2577,25 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/finance:
+    get:
+      tags: [Reports]
+      summary: Structured Finance P&L report (revenue → COGS → gross margin → expenses → net operating result waterfall, period comparison, cash position, settlement status, embedded financial statements) as a drillable envelope
+      description: >-
+        Station-scoped via station_id. Gated by finance.read; an out-of-scope
+        station 403s, a cross-tenant one 404s. Reuses the same SQL ::numeric
+        Profitability + Cashflow figures (no money is recomputed in Go). COGS,
+        gross margin and net margin are sensitive and are omitted unless the
+        actor holds margin.view at the station (cost_shown:false). period selects
+        the date window (this-month default).
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/reports/credit-cashflow:
     get:
       tags: [Reports]
