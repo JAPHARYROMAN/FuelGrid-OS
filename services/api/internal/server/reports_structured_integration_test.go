@@ -567,6 +567,205 @@ func TestReportsRiskLoss_EnvelopeAndPatterns(t *testing.T) {
 	}
 }
 
+// grantFinanceOnlyRole creates (idempotently) a tenant-scoped custom role that
+// holds ONLY finance.read — no margin.view — and assigns it to the user. Used to
+// seed a finance-reader who must not see the sensitive margin / loss-value
+// figures (every system role with finance.read also carries margin.view).
+func grantFinanceOnlyRole(t *testing.T, ctx context.Context, h *harness, userID uuid.UUID) {
+	t.Helper()
+	var roleID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO roles (tenant_id, code, name, is_system)
+		VALUES ($1, 'finance_read_only', 'Finance Read Only', false)
+		ON CONFLICT (tenant_id, code) DO UPDATE SET name = EXCLUDED.name
+		RETURNING id`, h.ids.tenantID).Scan(&roleID); err != nil {
+		t.Fatalf("seed finance-only role: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO role_permissions (role_id, permission_id)
+		SELECT $1, p.id FROM permissions p WHERE p.code = 'finance.read'
+		ON CONFLICT DO NOTHING`, roleID); err != nil {
+		t.Fatalf("grant finance.read to custom role: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_roles (user_id, role_id, tenant_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+		userID, roleID, h.ids.tenantID); err != nil {
+		t.Fatalf("assign finance-only role: %v", err)
+	}
+}
+
+// TestReportsExecutive_RollupScopeAndGating asserts the §5.1 / §20.1 Executive
+// cockpit: the envelope shape with the KPI hero + the deterministic management
+// narrative; that MARGIN and LOSS VALUE are gated (a supervisor without
+// margin.view sees neither, an admin sees both); and — CRITICALLY — that the
+// rollup aggregates ONLY the actor's permitted station scope, so cross-scope
+// leakage is impossible (a supervisor scoped to station1 must NEVER see station2
+// in the rollup, even though station2 has activity).
+func TestReportsExecutive_RollupScopeAndGating(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	adminID := adminUserID(t, ctx, h.pool, h.ids.tenantID)
+
+	// Activity on BOTH stations: station1 sells more (net 1000) than station2
+	// (net 500), so a whole-tenant rollup sees a total revenue of 1500 across 2
+	// stations, while a station1-scoped actor sees 1000 across 1 station.
+	seedProfitSale(t, ctx, h.pool, h.ids.tenantID, h.ids.station1, h.ids.tankPMS, h.ids.pmsProduct, adminID,
+		"1180", "180", "1000", "700", "400.000")
+	seedProfitSale(t, ctx, h.pool, h.ids.tenantID, h.ids.station2, h.ids.tankMSA, h.ids.pmsProduct, adminID,
+		"590", "90", "500", "300", "200.000")
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+
+	// (1) Admin (tenant-wide; holds finance.read + margin.view) gets the full
+	// rollup: the envelope, the KPI hero, the narrative, and the gated figures.
+	code, body := h.getJSON(t, "/api/v1/reports/executive?period=this-month", admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin executive report = %d, want 200 (%v)", code, body)
+	}
+	meta, _ := body["metadata"].(map[string]any)
+	if meta == nil || meta["report_key"] != "executive" {
+		t.Fatalf("metadata.report_key = %v, want executive", body["metadata"])
+	}
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table", "chart_data"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section", key)
+		}
+	}
+	// KPI hero: total revenue is the SCOPE-WIDE sum (1000 + 500 = 1500), litres
+	// (400 + 200 = 600), and 2 stations in scope — the figures are aggregated from
+	// the same station-comparison decimal strings, never recomputed.
+	if v := summaryValue(body, "Total revenue"); v != "1500.00" {
+		t.Fatalf("admin Total revenue = %q, want 1500.00 (scope-wide sum)", v)
+	}
+	if v := summaryValue(body, "Total litres"); v != "600.000" {
+		t.Fatalf("admin Total litres = %q, want 600.000", v)
+	}
+	if v := summaryValue(body, "Stations in scope"); v != "2" {
+		t.Fatalf("admin Stations in scope = %q, want 2", v)
+	}
+	// Admin holds margin.view tenant-wide → the gross/net margin + loss value KPIs
+	// are present.
+	if v := summaryValue(body, "Gross margin"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Gross margin KPI")
+	}
+	if v := summaryValue(body, "Net margin"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Net margin KPI")
+	}
+	if v := summaryValue(body, "Loss value"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Loss value KPI")
+	}
+	// The chart payload carries the §5.1 management narrative + the cross-domain
+	// visuals; the narrative is deterministic prose traceable to the figures.
+	chart, _ := body["chart_data"].(map[string]any)
+	if chart == nil {
+		t.Fatalf("chart_data is not an object: %v", body["chart_data"])
+	}
+	for _, key := range []string{"narrative", "stations", "waterfall", "comparison", "loss_summary", "margin_shown"} {
+		if _, present := chart[key]; !present {
+			t.Fatalf("chart_data missing %q section", key)
+		}
+	}
+	narr, _ := chart["narrative"].(map[string]any)
+	sentences, _ := narr["sentences"].([]any)
+	if len(sentences) == 0 {
+		t.Fatalf("the management narrative must have at least one sentence")
+	}
+	var narrativeText string
+	for _, sNode := range sentences {
+		if str, ok := sNode.(string); ok {
+			narrativeText += str + " "
+		}
+	}
+	if !strings.Contains(narrativeText, "across 2 stations") {
+		t.Fatalf("admin narrative should mention 2 stations in scope, got: %s", narrativeText)
+	}
+	// margin_shown true for the admin: the P&L waterfall is populated.
+	if shown, _ := chart["margin_shown"].(bool); !shown {
+		t.Fatalf("margin_shown must be true for the admin (margin.view)")
+	}
+
+	// (2) Supervisor scoped to station1, holds finance.read but NOT margin.view —
+	// the rollup succeeds, but margin / loss value are OMITTED (not zeroed), and
+	// CRITICALLY the rollup only includes station1 (no cross-scope leakage).
+	supEmail := fmt.Sprintf("exec-sup-%d@it.local", time.Now().UnixNano())
+	hash, herr := password.New(password.DefaultParams, "").Hash(testPassword)
+	if herr != nil {
+		t.Fatalf("hash: %v", herr)
+	}
+	var supID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'Exec Supervisor', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, supEmail, hash).Scan(&supID); err != nil {
+		t.Fatalf("seed supervisor: %v", err)
+	}
+	// Grant a tenant-scoped custom role holding ONLY finance.read (no margin.view),
+	// scoped to station1, so the actor is station-restricted (not tenant-wide),
+	// passes the finance.read held-anywhere gate, but must NOT see margin / loss
+	// value — the exact actor the gating + leakage assertions require. (Every
+	// system role that holds finance.read also holds margin.view, so a custom role
+	// is the only way to seed a finance-reader without margin sight.)
+	grantFinanceOnlyRole(t, ctx, h, supID)
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`,
+		supID, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("seed supervisor station access: %v", err)
+	}
+	sup := h.login(t, tenantSlug, supEmail)
+
+	code, supBody := h.getJSON(t, "/api/v1/reports/executive?period=this-month", sup)
+	if code != http.StatusOK {
+		t.Fatalf("scoped executive report = %d, want 200 (%v)", code, supBody)
+	}
+	// LEAKAGE GUARD: the scoped actor's rollup must include EXACTLY their one
+	// station — total revenue 1000 (station1 only), 1 station in scope, never the
+	// 1500/2-station whole-tenant view. This proves station2's figures cannot leak
+	// into a station1-scoped manager's aggregate.
+	if v := summaryValue(supBody, "Total revenue"); v != "1000.00" {
+		t.Fatalf("scoped Total revenue = %q, want 1000.00 (station1 only — station2 must NOT leak)", v)
+	}
+	if v := summaryValue(supBody, "Stations in scope"); v != "1" {
+		t.Fatalf("scoped Stations in scope = %q, want 1 (own station only)", v)
+	}
+	// And the per-station table must contain ONLY station1's row, never station2.
+	tbl, _ := supBody["table"].(map[string]any)
+	rows, _ := tbl["rows"].([]any)
+	for _, rNode := range rows {
+		row, _ := rNode.([]any)
+		if len(row) > 0 {
+			if station, _ := row[0].(string); station == "MSA-01" || station == "MSA" {
+				t.Fatalf("LEAKAGE: scoped rollup table contains the out-of-scope station2 row: %v", rows)
+			}
+		}
+	}
+	// Margin gating: the supervisor (no margin.view) must NOT see margin or loss
+	// value, and a data-quality note must explain each omission (omit, never zero).
+	if v := summaryValue(supBody, "Gross margin"); v != "" {
+		t.Fatalf("scoped actor without margin.view must NOT see Gross margin, got %q", v)
+	}
+	if v := summaryValue(supBody, "Loss value"); v != "" {
+		t.Fatalf("scoped actor without margin.view must NOT see Loss value, got %q", v)
+	}
+	if !dataQualityContains(supBody, "margin.view") {
+		t.Fatalf("expected a data-quality note explaining the hidden margin")
+	}
+	if !dataQualityContains(supBody, "limited to the stations you have access to") {
+		t.Fatalf("a scoped cockpit must carry the scoped-view data-quality note")
+	}
+	supChart, _ := supBody["chart_data"].(map[string]any)
+	if shown, _ := supChart["margin_shown"].(bool); shown {
+		t.Fatalf("margin_shown must be false for the scoped non-margin actor")
+	}
+
+	// (3) Permission gate: a freshly-created attendant holds no finance.read → 403.
+	att := freshAttendant(t, ctx, h, tenantSlug)
+	if code, _ := h.getJSON(t, "/api/v1/reports/executive", att); code != http.StatusForbidden {
+		t.Fatalf("attendant executive report = %d, want 403 (no finance.read)", code)
+	}
+}
+
 // dataQualityContains reports whether any data_quality message contains substr.
 func dataQualityContains(m map[string]any, substr string) bool {
 	arr, ok := m["data_quality"].([]any)

@@ -97,6 +97,20 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("revenue.read")).
 		Get("/reports/station-comparison", s.handleStationComparisonReport)
 
+	// Executive Business Report (§5.1 / §20.1) — the cross-domain leadership
+	// cockpit that CONSOLIDATES the per-domain reports into one drillable view: a
+	// company-wide (or scope-wide) revenue / litres / margin (gated) / loss (value
+	// gated) / cash / credit (gated) / risk / approvals KPI hero, the
+	// DETERMINISTIC §5.1 automated management narrative (period-over-period prose,
+	// every sentence traceable to a computed figure — no AI), and the reusable
+	// visuals (revenue+volume ranking, P&L waterfall, period-comparison cards,
+	// loss summary). Tenant-wide gate (finance.read held anywhere); the ROLLUP is
+	// restricted to the actor's accessible stations (stationScope) so cross-scope
+	// leakage is impossible. Margin / loss value / credit exposure are gated and
+	// OMITTED for non-holders.
+	r.With(s.requirePermissionHeld("finance.read")).
+		Get("/reports/executive", s.handleExecutiveReport)
+
 	// Attendance dataset (station-scoped via ?station_id + ?from/?to window;
 	// Mobile Attendant Phase 7): roster vs check-in/out with late / no-show
 	// derivation. Rides station.read, the operations-domain read permission.

@@ -3584,6 +3584,33 @@ export class Client {
   }
 
   /**
+   * Fetch the §5.1 / §20.1 Executive Business Report — the cross-domain
+   * leadership cockpit that CONSOLIDATES the per-domain reports into one
+   * company-wide (or scope-wide) rollup. Returns a structured
+   * {@link ReportEnvelope}: a revenue / litres / margin (gated) / loss (value
+   * gated) / cash / stockout / risk / approvals / credit (gated) KPI hero; the
+   * DETERMINISTIC §5.1 automated management narrative (period-over-period prose,
+   * every sentence traceable to a computed figure — no AI); and the reusable
+   * visuals (per-station ranking, P&L waterfall, period-comparison cards, loss
+   * summary). REUSES the existing report figures (the same repos, decimal
+   * strings aggregated — money is never recomputed). TENANT-WIDE gate
+   * (finance.read held anywhere); the ROLLUP is restricted server-side to the
+   * actor's accessible stations, so a regional manager sees only their region
+   * (cross-scope leakage is impossible). MARGIN, LOSS VALUE and CREDIT EXPOSURE
+   * are omitted (not zeroed) for non-holders (margin.view / customer_credit.read).
+   * `chart_data` carries `{narrative, stations, waterfall, comparison,
+   * loss_summary, margin_shown}`.
+   */
+  getExecutiveReport(opts?: { period?: string }, signal?: AbortSignal): Promise<ReportEnvelope> {
+    const qs = new URLSearchParams();
+    if (opts?.period) qs.set('period', opts.period);
+    const q = qs.toString();
+    return this.request<ReportEnvelope>(`/api/v1/reports/executive${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  /**
    * Fetch the Customer Credit report (§5.9) as a structured {@link ReportEnvelope}:
    * the receivable / overdue / %-overdue / over-limit / on-hold KPI hero, the
    * Current / 1-30 / 31-60 / 61-90 / 90+ aging buckets, per-customer aging rows

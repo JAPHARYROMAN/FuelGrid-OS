@@ -2673,6 +2673,29 @@ paths:
         '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/executive:
+    get:
+      tags: [Reports]
+      summary: Executive Business Report (§5.1/§20.1) — the cross-domain leadership cockpit as a drillable envelope
+      description: >-
+        Consolidates the per-domain reports into one company-wide (or scope-wide)
+        rollup: a revenue / litres / margin (gated) / loss (value gated) / cash /
+        credit (gated) / stockout / risk / approvals KPI hero, the DETERMINISTIC
+        §5.1 automated management narrative (period-over-period prose — no AI,
+        every sentence traceable to a computed figure), and the reusable visuals
+        (per-station ranking, P&L waterfall, period-comparison cards, loss
+        summary) in chart_data. REUSES the existing report figures (it calls the
+        same repos and aggregates their decimal strings; no money is recomputed).
+        Gated by finance.read held anywhere; the ROLLUP is restricted to the
+        actor's accessible stations so cross-scope leakage is impossible. MARGIN,
+        LOSS VALUE and CREDIT EXPOSURE are sensitive — omitted (not zeroed) for
+        non-holders (margin.view / customer_credit.read) with a data-quality note.
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/reports/export:
     post:
       tags: [Reports]
