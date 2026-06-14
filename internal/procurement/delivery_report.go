@@ -48,10 +48,15 @@ func (r *Repo) DeliveryTotals(ctx context.Context, tenantID, stationID uuid.UUID
 	// legacy rows, so COALESCE to 0.
 	costSelect := "'' AS fuel_cost, '' AS avg_cost"
 	if withCost {
+		// Avg cost / litre is a weighted mean over COSTED deliveries only: a legacy
+		// row with a NULL landed_cost_total contributes neither cost (numerator) nor
+		// litres (denominator), so uncosted volume can't dilute the figure. The fuel
+		// cost KPI still sums every priced row (NULLs coalesce to 0, i.e. add nothing).
 		costSelect = `
 			COALESCE(SUM(d.landed_cost_total), 0)::text AS fuel_cost,
-			CASE WHEN COALESCE(SUM(d.volume_litres), 0) > 0
-			     THEN (COALESCE(SUM(d.landed_cost_total), 0) / SUM(d.volume_litres))::numeric(14,4)::text
+			CASE WHEN COALESCE(SUM(d.volume_litres) FILTER (WHERE d.landed_cost_total IS NOT NULL), 0) > 0
+			     THEN (SUM(d.landed_cost_total) FILTER (WHERE d.landed_cost_total IS NOT NULL)
+			           / SUM(d.volume_litres) FILTER (WHERE d.landed_cost_total IS NOT NULL))::numeric(14,4)::text
 			     ELSE '0' END AS avg_cost`
 	}
 	err := r.pool.QueryRow(ctx, `

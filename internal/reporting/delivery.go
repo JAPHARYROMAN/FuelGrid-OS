@@ -45,10 +45,15 @@ func Delivery(in DeliveryInput) Report {
 	ordered, okOrd := parseDec(in.OrderedLitres)
 	received, okRec := parseDec(in.ReceivedLitres)
 	if okOrd && okRec && ordered > 0 {
+		// Ordered and received are PERIOD aggregates windowed on their own anchors
+		// (ordered on the PO date, received on the delivery date); the variance is a
+		// period order-vs-arrival position, not a per-PO fulfilment rate, so the
+		// wording below stays at "this period" and reports magnitudes as positive
+		// quantities (no doubled-negative from a signed variance string).
 		shortfall := ordered - received
 		if shortfall > 0 {
-			// Fulfilment shortfall: received less than ordered. Grade by share of
-			// the order missing (>=5% warns) — a procurement reliability signal.
+			// Net shortfall this period: less arrived than was ordered. Grade by the
+			// missing share of the order (>=5% warns) — a procurement reliability signal.
 			pct := shortfall / ordered * 100
 			sev := SeverityInfo
 			if pct >= 5 {
@@ -57,16 +62,17 @@ func Delivery(in DeliveryInput) Report {
 			rep.Insights = append(rep.Insights, Insight{
 				Severity: sev,
 				Message: fmt.Sprintf(
-					"Received %s less than ordered (%s of the order short).",
-					in.VarianceLitres, fmtPct(-pct)),
+					"Received %s L less than ordered this period (%s of the ordered volume).",
+					fmtLitres(shortfall), fmtPctMagnitude(pct)),
 				RecommendedAction: "Reconcile short deliveries with the supplier and confirm the goods-receipt dips before approving invoices.",
 			})
 		} else if received-ordered > ordered*0.02 {
-			// Over-delivery beyond 2% — also worth a flag (over-billing risk).
-			pct := (received - ordered) / ordered * 100
+			// Net over-delivery beyond 2% this period — also worth a flag (over-billing risk).
+			overage := received - ordered
+			pct := overage / ordered * 100
 			rep.Insights = append(rep.Insights, Insight{
 				Severity: SeverityInfo,
-				Message:  fmt.Sprintf("Received %s more than ordered (%s over).", in.VarianceLitres, fmtPct(pct)),
+				Message:  fmt.Sprintf("Received %s L more than ordered this period (%s of the ordered volume).", fmtLitres(overage), fmtPctMagnitude(pct)),
 			})
 		}
 	}

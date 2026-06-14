@@ -198,9 +198,10 @@ describe('DeliveryReportPage', () => {
     getDeliveryReport.mockResolvedValue(envelope);
     renderPage();
 
-    // KPI hero metrics.
-    expect(await screen.findByText('Ordered')).toBeInTheDocument();
-    expect(screen.getByText('Received')).toBeInTheDocument();
+    // KPI hero metrics. "Ordered" / "Received" also appear as the comparison
+    // chart's legend labels, so they match more than once.
+    expect((await screen.findAllByText('Ordered')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Received').length).toBeGreaterThanOrEqual(1);
     // "Delivery variance" is both a KPI label and the variance card title.
     expect(screen.getAllByText('Delivery variance').length).toBeGreaterThanOrEqual(2);
     // Cost KPI surfaces when cost_shown.

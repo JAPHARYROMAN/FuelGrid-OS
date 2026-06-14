@@ -145,6 +145,61 @@ func TestReportsDelivery_HeroChartAndScorecard(t *testing.T) {
 	}
 }
 
+// TestReportsDelivery_AvgCostExcludesUncosted locks in the avg-cost/litre fix: a
+// legacy delivery with a NULL landed_cost_total must NOT dilute the weighted mean.
+// We seed one priced delivery (10,000 L @ 1,550,000 = 155/L) plus one un-priced
+// legacy delivery (10,000 L, NULL cost) and assert avg cost/litre stays at 155/L
+// (costed rows only), not 77.5/L (the diluted figure if uncosted litres counted).
+func TestReportsDelivery_AvgCostExcludesUncosted(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	adminID := adminUserID(t, ctx, h.pool, h.ids.tenantID)
+
+	var supplierID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO suppliers (tenant_id, code, name) VALUES ($1, 'DLV-SUP-AC', 'Costed Co') RETURNING id`,
+		h.ids.tenantID).Scan(&supplierID); err != nil {
+		t.Fatalf("seed supplier: %v", err)
+	}
+	// A priced delivery: 10,000 L at a landed cost of 1,550,000 (155/L exactly).
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO deliveries (
+			tenant_id, tank_id, supplier_id, volume_litres,
+			dip_before_litres, dip_after_litres, dip_variance_litres,
+			received_by, landed_cost_total, landed_cost_per_litre, match_status
+		) VALUES ($1, $2, $3, 10000, 1000, 11000, 0, $4, 1550000, 155.0000, 'matched')
+	`, h.ids.tenantID, h.ids.tankPMS, supplierID, adminID); err != nil {
+		t.Fatalf("seed priced delivery: %v", err)
+	}
+	// A legacy un-priced delivery: 10,000 L, NULL landed cost (NULL per-litre too).
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO deliveries (
+			tenant_id, tank_id, supplier_id, volume_litres,
+			dip_before_litres, dip_after_litres, dip_variance_litres,
+			received_by, landed_cost_total, landed_cost_per_litre, match_status
+		) VALUES ($1, $2, $3, 10000, 1000, 11000, 0, $4, NULL, NULL, 'unmatched')
+	`, h.ids.tenantID, h.ids.tankPMS, supplierID, adminID); err != nil {
+		t.Fatalf("seed legacy delivery: %v", err)
+	}
+
+	admin := h.login(t, tenantSlug, h.ids.adminEmail)
+	code, body := h.getJSON(t, "/api/v1/reports/delivery?station_id="+h.ids.station1.String()+"&period=this-month", admin)
+	if code != http.StatusOK {
+		t.Fatalf("delivery report = %d, want 200 (%v)", code, body)
+	}
+	// Avg cost / litre is the COSTED weighted mean (1,550,000 / 10,000 = 155),
+	// NOT diluted by the 10,000 un-priced litres (which would give 77.5).
+	if got := summaryValue(body, "Avg cost / litre"); !strings.HasPrefix(got, "155") {
+		t.Fatalf("avg cost / litre = %q, want ~155 (costed rows only, undiluted by NULL-cost legacy deliveries)", got)
+	}
+	// The fuel-cost KPI still sums every priced row (1,550,000).
+	if got := summaryValue(body, "Fuel cost"); !strings.HasPrefix(got, "1550000") {
+		t.Fatalf("fuel cost = %q, want 1550000 (sum of priced landed cost)", got)
+	}
+}
+
 func TestReportsDelivery_CostGatedAndPermission(t *testing.T) {
 	h, cleanup := setupHarness(t)
 	defer cleanup()

@@ -20,8 +20,17 @@ func TestDeliveryShortfallInsight(t *testing.T) {
 	if rep.Insights[0].Severity != SeverityWarning {
 		t.Fatalf("10%% short must warn, got %s", rep.Insights[0].Severity)
 	}
-	if !strings.Contains(rep.Insights[0].Message, "less than ordered") {
-		t.Fatalf("unexpected message: %q", rep.Insights[0].Message)
+	msg := rep.Insights[0].Message
+	if !strings.Contains(msg, "less than ordered") {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+	// The shortfall is rendered as a POSITIVE magnitude (litres + percent), never
+	// the doubled negative "-100 … -10.0%" that the raw signed variance produced.
+	if !strings.Contains(msg, "100 L") || strings.Contains(msg, "-100") {
+		t.Fatalf("shortfall litres must be the positive magnitude: %q", msg)
+	}
+	if !strings.Contains(msg, "10.0%") || strings.Contains(msg, "-10.0%") {
+		t.Fatalf("shortfall percent must be a positive magnitude: %q", msg)
 	}
 }
 

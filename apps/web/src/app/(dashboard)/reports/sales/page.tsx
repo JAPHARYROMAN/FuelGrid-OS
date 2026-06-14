@@ -92,10 +92,15 @@ const shortDate = (v: unknown) => {
  * payload is period-wide totals (not per-day), so we render a single stacked
  * column ("Period") per product when there is no per-day product split, which is
  * the honest shape the backend provides today. Each product keeps its own token
- * color (from the catalog) so the legend ties to the donut.
+ * color (from the catalog), and StackedBarChart renders a text+swatch legend
+ * (default on) so segment identity is never colour-alone.
  */
 function ProductMixStacked({ products }: { products: SalesDimRow[] }) {
-  if (products.length === 0) {
+  // Guard on the summed segment total (like the donut/heatmap), not just row
+  // count: products with all-zero revenue would otherwise render an empty,
+  // zero-height stacked column instead of an honest "no data" message.
+  const total = products.reduce((sum, p) => sum + num(p.net), 0);
+  if (products.length === 0 || total <= 0) {
     return (
       <EmptyState
         title="No product sales"
@@ -215,7 +220,7 @@ function DimensionTable({
                       {formatLitres(row.litres)}
                     </td>
                     <td className="px-4 py-2 text-right font-mono tabular-nums">
-                      {formatMoney(row.gross)}
+                      {formatMoney(row.gross || row.net)}
                     </td>
                     {marginShown ? (
                       <td className="px-4 py-2 text-right font-mono tabular-nums">
@@ -390,7 +395,7 @@ export default function SalesReportPage() {
                   {data.stations.length > 0 ? (
                     <DimensionTable
                       title="Station ranking"
-                      description="Recognized sales across every station you can read, for the period."
+                      description="Net recognized revenue (net of voids) across every station you can read, for the period."
                       rows={data.stations}
                       marginShown={marginShown}
                       emptyLabel="No station sales for this period yet."

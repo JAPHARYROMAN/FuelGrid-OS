@@ -104,6 +104,35 @@ describe('charts', () => {
     );
     expect(html).toContain('<div');
     expect(html).not.toContain('NaN');
+    // The legend (default on) names each segment as TEXT, so the stacked column's
+    // segment identity is never colour-alone (accessibility).
+    expect(html).toContain('Petrol');
+    expect(html).toContain('Diesel');
+  });
+
+  it('StackedBarChart can suppress the legend with legend={false}', () => {
+    const mix = [{ bucket: 'Period total', petrol: '4200000.00' }];
+    const mixSeries = [{ key: 'petrol', label: 'Petrol', color: chartColors.accent }];
+    const html = renderToStaticMarkup(
+      <StackedBarChart data={mix} xKey="bucket" series={mixSeries} legend={false} height={200} />,
+    );
+    // recharts renders the series name inside its (0-box) SVG, but the explicit
+    // legend swatch list is gone — no legend <li> text leaks at the wrapper level.
+    expect(html).not.toContain('rounded-sm');
+  });
+
+  it('BarChart renders a legend when legend is set', () => {
+    const grouped = [{ label: 'PMS', ordered: '24000', received: '23600' }];
+    const groupedSeries = [
+      { key: 'ordered', label: 'Ordered', color: chartColors.muted },
+      { key: 'received', label: 'Received', color: chartColors.accent },
+    ];
+    const html = renderToStaticMarkup(
+      <BarChart data={grouped} xKey="label" series={groupedSeries} legend height={200} />,
+    );
+    expect(html).toContain('Ordered');
+    expect(html).toContain('Received');
+    expect(html).toContain('rounded-sm');
   });
 
   it('coerces garbled/empty cell values to a finite 0 (no NaN) for geometry', () => {

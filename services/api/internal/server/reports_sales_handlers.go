@@ -171,9 +171,12 @@ func (s *Server) handleSalesReport(w http.ResponseWriter, r *http.Request) {
 					if label == "" {
 						label = c.StationName
 					}
+					// StationComparison only carries NET revenue (net of voids), so the
+					// ranking row leaves Gross empty rather than mislabelling net as
+					// gross — the page reads Net for the ranking "Revenue" column.
 					row := salesDimRow{
 						Key: c.StationID.String(), Label: label,
-						Litres: c.LitresSold, Gross: c.Revenue, Net: c.Revenue,
+						Litres: c.LitresSold, Net: c.Revenue,
 					}
 					if marginAllowed {
 						m := c.GrossMargin

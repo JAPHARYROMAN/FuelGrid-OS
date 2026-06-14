@@ -141,6 +141,37 @@ function renderTooltip(
   );
 }
 
+/**
+ * ChartLegend — a compact text+swatch legend mapping each series' color to its
+ * label, so a stacked/grouped chart never relies on colour alone for series
+ * identity (accessibility: WCAG "use of color"). `colorAt` resolves the same
+ * default a bar uses (explicit series color, else the categorical palette by
+ * index) so the swatch always matches the rendered bar.
+ */
+function ChartLegend({
+  series,
+  colorAt,
+}: {
+  series: ChartSeries[];
+  colorAt: (s: ChartSeries, i: number) => string;
+}) {
+  if (series.length === 0) return null;
+  return (
+    <ul className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+      {series.map((s, i) => (
+        <li key={s.key} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <span
+            aria-hidden
+            className="size-2.5 shrink-0 rounded-sm"
+            style={{ backgroundColor: colorAt(s, i) }}
+          />
+          <span className="truncate">{s.label}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** Multi-series line chart — trends over time. */
 export function LineChart<T extends Datum>({
   data,
@@ -264,73 +295,85 @@ export function BarChart<T extends Datum>({
   valueFormatter,
   height = 220,
   layout = 'horizontal',
+  legend = false,
   className,
 }: BaseChartProps<T> & {
   series: ChartSeries[];
   /** 'vertical' draws horizontal bars (good for long category labels). */
   layout?: 'horizontal' | 'vertical';
+  /** Render a text+swatch legend mapping each series' colour to its label. */
+  legend?: boolean;
 }) {
   const vertical = layout === 'vertical';
   return (
-    <div className={cn('w-full', className)} style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <RBarChart data={data} layout={layout} margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}>
-          <CartesianGrid stroke={chartColors.grid} vertical={vertical} horizontal={!vertical} />
-          {vertical ? (
-            <>
-              <XAxis
-                type="number"
-                tick={axisTick}
-                tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                type="category"
-                dataKey={xKey}
-                tick={axisTick}
-                tickFormatter={(v) => xFormatter(v)}
-                tickLine={false}
-                axisLine={{ stroke: chartColors.grid }}
-                width={120}
-              />
-            </>
-          ) : (
-            <>
-              <XAxis
-                dataKey={xKey}
-                tick={axisTick}
-                tickFormatter={(v) => xFormatter(v)}
-                tickLine={false}
-                axisLine={{ stroke: chartColors.grid }}
-                minTickGap={8}
-              />
-              <YAxis
-                tick={axisTick}
-                tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
-                tickLine={false}
-                axisLine={false}
-                width={56}
-              />
-            </>
-          )}
-          <Tooltip
-            cursor={{ fill: chartColors.grid, fillOpacity: 0.25 }}
-            content={renderTooltip(xFormatter, valueFormatter)}
-          />
-          {series.map((s) => (
-            <Bar
-              key={s.key}
-              dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
-              name={s.label}
-              fill={s.color ?? chartColors.accent}
-              radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}
-              isAnimationActive={false}
-              maxBarSize={48}
+    <div className={cn('w-full', className)}>
+      {legend ? (
+        <ChartLegend series={series} colorAt={(s) => s.color ?? chartColors.accent} />
+      ) : null}
+      <div style={{ height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <RBarChart
+            data={data}
+            layout={layout}
+            margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}
+          >
+            <CartesianGrid stroke={chartColors.grid} vertical={vertical} horizontal={!vertical} />
+            {vertical ? (
+              <>
+                <XAxis
+                  type="number"
+                  tick={axisTick}
+                  tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey={xKey}
+                  tick={axisTick}
+                  tickFormatter={(v) => xFormatter(v)}
+                  tickLine={false}
+                  axisLine={{ stroke: chartColors.grid }}
+                  width={120}
+                />
+              </>
+            ) : (
+              <>
+                <XAxis
+                  dataKey={xKey}
+                  tick={axisTick}
+                  tickFormatter={(v) => xFormatter(v)}
+                  tickLine={false}
+                  axisLine={{ stroke: chartColors.grid }}
+                  minTickGap={8}
+                />
+                <YAxis
+                  tick={axisTick}
+                  tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
+                  tickLine={false}
+                  axisLine={false}
+                  width={56}
+                />
+              </>
+            )}
+            <Tooltip
+              cursor={{ fill: chartColors.grid, fillOpacity: 0.25 }}
+              content={renderTooltip(xFormatter, valueFormatter)}
             />
-          ))}
-        </RBarChart>
-      </ResponsiveContainer>
+            {series.map((s) => (
+              <Bar
+                key={s.key}
+                dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
+                name={s.label}
+                fill={s.color ?? chartColors.accent}
+                radius={vertical ? [0, 4, 4, 0] : [4, 4, 0, 0]}
+                isAnimationActive={false}
+                maxBarSize={48}
+              />
+            ))}
+          </RBarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
@@ -355,73 +398,95 @@ export function StackedBarChart<T extends Datum>({
   valueFormatter,
   height = 220,
   layout = 'horizontal',
+  legend = true,
   className,
 }: BaseChartProps<T> & {
   series: ChartSeries[];
   /** 'vertical' draws horizontal stacked bars (good for long category labels). */
   layout?: 'horizontal' | 'vertical';
+  /**
+   * Render a text+swatch legend mapping each stacked segment's colour to its
+   * label. Defaults to TRUE — a stacked column's segments share one category, so
+   * without a legend the only way to tell segments apart is colour (fails WCAG
+   * "use of color"). Resolves the same palette default each segment uses.
+   */
+  legend?: boolean;
 }) {
   const vertical = layout === 'vertical';
   return (
-    <div className={cn('w-full', className)} style={{ height }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <RBarChart data={data} layout={layout} margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}>
-          <CartesianGrid stroke={chartColors.grid} vertical={vertical} horizontal={!vertical} />
-          {vertical ? (
-            <>
-              <XAxis
-                type="number"
-                tick={axisTick}
-                tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                type="category"
-                dataKey={xKey}
-                tick={axisTick}
-                tickFormatter={(v) => xFormatter(v)}
-                tickLine={false}
-                axisLine={{ stroke: chartColors.grid }}
-                width={120}
-              />
-            </>
-          ) : (
-            <>
-              <XAxis
-                dataKey={xKey}
-                tick={axisTick}
-                tickFormatter={(v) => xFormatter(v)}
-                tickLine={false}
-                axisLine={{ stroke: chartColors.grid }}
-                minTickGap={8}
-              />
-              <YAxis
-                tick={axisTick}
-                tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
-                tickLine={false}
-                axisLine={false}
-                width={56}
-              />
-            </>
-          )}
-          <Tooltip
-            cursor={{ fill: chartColors.grid, fillOpacity: 0.25 }}
-            content={renderTooltip(xFormatter, valueFormatter)}
-          />
-          {series.map((s, i) => (
-            <Bar
-              key={s.key}
-              dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
-              name={s.label}
-              stackId="stack"
-              fill={s.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length]}
-              isAnimationActive={false}
-              maxBarSize={64}
+    <div className={cn('w-full', className)}>
+      {legend ? (
+        <ChartLegend
+          series={series}
+          colorAt={(s, i) =>
+            s.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length] ?? chartColors.accent
+          }
+        />
+      ) : null}
+      <div style={{ height }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <RBarChart
+            data={data}
+            layout={layout}
+            margin={vertical ? { ...MARGIN, left: 8 } : MARGIN}
+          >
+            <CartesianGrid stroke={chartColors.grid} vertical={vertical} horizontal={!vertical} />
+            {vertical ? (
+              <>
+                <XAxis
+                  type="number"
+                  tick={axisTick}
+                  tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <YAxis
+                  type="category"
+                  dataKey={xKey}
+                  tick={axisTick}
+                  tickFormatter={(v) => xFormatter(v)}
+                  tickLine={false}
+                  axisLine={{ stroke: chartColors.grid }}
+                  width={120}
+                />
+              </>
+            ) : (
+              <>
+                <XAxis
+                  dataKey={xKey}
+                  tick={axisTick}
+                  tickFormatter={(v) => xFormatter(v)}
+                  tickLine={false}
+                  axisLine={{ stroke: chartColors.grid }}
+                  minTickGap={8}
+                />
+                <YAxis
+                  tick={axisTick}
+                  tickFormatter={valueFormatter ? (v) => valueFormatter(v) : undefined}
+                  tickLine={false}
+                  axisLine={false}
+                  width={56}
+                />
+              </>
+            )}
+            <Tooltip
+              cursor={{ fill: chartColors.grid, fillOpacity: 0.25 }}
+              content={renderTooltip(xFormatter, valueFormatter)}
             />
-          ))}
-        </RBarChart>
-      </ResponsiveContainer>
+            {series.map((s, i) => (
+              <Bar
+                key={s.key}
+                dataKey={(row) => toNumber((row as Record<string, unknown>)[s.key])}
+                name={s.label}
+                stackId="stack"
+                fill={s.color ?? DONUT_PALETTE[i % DONUT_PALETTE.length]}
+                isAnimationActive={false}
+                maxBarSize={64}
+              />
+            ))}
+          </RBarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

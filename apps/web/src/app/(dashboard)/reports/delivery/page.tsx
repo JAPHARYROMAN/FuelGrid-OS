@@ -124,11 +124,14 @@ function OrderedLoadedReceived({ rows }: { rows: DeliveryComparisonRow[] }) {
       xKey="label"
       series={[
         { key: 'ordered', label: 'Ordered', color: chartColors.muted },
-        { key: 'loaded', label: 'Loaded', color: chartColors.accentMuted },
+        // A distinct mid-tone (success) for the middle leg — accentMuted is ~96%
+        // lightness in light mode and reads as empty space on a white card.
+        { key: 'loaded', label: 'Loaded', color: chartColors.success },
         { key: 'received', label: 'Received', color: chartColors.accent },
       ]}
       valueFormatter={(v) => formatLitres(v as string)}
       height={280}
+      legend
     />
   );
 }
