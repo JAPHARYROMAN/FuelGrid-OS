@@ -40,6 +40,18 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("reconciliation.read")).
 		Get("/reports/fuel-loss", s.handleFuelLossReport)
 
+	// Risk & Loss intelligence (§5.11 / §20.4) — the signature loss report:
+	// loss litres + value (value gated by margin.view), variance %, open
+	// alerts/investigations, repeated incidents and highest-risk station KPIs; the
+	// DETERMINISTIC §5.11 pattern intelligence (variance events by
+	// station/product/pump/shift/attendant → "% of related events" findings); a
+	// risk heatmap, loss trend, station ranking, root-cause donut, alert-severity
+	// board and investigation timeline; and a read-only risk-rules tuning context.
+	// Station-scoped via ?station_id, gated by reconciliation.read; the loss VALUE
+	// is margin.view-gated in-handler and OMITTED for non-holders.
+	r.With(s.requirePermissionHeld("reconciliation.read")).
+		Get("/reports/risk-loss", s.handleRiskLossReport)
+
 	// Sales report (§5.2) — litres/revenue/avg-price/txn-count/growth KPIs, the
 	// revenue trend, product / payment / shift / attendant / nozzle breakdowns, a
 	// peak-hours grid and an optional cross-station ranking. Station-scoped via

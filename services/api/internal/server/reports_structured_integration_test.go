@@ -19,10 +19,15 @@ package server_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/japharyroman/fuelgrid-os/internal/identity/password"
 )
 
 // TestReportsStationClose_EnvelopeShape asserts the Daily Station Close report
@@ -405,4 +410,177 @@ func TestReportsStationClose_DayAlignedCash(t *testing.T) {
 	if v := summaryValue(body, "Expected cash"); v != "500000.00" {
 		t.Fatalf("Expected cash = %q, want 500000.00 (the headline day's recon expected)", v)
 	}
+}
+
+// seedVarianceEvent seeds one over-tolerance tank reconciliation for station1 on
+// a fresh operating day, with a closed shift staffed by the given attendant, so
+// the Risk & Loss report's §5.11 pattern joins (event → shift → attendant) have
+// real rows to count. variance is negative (a shortage/loss). Returns the day id.
+func seedVarianceEvent(t *testing.T, ctx context.Context, h *harness, openedBy, attendant uuid.UUID, businessDate, shiftName string, variance float64) uuid.UUID {
+	t.Helper()
+	var dayID, shiftID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
+		VALUES ($1, $2, $3, $4) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, businessDate, openedBy).Scan(&dayID); err != nil {
+		t.Fatalf("seed operating day: %v", err)
+	}
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO shifts (tenant_id, station_id, operating_day_id, name, opened_by, status, closed_by, closed_at)
+		VALUES ($1, $2, $3, $4, $5, 'closed', $5, now()) RETURNING id
+	`, h.ids.tenantID, h.ids.station1, dayID, shiftName, openedBy).Scan(&shiftID); err != nil {
+		t.Fatalf("seed shift: %v", err)
+	}
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO shift_attendants (shift_id, user_id, tenant_id, assigned_by)
+		VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING
+	`, shiftID, attendant, h.ids.tenantID, openedBy); err != nil {
+		t.Fatalf("seed shift attendant: %v", err)
+	}
+	// An over-tolerance shortage: variance well beyond the 1% tolerance on a 5,000 L
+	// book, status 'exception'. closing_physical = closing_book + variance.
+	if _, err := h.pool.Exec(ctx, `
+		INSERT INTO tank_reconciliations
+		    (tenant_id, tank_id, operating_day_id, opening_book, deliveries_total, sales_total,
+		     adjustments_total, closing_book, closing_physical, variance_litres, variance_percent,
+		     tolerance_percent, status)
+		VALUES ($1, $2, $3, 5000, 0, 0, 0, 5000, 5000 + $4, $4, $4/5000*100, 1.0, 'exception')
+	`, h.ids.tenantID, h.ids.tankPMS, dayID, variance); err != nil {
+		t.Fatalf("seed reconciliation: %v", err)
+	}
+	return dayID
+}
+
+// TestReportsRiskLoss_EnvelopeAndPatterns asserts the §5.11 / §20.4 Risk & Loss
+// report returns the signature envelope with the KPI hero, the deterministic
+// chart payload (heatmap / trend / ranking / distribution / alert board /
+// investigation timeline / patterns / rules) and the drillable table; that a
+// recurring over-tolerance loss is surfaced; and that the sensitive loss VALUE is
+// OMITTED for the operator (who lacks margin.view) but shown to the admin.
+func TestReportsRiskLoss_EnvelopeAndPatterns(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	tenantSlug := slug(h)
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// A SUPERVISOR scoped to station1: holds reconciliation.read (so the report
+	// succeeds) but NOT margin.view (so the loss VALUE must be omitted). The
+	// station_manager operator the harness seeds DOES hold margin.view, so it is
+	// the wrong actor for the value-gating assertion.
+	hash, herr := password.New(password.DefaultParams, "").Hash(testPassword)
+	if herr != nil {
+		t.Fatalf("hash: %v", herr)
+	}
+	supEmail := fmt.Sprintf("sup-%d@it.local", time.Now().UnixNano())
+	var supID uuid.UUID
+	if err := h.pool.QueryRow(ctx,
+		`INSERT INTO users (tenant_id, email, full_name, status, password_hash, password_changed_at)
+		 VALUES ($1, $2, 'IT Supervisor', 'active', $3, now()) RETURNING id`,
+		h.ids.tenantID, supEmail, hash).Scan(&supID); err != nil {
+		t.Fatalf("seed supervisor: %v", err)
+	}
+	grantRole(t, ctx, h.pool, h.ids.tenantID, supID, "supervisor")
+	if _, err := h.pool.Exec(ctx,
+		`INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`,
+		supID, h.ids.station1, h.ids.tenantID); err != nil {
+		t.Fatalf("seed supervisor station access: %v", err)
+	}
+	sup := h.login(t, tenantSlug, supEmail)
+
+	// Three over-tolerance shortages on the same tank across days, two of them on
+	// the EVENING shift staffed by the operator — a recurring, concentrated loss.
+	seedVarianceEvent(t, ctx, h, adminID, h.ids.opID, "2026-05-20", "Evening", -300)
+	seedVarianceEvent(t, ctx, h, adminID, h.ids.opID, "2026-05-21", "Evening", -250)
+	seedVarianceEvent(t, ctx, h, adminID, adminID, "2026-05-22", "Morning", -200)
+
+	// (1) Admin (holds reconciliation.read + margin.view) gets the full report.
+	code, body := h.getJSON(t, "/api/v1/reports/risk-loss?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("admin risk-loss report = %d, want 200", code)
+	}
+	meta, _ := body["metadata"].(map[string]any)
+	if meta == nil || meta["report_key"] != "risk-loss" {
+		t.Fatalf("metadata.report_key = %v, want risk-loss", body["metadata"])
+	}
+	for _, key := range []string{"data_quality", "summary", "insights", "recommended_actions", "table", "chart_data"} {
+		if _, present := body[key]; !present {
+			t.Fatalf("envelope missing %q section", key)
+		}
+	}
+	// KPI hero: loss litres (3 shortages totalling 750 L) and the repeated-incident
+	// count are present; the admin (margin.view) sees the loss VALUE.
+	if v := summaryValue(body, "Total loss litres"); v != "750.000" {
+		t.Fatalf("Total loss litres = %q, want 750.000", v)
+	}
+	if v := summaryValue(body, "Repeated-incident tanks"); v != "1" {
+		t.Fatalf("Repeated-incident tanks = %q, want 1 (the tank breached on 3 days)", v)
+	}
+	if v := summaryValue(body, "Loss value"); v == "" {
+		t.Fatalf("admin (margin.view) must see the Loss value KPI")
+	}
+	// chart_data carries every §5.11 visual section.
+	chart, _ := body["chart_data"].(map[string]any)
+	if chart == nil {
+		t.Fatalf("chart_data is not an object: %v", body["chart_data"])
+	}
+	for _, key := range []string{"heatmap", "heat_types", "trend", "ranking", "distribution", "alert_board", "investigations", "patterns", "rules", "value_shown"} {
+		if _, present := chart[key]; !present {
+			t.Fatalf("chart_data missing %q section", key)
+		}
+	}
+	if shown, _ := chart["value_shown"].(bool); !shown {
+		t.Fatalf("value_shown must be true for the admin (margin.view)")
+	}
+	// The deterministic pattern intelligence found the Evening-shift concentration
+	// (2 of 3 events). Patterns are traceable findings with a share %.
+	patterns, _ := chart["patterns"].([]any)
+	if len(patterns) == 0 {
+		t.Fatalf("expected at least one §5.11 pattern finding, got none")
+	}
+
+	// (2) Supervisor holds reconciliation.read (scoped to station1) but NOT
+	// margin.view — the report succeeds, but the loss VALUE is OMITTED (not zeroed).
+	code, supBody := h.getJSON(t, "/api/v1/reports/risk-loss?station_id="+h.ids.station1.String(), sup)
+	if code != http.StatusOK {
+		t.Fatalf("supervisor risk-loss report (own station) = %d, want 200", code)
+	}
+	if v := summaryValue(supBody, "Loss value"); v != "" {
+		t.Fatalf("supervisor (no margin.view) must NOT see the Loss value KPI, got %q", v)
+	}
+	supChart, _ := supBody["chart_data"].(map[string]any)
+	if shown, _ := supChart["value_shown"].(bool); shown {
+		t.Fatalf("value_shown must be false for the supervisor (no margin.view)")
+	}
+	// The loss LITRES are still fully shown to the non-margin holder.
+	if v := summaryValue(supBody, "Total loss litres"); v != "750.000" {
+		t.Fatalf("supervisor must still see loss litres in full, got %q", v)
+	}
+	// A data-quality note must explain the hidden value (omit-not-zero).
+	if !dataQualityContains(supBody, "margin.view") {
+		t.Fatalf("expected a data-quality note explaining the hidden loss value")
+	}
+
+	// (3) Station scoping: station2 is out of the supervisor's scope → 403.
+	if code, _ := h.getJSON(t, "/api/v1/reports/risk-loss?station_id="+h.ids.station2.String(), sup); code != http.StatusForbidden {
+		t.Fatalf("supervisor risk-loss report (out-of-scope station) = %d, want 403", code)
+	}
+}
+
+// dataQualityContains reports whether any data_quality message contains substr.
+func dataQualityContains(m map[string]any, substr string) bool {
+	arr, ok := m["data_quality"].([]any)
+	if !ok {
+		return false
+	}
+	for _, it := range arr {
+		row, ok := it.(map[string]any)
+		if !ok {
+			continue
+		}
+		if msg, ok := row["message"].(string); ok && strings.Contains(msg, substr) {
+			return true
+		}
+	}
+	return false
 }

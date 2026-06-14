@@ -3403,6 +3403,32 @@ export class Client {
   }
 
   /**
+   * Fetch the §5.11 / §20.4 Risk & Loss intelligence report for a station as a
+   * structured {@link ReportEnvelope}: a loss litres + value, variance %, open
+   * alerts / investigations, repeated-incident and highest-risk-station KPI hero;
+   * the DETERMINISTIC §5.11 pattern intelligence (variance events counted by
+   * station / product / pump / shift / attendant over a fixed window, turned into
+   * "<x> appeared in <pct>% of related events" findings); and the reusable visuals
+   * — a station × risk-type heatmap, a loss trend, a station risk ranking, a
+   * root-cause distribution donut, an alert-severity board and an investigation
+   * timeline — plus a read-only risk-rules tuning context. Station-scoped (gated
+   * by reconciliation.read). The loss VALUE is sensitive: it is margin.view-gated
+   * and OMITTED for non-holders. `chart_data` carries `{heatmap, heat_types,
+   * trend, ranking, distribution, alert_board, investigations, patterns, rules,
+   * value_shown}`.
+   */
+  getRiskLossReport(
+    stationID: string,
+    opts?: { period?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/risk-loss${this.reportQuery(stationID, opts)}`,
+      { signal },
+    );
+  }
+
+  /**
    * Fetch the §5.2 Sales report for a station as a structured
    * {@link ReportEnvelope}: litres, revenue, average selling price, transaction
    * count and period-over-period growth KPIs; a revenue trend; product /
