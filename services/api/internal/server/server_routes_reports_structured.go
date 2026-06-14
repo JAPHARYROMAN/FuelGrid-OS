@@ -127,12 +127,16 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	r.With(s.requirePermissionHeld("finance.read")).
 		Post("/reports/export", s.handleExportReport)
 
-	// Export-jobs surface (Feature 10.7): a durable receipt + history of report
-	// exports, gated by reports.export. POST records a job and maps it onto the
-	// existing synchronous export file URL; GET lists/reads the history.
+	// Export-jobs surface (Feature 10.7 + Reports Center Phase 13 — the Export
+	// Center): the async export queue + history, gated by reports.export. POST
+	// enqueues a job (the worker re-checks permission at generation, re-runs the
+	// report, renders + stores the file bytes in Postgres); GET lists/reads job
+	// status; GET .../download streams the stored bytes (permission re-checked at
+	// delivery). A report the worker cannot render falls back to a legacy receipt.
 	r.With(s.requirePermissionHeld("reports.export")).Group(func(r chi.Router) {
 		r.Post("/exports", s.handleCreateExportJob)
 		r.Get("/exports", s.handleListExportJobs)
 		r.Get("/exports/{id}", s.handleGetExportJob)
+		r.Get("/exports/{id}/download", s.handleDownloadExportJob)
 	})
 }

@@ -3660,9 +3660,13 @@ export class Client {
   }
 
   /**
-   * Record a report export job (Feature 10.7): persists a durable receipt of the
-   * {report_key, format, filters} requested and the resulting file's same-origin
-   * URL, then audits 'report.exported'. Gated by reports.export.
+   * Request a report export job (Feature 10.7 / Export Center). The surface is
+   * asynchronous: this ENQUEUES a job (status `queued`) which the worker renders
+   * later; poll {@link getExportJob} for status and, once `completed`, download
+   * via the job's `download_url` ({@link downloadExportJob}). A report the worker
+   * cannot render but the legacy file endpoints map returns an immediate
+   * `completed` receipt with a `file_url`. Audits 'report.exported'. Gated by
+   * reports.export.
    */
   createExportJob(req: ExportJobRequest, signal?: AbortSignal): Promise<ExportJob> {
     return this.request<ExportJob>('/api/v1/exports', {
@@ -3684,9 +3688,22 @@ export class Client {
     return this.request<Paginated<ExportJob>>(`/api/v1/exports${q ? `?${q}` : ''}`, { signal });
   }
 
-  /** Fetch one export job by id. Gated by reports.export. */
+  /** Fetch one export job by id (poll this for status). Gated by reports.export. */
   getExportJob(id: string, signal?: AbortSignal): Promise<ExportJob> {
     return this.request<ExportJob>(`/api/v1/exports/${encodeURIComponent(id)}`, { signal });
+  }
+
+  /**
+   * Download a completed async export job's stored file bytes. The actor's
+   * permission is re-checked at delivery, so a user who has lost access cannot
+   * download the data. Gated by reports.export; 409 if the job is not yet ready.
+   */
+  downloadExportJob(id: string, signal?: AbortSignal): Promise<Blob> {
+    return this.fetchBlob(
+      `${this.baseURL}/api/v1/exports/${encodeURIComponent(id)}/download`,
+      'application/octet-stream',
+      signal,
+    );
   }
 
   /** Build the `?station_id=…&period=…` query for a station-scoped report. */

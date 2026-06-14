@@ -870,3 +870,84 @@ describe('Client mobile attendant phase-7 methods', () => {
     expect(res.summary[0]!.value).toBe('5000.00');
   });
 });
+
+describe('Client async export-job methods (Export Center)', () => {
+  it('enqueues an export job (POST /exports) and returns the queued job', async () => {
+    const f = jsonFetch(202, {
+      id: 'job-1',
+      report_key: 'financials',
+      format: 'csv',
+      filters: { period: 'this-month' },
+      status: 'queued',
+      file_url: null,
+      file_name: null,
+      file_size: null,
+      error: null,
+      requested_by: 'user-1',
+      created_at: '2026-06-14T09:30:00Z',
+      download_url: null,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const job = await client.createExportJob({
+      report_key: 'financials',
+      format: 'csv',
+      filters: { period: 'this-month' },
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/exports');
+    expect(init.method).toBe('POST');
+    expect(job.status).toBe('queued');
+    expect(job.id).toBe('job-1');
+  });
+
+  it('reads a completed job with a download_url + checksum (GET /exports/{id})', async () => {
+    const f = jsonFetch(200, {
+      id: 'job-1',
+      report_key: 'financials',
+      format: 'pdf',
+      filters: {},
+      status: 'completed',
+      file_url: null,
+      file_name: 'financials-20260614.pdf',
+      file_size: 4096,
+      error: null,
+      requested_by: 'user-1',
+      created_at: '2026-06-14T09:30:00Z',
+      started_at: '2026-06-14T09:30:02Z',
+      completed_at: '2026-06-14T09:30:03Z',
+      checksum: 'abc123',
+      download_url: '/api/v1/exports/job-1/download',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const job = await client.getExportJob('job-1');
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/exports/job-1');
+    expect(job.status).toBe('completed');
+    expect(job.download_url).toBe('/api/v1/exports/job-1/download');
+    expect(job.checksum).toBe('abc123');
+  });
+
+  it('downloads a completed job as a Blob (GET /exports/{id}/download)', async () => {
+    const f = vi.fn(() =>
+      Promise.resolve(
+        new Response('%PDF-1.4 stub', {
+          status: 200,
+          headers: { 'Content-Type': 'application/pdf' },
+        }),
+      ),
+    );
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const blob = await client.downloadExportJob('job-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/exports/job-1/download');
+    expect(init.method).toBe('GET');
+    expect(blob).toBeInstanceOf(Blob);
+    expect(await blob.text()).toContain('%PDF-');
+  });
+
+  it('surfaces a 409 (not ready) as an SdkError on download', async () => {
+    const f = jsonFetch(409, { error: 'export is not ready for download' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.downloadExportJob('job-1')).rejects.toBeInstanceOf(SdkError);
+  });
+});
