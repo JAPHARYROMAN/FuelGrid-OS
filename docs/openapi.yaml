@@ -2577,6 +2577,25 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/finance:
+    get:
+      tags: [Reports]
+      summary: Structured Finance P&L report (revenue → COGS → gross margin → expenses → net operating result waterfall, period comparison, cash position, settlement status, embedded financial statements) as a drillable envelope
+      description: >-
+        Station-scoped via station_id. Gated by finance.read; an out-of-scope
+        station 403s, a cross-tenant one 404s. Reuses the same SQL ::numeric
+        Profitability + Cashflow figures (no money is recomputed in Go). COGS,
+        gross margin and net margin are sensitive and are omitted unless the
+        actor holds margin.view at the station (cost_shown:false). period selects
+        the date window (this-month default).
+      parameters:
+        - { in: query, name: station_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /api/v1/reports/credit-cashflow:
     get:
       tags: [Reports]
@@ -2587,6 +2606,34 @@ paths:
         - { in: query, name: period, required: false, schema: { type: string } }
       responses:
         '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/customer-credit:
+    get:
+      tags: [Reports]
+      summary: Structured Customer Credit report (receivables aging buckets, credit-limit utilization, overdue ranking) as a drillable envelope
+      description: >-
+        Tenant-wide (not station-scoped). Gated by customer.read. Ages issued
+        invoices into Current / 1-30 / 31-60 / 61-90 / 90+ buckets from due_date
+        vs the report date. Credit exposure, limit and utilization are sensitive
+        and are omitted unless the actor holds customer_credit.read. period
+        selects the label (this-month default); buckets are aged as-of today.
+      parameters:
+        - { in: query, name: period, required: false, schema: { type: string } }
+      responses:
+        '200': { description: Report envelope, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/customer-credit/drilldown:
+    get:
+      tags: [Reports]
+      summary: One customer's open invoices (aged) and recent payments for the Customer Credit drilldown
+      description: Tenant-wide. Gated by customer.read. Returns the customer's open invoices aged into buckets and their recent payments, as exact decimal strings.
+      parameters:
+        - { in: query, name: customer_id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Customer credit drilldown, content: { application/json: { schema: { $ref: '#/components/schemas/CustomerCreditDrilldown' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -5541,6 +5588,43 @@ components:
               url:    { type: string }
             required: [format, url]
       required: [metadata, filters_used, data_quality, summary, chart_data, table, insights, recommended_actions, drilldown, export_options]
+    CustomerCreditDrilldown:
+      type: object
+      description: >-
+        One customer's balance -> invoices -> payments drilldown for the Customer
+        Credit report (§5.9): the open invoices aged into buckets and the recent
+        payments. All money figures are exact decimal strings.
+      properties:
+        customer_id: { type: string, format: uuid }
+        invoices:
+          type: array
+          items:
+            type: object
+            properties:
+              invoice_id:     { type: string, format: uuid }
+              invoice_number: { type: string, nullable: true }
+              invoice_date:   { type: string }
+              due_date:       { type: string, nullable: true }
+              amount:         { type: string }
+              outstanding:    { type: string }
+              days_overdue:   { type: integer }
+              bucket:         { type: string }
+              status:         { type: string }
+            required: [invoice_id, invoice_date, amount, outstanding, days_overdue, bucket, status]
+        payments:
+          type: array
+          items:
+            type: object
+            properties:
+              payment_id:   { type: string, format: uuid }
+              payment_date: { type: string }
+              method:       { type: string }
+              reference:    { type: string, nullable: true }
+              amount:       { type: string }
+              allocated:    { type: string }
+              status:       { type: string }
+            required: [payment_id, payment_date, method, amount, allocated, status]
+      required: [customer_id, invoices, payments]
     ReportsOverview:
       type: object
       properties:

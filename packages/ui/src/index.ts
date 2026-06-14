@@ -64,11 +64,25 @@ export type { RiskAlertCardProps } from './components/risk-alert-card';
 export { ReconciliationWaterfall } from './components/reconciliation-waterfall';
 export type { ReconciliationWaterfallProps } from './components/reconciliation-waterfall';
 
+export { FinancialWaterfall } from './components/financial-waterfall';
+export type {
+  FinancialWaterfallProps,
+  FinancialWaterfallStep,
+  WaterfallStepKind,
+} from './components/financial-waterfall';
+
 export { Heatmap, heatmapToneColor } from './components/heatmap';
 export type { HeatmapProps, HeatmapRow, HeatmapCell, HeatmapTone } from './components/heatmap';
 
 export { StatusBoard, statusToneColor } from './components/status-board';
 export type { StatusBoardProps, StatusBoardItem, StatusTone } from './components/status-board';
+
+export { CreditLimitMeter, creditMeterTone } from './components/credit-limit-meter';
+export type {
+  CreditLimitMeterProps,
+  CreditLimitMeterItem,
+  CreditMeterTone,
+} from './components/credit-limit-meter';
 
 export { SupplierScorecard } from './components/supplier-scorecard';
 export type {

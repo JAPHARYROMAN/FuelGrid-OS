@@ -2030,6 +2030,43 @@ export interface ReportEnvelope {
   export_options: ReportExportOption[];
 }
 
+/**
+ * One open invoice in a Customer Credit drilldown (§5.9), aged into a bucket by
+ * its due date. Money figures are exact decimal strings.
+ */
+export interface CustomerCreditDrilldownInvoice {
+  invoice_id: string;
+  invoice_number: string | null;
+  invoice_date: string;
+  due_date: string | null;
+  amount: string;
+  outstanding: string;
+  days_overdue: number;
+  bucket: string;
+  status: string;
+}
+
+/** One posted/recent payment in a Customer Credit drilldown. */
+export interface CustomerCreditDrilldownPayment {
+  payment_id: string;
+  payment_date: string;
+  method: string;
+  reference: string | null;
+  amount: string;
+  allocated: string;
+  status: string;
+}
+
+/**
+ * A customer's balance -> invoices -> payments drilldown for the Customer Credit
+ * report (§5.9): the open invoices aged into buckets and the recent payments.
+ */
+export interface CustomerCreditDrilldown {
+  customer_id: string;
+  invoices: CustomerCreditDrilldownInvoice[];
+  payments: CustomerCreditDrilldownPayment[];
+}
+
 /** One category card on the reports landing page. */
 export interface ReportCategory {
   key: string;
