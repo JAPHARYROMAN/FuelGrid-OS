@@ -1060,3 +1060,159 @@ describe('Client report snapshots & locking (Phase 14)', () => {
     expect(res.count).toBe(1);
   });
 });
+
+describe('Client scheduled reports (Phase 12)', () => {
+  const sched = {
+    id: 'sch-1',
+    report_key: 'station-close',
+    name: 'Daily close MIK-01',
+    filters: { station_id: 'st-1' },
+    schedule: { frequency: 'daily' as const, hour: 6, minute: 0 },
+    recipients: [{ type: 'user' as const, value: 'user-1' }],
+    delivery_channel: 'in_app' as const,
+    format: 'csv' as const,
+    webhook_url: null,
+    created_by: 'user-1',
+    enabled: true,
+    last_run_at: null,
+    next_run_at: '2026-06-16T06:00:00Z',
+    status: 'active' as const,
+    created_at: '2026-06-15T08:00:00Z',
+    updated_at: '2026-06-15T08:00:00Z',
+  };
+
+  it('creates a schedule (POST /reports/scheduled)', async () => {
+    const f = jsonFetch(201, sched);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.createScheduledReport({
+      report_key: 'station-close',
+      name: 'Daily close MIK-01',
+      filters: { station_id: 'st-1' },
+      schedule: { frequency: 'daily', hour: 6, minute: 0 },
+      recipients: [{ type: 'user', value: 'user-1' }],
+      delivery_channel: 'in_app',
+      format: 'csv',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled');
+    expect(init.method).toBe('POST');
+    expect(res.id).toBe('sch-1');
+    expect(res.status).toBe('active');
+  });
+
+  it('lists schedules (GET /reports/scheduled)', async () => {
+    const f = jsonFetch(200, { items: [sched], count: 1, limit: 20, offset: 0, has_more: false });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listScheduledReports({ limit: 20 });
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled?limit=20');
+    expect(res.items).toHaveLength(1);
+  });
+
+  it('gets one schedule (GET /reports/scheduled/{id})', async () => {
+    const f = jsonFetch(200, sched);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getScheduledReport('sch-1');
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled/sch-1');
+    expect(res.id).toBe('sch-1');
+  });
+
+  it('updates a schedule (PUT /reports/scheduled/{id})', async () => {
+    const f = jsonFetch(200, { ...sched, name: 'Renamed' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.updateScheduledReport('sch-1', {
+      report_key: 'station-close',
+      name: 'Renamed',
+      filters: { station_id: 'st-1' },
+      schedule: { frequency: 'weekly', hour: 7, minute: 30, day_of_week: 1 },
+      recipients: [{ type: 'email', value: 'ops@example.com' }],
+      delivery_channel: 'email',
+      format: 'pdf',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled/sch-1');
+    expect(init.method).toBe('PUT');
+    expect(res.name).toBe('Renamed');
+  });
+
+  it('deletes a schedule (DELETE /reports/scheduled/{id})', async () => {
+    const f = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await client.deleteScheduledReport('sch-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled/sch-1');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('enables/disables a schedule (POST /reports/scheduled/{id}/enabled)', async () => {
+    const f = jsonFetch(200, { ...sched, enabled: false, status: 'paused' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.setScheduledReportEnabled('sch-1', false);
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled/sch-1/enabled');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: false });
+    expect(res.enabled).toBe(false);
+  });
+
+  it('runs a schedule now (POST /reports/scheduled/{id}/run-now)', async () => {
+    const f = jsonFetch(200, {
+      scheduled_report_id: 'sch-1',
+      status: 'success',
+      delivered_count: 1,
+      skipped_count: 0,
+      period_key: 'manual:20260615T100000.000',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.runScheduledReportNow('sch-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled/sch-1/run-now');
+    expect(init.method).toBe('POST');
+    expect(res.status).toBe('success');
+    expect(res.delivered_count).toBe(1);
+  });
+
+  it('lists a schedule run history (GET /reports/scheduled/{id}/runs)', async () => {
+    const f = jsonFetch(200, {
+      items: [
+        {
+          id: 'run-1',
+          period_key: '2026-06-15',
+          run_at: '2026-06-15T06:00:00Z',
+          status: 'success',
+          export_job_id: 'job-1',
+          notification_ids: ['n-1'],
+          delivered_count: 1,
+          skipped_count: 0,
+          error: null,
+        },
+      ],
+      count: 1,
+      limit: 20,
+      offset: 0,
+      has_more: false,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listScheduledReportRuns('sch-1', { limit: 20 });
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/scheduled/sch-1/runs?limit=20');
+    expect(res.items[0]?.status).toBe('success');
+  });
+
+  it('rejects an SSRF/forbidden create as an SdkError (400/403)', async () => {
+    const f = jsonFetch(400, { error: 'webhook_url must use https' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(
+      client.createScheduledReport({
+        report_key: 'station-close',
+        name: 'bad',
+        schedule: { frequency: 'daily', hour: 6 },
+        recipients: [],
+        delivery_channel: 'webhook',
+        format: 'csv',
+        webhook_url: 'http://127.0.0.1/x',
+      }),
+    ).rejects.toBeInstanceOf(SdkError);
+  });
+});

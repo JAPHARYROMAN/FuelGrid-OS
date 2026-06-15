@@ -2268,6 +2268,103 @@ export interface ReportLockState {
   signed_off_at?: string | null;
 }
 
+// ---- Scheduled Reports (Reports Center Phase 12 — blueprint §8) ----
+
+/** The recurrence frequency of a scheduled report. */
+export type ScheduleFrequency = 'daily' | 'weekly' | 'monthly' | 'cron';
+
+/**
+ * The recurrence shape. A small, fully representable model interpreted in Go to
+ * compute next_run_at deterministically:
+ *   - daily   : { frequency, hour, minute }
+ *   - weekly  : { frequency, hour, minute, day_of_week }   (0=Sun..6=Sat)
+ *   - monthly : { frequency, hour, minute, day_of_month }  (1..31, clamped)
+ *   - cron    : { frequency, cron }                         5-field "min hour dom mon dow"
+ */
+export interface ScheduleRecurrence {
+  frequency: ScheduleFrequency;
+  hour?: number;
+  minute?: number;
+  day_of_week?: number;
+  day_of_month?: number;
+  cron?: string;
+}
+
+/** The delivery channel for a scheduled report. */
+export type ScheduledReportChannel = 'in_app' | 'email' | 'webhook';
+
+/**
+ * A recipient of a scheduled report. A `user` recipient's value is a user id (its
+ * OWN permission identity — re-checked individually at every delivery); an `email`
+ * recipient's value is an address (permission-anchored on the schedule owner).
+ */
+export interface ScheduledReportRecipient {
+  type: 'user' | 'email';
+  value: string;
+}
+
+/**
+ * A per-tenant scheduled report: a catalog report re-run on a recurrence and
+ * delivered to recipients over a channel. The dispatcher re-checks the report
+ * permission at every delivery (blueprint §8.5), so a revoked recipient/owner
+ * gets nothing. Webhook URLs are SSRF-guarded.
+ */
+export interface ScheduledReport {
+  id: string;
+  report_key: string;
+  name: string;
+  filters: Record<string, string>;
+  schedule: ScheduleRecurrence;
+  recipients: ScheduledReportRecipient[];
+  delivery_channel: ScheduledReportChannel;
+  format: 'csv' | 'pdf' | 'xlsx';
+  webhook_url: string | null;
+  created_by: string;
+  enabled: boolean;
+  /** RFC3339 last run timestamp; null until first run. */
+  last_run_at: string | null;
+  /** RFC3339 next due instant the dispatcher selects on. */
+  next_run_at: string;
+  status: 'active' | 'paused' | 'error';
+  created_at: string;
+  updated_at: string;
+}
+
+/** The body to create or update a scheduled report. */
+export interface ScheduledReportRequest {
+  report_key: string;
+  name: string;
+  filters?: Record<string, string>;
+  schedule: ScheduleRecurrence;
+  recipients: ScheduledReportRecipient[];
+  delivery_channel: ScheduledReportChannel;
+  format: 'csv' | 'pdf' | 'xlsx';
+  webhook_url?: string;
+}
+
+/** One recorded generation of a scheduled report (its run history). */
+export interface ScheduledReportRun {
+  id: string;
+  period_key: string;
+  /** RFC3339 run timestamp. */
+  run_at: string;
+  status: 'success' | 'partial' | 'failed' | 'skipped_forbidden';
+  export_job_id: string | null;
+  notification_ids: string[];
+  delivered_count: number;
+  skipped_count: number;
+  error: string | null;
+}
+
+/** The result of an immediate (run-now) dispatch of a scheduled report. */
+export interface ScheduledReportRunResult {
+  scheduled_report_id: string;
+  status: 'success' | 'partial' | 'failed' | 'skipped_forbidden';
+  delivered_count: number;
+  skipped_count: number;
+  period_key: string;
+}
+
 // ---- Phase 7: Finance & Accounting Control ----
 
 export interface Account {

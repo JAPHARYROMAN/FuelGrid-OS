@@ -18,6 +18,19 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/risk"
 )
 
+// ScheduledReportRunner is the per-tenant Scheduled Reports dispatcher (Reports
+// Center Phase 12 — blueprint §8). It is implemented in the server package (which
+// owns the report-rendering path reportSpecFor / spec.build, the renderers, the
+// notifications repo, and the email sender) and injected here so the DB-driven
+// scheduled-reports job rides the SAME advisory-lock + panic-isolation + job_runs
+// ledger spine as every other scheduler job, without the scheduler package needing
+// to import the server package (which would be an import cycle). RunDue claims due
+// schedules and delivers them; it returns a short ledger detail string + an error.
+// A nil runner (a deployment that hasn't wired it) makes the job a no-op.
+type ScheduledReportRunner interface {
+	RunDue(ctx context.Context) (detail string, err error)
+}
+
 // Deps groups the repos the recurring jobs call into. They are the same repo
 // types the HTTP handlers use; the jobs invoke their EXISTING domain methods
 // cross-tenant rather than re-implementing any logic. All run on the owner pool
@@ -31,10 +44,10 @@ type Deps struct {
 	Payables    *payables.Repo
 	Enterprise  *enterprise.Repo
 	Logger      *slog.Logger
-	// Report carries the email sender + recipients for the canned scheduled-email
-	// digests (daily station-close, monthly P&L). When it is left zero (no
-	// recipients / no real SMTP) those jobs run as a safe no-op.
-	Report ReportDeps
+	// ScheduledReports is the per-tenant Scheduled Reports dispatcher (Phase 12). It
+	// SUPERSEDES the removed global env-digests with a tenant-isolated, permission-
+	// re-checked, multi-channel delivery path. Nil disables the job (no-op).
+	ScheduledReports ScheduledReportRunner
 }
 
 // Intervals is the per-job cadence (mirrors the SCHEDULER_* config knobs). A
@@ -53,12 +66,12 @@ type Intervals struct {
 	// audit-purge candidate count (dry-run; it does not purge yet). <= 0 disables
 	// it.
 	RetentionSweep time.Duration
-	// ReportDigest is the tick cadence for BOTH canned email digests (daily
-	// station-close, monthly P&L). It is deliberately sub-day (e.g. 1h): the job
-	// bodies gate on a configured send hour and a job_runs ledger guard, so a
-	// frequent tick still produces exactly one daily / one monthly send while
-	// guaranteeing a send lands shortly after the send hour. <= 0 disables both.
-	ReportDigest time.Duration
+	// ScheduledReports is the tick cadence for the per-tenant Scheduled Reports
+	// dispatcher (Phase 12). It is deliberately sub-period (e.g. 1m–5m): each tick
+	// claims schedules whose next_run_at <= now and atomically advances next_run_at,
+	// so a frequent tick still delivers exactly once per period (the advance + the
+	// per-period ledger guard collapse duplicates). <= 0 disables it.
+	ScheduledReports time.Duration
 
 	// Non-interval tuning the job bodies read.
 	SessionRetention   time.Duration
@@ -69,16 +82,13 @@ type Intervals struct {
 // BuildJobs assembles the full job set from the deps and intervals. Jobs whose
 // interval is <= 0 still appear here but are filtered out by scheduler.New, so
 // callers get one obvious place to read the catalog.
+//
+// The two GLOBAL report-email digests (report_daily_close_digest +
+// report_monthly_pnl) were REMOVED in Phase 12: they aggregated every tenant's
+// financials into one body emailed to a flat env recipient list — a tenant-
+// isolation hazard — and are superseded by the per-tenant, RLS-isolated,
+// permission-re-checked scheduled_reports_dispatch job below.
 func BuildJobs(d Deps, iv Intervals) []Job {
-	// The report digests share the owner pool + logger with the rest of the job
-	// set, so backfill them onto the ReportDeps the caller supplied (which only
-	// needs to carry the email sender, recipients, and send hour).
-	report := d.Report
-	report.Pool = d.Pool
-	if report.Logger == nil {
-		report.Logger = d.Logger
-	}
-
 	return []Job{
 		{Name: "revenue_compute", Interval: iv.RevenueCompute, Run: d.revenueComputeJob},
 		{Name: "aging_refresh", Interval: iv.AgingRefresh, Run: d.agingRefreshJob},
@@ -87,8 +97,21 @@ func BuildJobs(d Deps, iv Intervals) []Job {
 		{Name: "outbox_dead_letter_sweep", Interval: iv.OutboxSweep, Run: outboxSweepJob(d.Pool, iv.OutboxRequeueAfter, iv.JobRunRetention)},
 		{Name: "session_token_cleanup", Interval: iv.SessionCleanup, Run: sessionCleanupJob(d.Pool, iv.SessionRetention)},
 		{Name: "retention_sweep", Interval: iv.RetentionSweep, Run: retentionSweepJob(d.Pool)},
-		{Name: "report_daily_close_digest", Interval: iv.ReportDigest, Run: dailyDigestJob(report)},
-		{Name: "report_monthly_pnl", Interval: iv.ReportDigest, Run: monthlyPnLJob(report)},
+		{Name: "scheduled_reports_dispatch", Interval: iv.ScheduledReports, Run: scheduledReportsDispatchJob(d.ScheduledReports)},
+	}
+}
+
+// scheduledReportsDispatchJob wraps the injected per-tenant Scheduled Reports
+// dispatcher (implemented in the server package) into a JobFunc. A nil runner —
+// a deployment / harness that never wired it — is a safe no-op. The scheduler's
+// own advisory lock + panic recovery + job_runs ledger wrap this exactly like
+// every other job, so the dispatcher itself need not re-implement that spine.
+func scheduledReportsDispatchJob(runner ScheduledReportRunner) JobFunc {
+	return func(ctx context.Context) (string, error) {
+		if runner == nil {
+			return "skipped: no scheduled-reports runner wired", nil
+		}
+		return runner.RunDue(ctx)
 	}
 }
 

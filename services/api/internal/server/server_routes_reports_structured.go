@@ -151,6 +151,22 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 	// The literal "snapshots/{id}" routes are registered alongside the param
 	// "{key}/snapshots" route; chi prefers the static "snapshots" segment over the
 	// "{key}" wildcard, so a snapshot id is never mistaken for a report key.
+	// Per-tenant Scheduled Reports (Reports Center Phase 12 — blueprint §8). The
+	// management surface is gated by reports.schedule at the route; each write ALSO
+	// re-checks the underlying report's OWN run permission in-handler (so a manager
+	// can only schedule reports they can run), and the dispatcher re-checks per
+	// recipient at delivery. Tenant-isolated; a cross-tenant {id} is a clean 404.
+	r.With(s.requirePermissionHeld("reports.schedule")).Group(func(r chi.Router) {
+		r.Post("/reports/scheduled", s.handleCreateScheduledReport)
+		r.Get("/reports/scheduled", s.handleListScheduledReports)
+		r.Get("/reports/scheduled/{id}", s.handleGetScheduledReport)
+		r.Put("/reports/scheduled/{id}", s.handleUpdateScheduledReport)
+		r.Delete("/reports/scheduled/{id}", s.handleDeleteScheduledReport)
+		r.Post("/reports/scheduled/{id}/enabled", s.handleSetScheduledReportEnabled)
+		r.Post("/reports/scheduled/{id}/run-now", s.handleRunScheduledReportNow)
+		r.Get("/reports/scheduled/{id}/runs", s.handleListScheduledReportRuns)
+	})
+
 	r.With(s.requirePermissionHeld("reports.read")).Group(func(r chi.Router) {
 		// Recent signed-off snapshots across reports — the hub "Locked" rail. The
 		// handler permission-filters each row by the underlying report's permission.

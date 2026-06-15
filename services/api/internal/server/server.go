@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/retention"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 	"github.com/japharyroman/fuelgrid-os/internal/risk"
+	"github.com/japharyroman/fuelgrid-os/internal/scheduledreports"
 	"github.com/japharyroman/fuelgrid-os/internal/scheduler"
 	setupdomain "github.com/japharyroman/fuelgrid-os/internal/setup"
 	"github.com/japharyroman/fuelgrid-os/internal/stations"
@@ -111,6 +113,11 @@ type Server struct {
 	stopExportWork   context.CancelFunc
 	exportWorkerDone chan struct{}
 
+	// webhookLookupIP is the DNS resolver the Scheduled Reports webhook SSRF guard
+	// uses (Phase 12); nil falls back to net.LookupIP. Tests override it to assert
+	// the private/loopback rejection deterministically.
+	webhookLookupIP func(host string) ([]net.IP, error)
+
 	accounting     *accounting.Repo
 	attachments    *attachments.Repo
 	banking        *banking.Repo
@@ -140,6 +147,7 @@ type Server struct {
 	reconciliation *reconciliation.Repo
 	reportCatalog  *reportcatalog.Repo
 	reportSnaps    *reportsnapshots.Repo
+	scheduledRpts  *scheduledreports.Repo
 	retention      *retention.Repo
 	revenue        *revenue.Repo
 	risk           *risk.Repo
@@ -247,6 +255,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.reportCatalog = reportcatalog.New(deps.DB)
 		s.reportSnaps = reportsnapshots.New(deps.DB)
+		// scheduled_reports CRUD + the cross-tenant dispatcher both run on the owner
+		// pool and scope every query explicitly by tenant_id (mirrors exportJobs /
+		// reportSnaps); the table's RLS policy is defense-in-depth.
+		s.scheduledRpts = scheduledreports.New(deps.DB)
 		s.retention = retention.New(deps.DB)
 		s.revenue = revenue.New(deps.DB)
 		s.risk = risk.New(deps.DB)
