@@ -7,10 +7,15 @@ import { SdkError } from '@fuelgrid/sdk';
 
 const listStations = vi.fn();
 const getStationCloseReport = vi.fn();
+const listReportSnapshots = vi.fn();
+const getReportLockState = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     listStations: (...args: unknown[]) => listStations(...args),
     getStationCloseReport: (...args: unknown[]) => getStationCloseReport(...args),
+    // The snapshots panel (Phase 14) queries these on the station-close page.
+    listReportSnapshots: (...args: unknown[]) => listReportSnapshots(...args),
+    getReportLockState: (...args: unknown[]) => getReportLockState(...args),
     exportReport: vi.fn(),
   },
 }));
@@ -98,11 +103,16 @@ describe('StationClosePage', () => {
     permitted = true;
     listStations.mockReset();
     getStationCloseReport.mockReset();
+    listReportSnapshots.mockReset();
+    getReportLockState.mockReset();
     listStations.mockResolvedValue({
       items: [{ id: 'st-1', code: 'MIK-01', name: 'Mikocheni' }],
       count: 1,
       has_more: false,
     });
+    // The snapshots panel queries these; default to no snapshots / unlocked.
+    listReportSnapshots.mockResolvedValue({ items: [], count: 0, has_more: false });
+    getReportLockState.mockResolvedValue({ report_key: 'station-close', locked: false });
   });
 
   afterEach(() => vi.clearAllMocks());

@@ -26,6 +26,7 @@ import { canUsePermission, usePermission, usePermissions } from '@/hooks/use-per
 
 import { useStationSelection } from '../_components/filters';
 import { PageHeader, ReportFilterBar, ReportStates } from '../_components/report-shell';
+import { SnapshotsPanel } from '../_components/snapshots-panel';
 import {
   DataQualityPanel,
   DrilldownLinks,
@@ -318,6 +319,11 @@ export default function FinancePage() {
                     insights={env.insights}
                     recommendedActions={env.recommended_actions}
                   />
+
+                  {/* Snapshot/lock the tenant-wide financial statement for the
+                      period (the snapshot key 'financials' is the tenant-wide
+                      statement, gated by finance.read — matching this page's gate). */}
+                  <SnapshotsPanel reportKey="financials" filters={{ period }} permitted={allowed} />
 
                   <div className="flex flex-col gap-3">
                     <DrilldownLinks links={env.drilldown} />

@@ -139,4 +139,32 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 		r.Get("/exports/{id}", s.handleGetExportJob)
 		r.Get("/exports/{id}/download", s.handleDownloadExportJob)
 	})
+
+	// Report snapshots & locking (Reports Center Phase 14 — blueprint §15). Each
+	// route is gated INSIDE the handler by the SAME permission as running the
+	// underlying report live (resolved from the report key / the snapshot's
+	// captured filters via reportSpecFor + policy.Can) — a snapshot must never
+	// expose data the actor cannot run live. The coarse route gate is reports.read
+	// (every reports user reaches the surface); the in-handler per-report re-check
+	// is the authoritative gate (403 when the actor cannot run that report).
+	//
+	// The literal "snapshots/{id}" routes are registered alongside the param
+	// "{key}/snapshots" route; chi prefers the static "snapshots" segment over the
+	// "{key}" wildcard, so a snapshot id is never mistaken for a report key.
+	r.With(s.requirePermissionHeld("reports.read")).Group(func(r chi.Router) {
+		// Recent signed-off snapshots across reports — the hub "Locked" rail. The
+		// handler permission-filters each row by the underlying report's permission.
+		r.Get("/reports/snapshots/recent", s.handleRecentLockedSnapshots)
+		// Lock-state for a report/scope: does a signed-off snapshot exist? Drives
+		// the lock badge on a report view.
+		r.Get("/reports/{key}/lock-state", s.handleReportLockState)
+		// Capture / list a report's snapshots (the revision chain).
+		r.Post("/reports/{key}/snapshots", s.handleCaptureSnapshot)
+		r.Get("/reports/{key}/snapshots", s.handleListSnapshots)
+		// View a single snapshot's stored envelope + metadata.
+		r.Get("/reports/snapshots/{id}", s.handleGetSnapshot)
+		// Sign-off / reopen workflow.
+		r.Post("/reports/snapshots/{id}/sign-off", s.handleSignOffSnapshot)
+		r.Post("/reports/snapshots/{id}/reopen", s.handleReopenSnapshot)
+	})
 }
