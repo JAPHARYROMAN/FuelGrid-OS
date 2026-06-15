@@ -18,17 +18,26 @@ import (
 // stored durably in Postgres (NO external blob store). It mirrors the scheduler's
 // safety model:
 //
-//   - MULTI-INSTANCE SAFE: before draining, the loop takes a single session-level
-//     Postgres advisory lock; only the replica that wins drains this tick, the
-//     others skip without blocking. The per-row claim additionally uses FOR UPDATE
-//     SKIP LOCKED, so even within one replica two drains never grab the same job.
+//   - MULTI-INSTANCE SAFE: the AUTHORITATIVE concurrency control is the per-row
+//     claim — ClaimNext's `UPDATE ... WHERE status='queued' ... FOR UPDATE SKIP
+//     LOCKED` atomically flips exactly one queued row to 'running' and is correct
+//     on its own even with many concurrent workers (two claims can never grab the
+//     same row). The session-level advisory lock taken before draining is only a
+//     COARSE tick-skipper: it lets just one replica run a drain tick at a time so
+//     the others don't spin uselessly — it is NOT what guarantees single-claim
+//     correctness, and it is deliberately released per tick.
 //   - IDEMPOTENT: Complete/Fail guard on status = 'running', so a redelivered or
 //     retried terminal write never double-writes. A job's bytes are stored once.
 //   - PERMISSION-AWARE: every job re-checks the requesting actor's permission AT
 //     GENERATION (renderExportJob); a revoked actor yields a FAILED/forbidden job,
 //     never data.
 //   - ERROR-ISOLATED: a panic or error in one job fails that job and continues;
-//     the loop never dies. A poison job that keeps failing is capped by maxAttempts.
+//     the loop never dies.
+//   - SELF-HEALING: a job stuck in 'running' (the worker was SIGKILLed / evicted
+//     after the claim committed but before Complete/Fail) is RECLAIMED once it is
+//     older than exportJobStaleAfter — re-queued for another attempt, or failed
+//     permanently once it has burned maxExportAttempts (a poison job that keeps
+//     crashing the worker is capped and never retried forever).
 //
 // Lifecycle: startExportWorker is called by Server.Start(); stopExportWorker by
 // Server.Shutdown(). A nil DB (thin smoke deployment / a harness that never
@@ -45,6 +54,15 @@ const (
 	// exportJobRenderTimeout bounds a single job's render so one slow report can't
 	// hold the worker's connection indefinitely.
 	exportJobRenderTimeout = 60 * time.Second
+	// exportJobStaleAfter is how long a job may sit in 'running' before it is
+	// presumed abandoned (the worker died mid-render) and reclaimed. It is the
+	// render timeout plus generous slack for the terminal write, so a job that is
+	// genuinely still rendering is never reclaimed out from under a live worker.
+	exportJobStaleAfter = exportJobRenderTimeout + 2*time.Minute
+	// maxExportAttempts caps how many times a job may be claimed before it is
+	// failed permanently. A job that repeatedly crashes the worker (poison job) is
+	// reclaimed up to this many times, then fails terminally instead of looping.
+	maxExportAttempts = 5
 )
 
 // startExportWorker launches the drain-loop goroutine. Idempotent-ish: it is
@@ -129,6 +147,17 @@ func (s *Server) drainExportQueue(ctx context.Context) {
 			s.logger.Warn("export worker: advisory unlock", "error", uerr)
 		}
 	}()
+
+	// Reclaim jobs abandoned in 'running' by a crashed/evicted worker before
+	// draining the queue, so a wedged job is recovered (re-queued, or failed once
+	// it has burned its attempt budget) rather than hanging forever.
+	if n, rerr := s.exportJobs.ReclaimStale(ctx, time.Now().Add(-exportJobStaleAfter), maxExportAttempts); rerr != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("export worker: reclaim stale", "error", rerr)
+		}
+	} else if n > 0 {
+		s.logger.Info("export worker: reclaimed stale jobs", "count", n)
+	}
 
 	for i := 0; i < exportWorkerBatch; i++ {
 		if ctx.Err() != nil {

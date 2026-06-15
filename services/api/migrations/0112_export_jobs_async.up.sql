@@ -33,8 +33,10 @@ ALTER TABLE export_jobs
     ADD COLUMN started_at           timestamptz,
     -- When the worker reached a terminal status (completed or failed).
     ADD COLUMN completed_at         timestamptz,
-    -- How many times a worker has attempted this job. Bumped each claim so a
-    -- poison job that keeps failing can be capped and never retried forever.
+    -- How many times a worker has claimed this job. Bumped on each claim; the
+    -- worker's stale-running reclaim re-queues an abandoned job until attempts
+    -- reaches maxExportAttempts, then fails it permanently — so a poison job that
+    -- keeps crashing the worker is capped and never retried forever.
     ADD COLUMN attempts             integer NOT NULL DEFAULT 0;
 
 -- The worker claim query orders queued jobs oldest-first and skips locked rows;

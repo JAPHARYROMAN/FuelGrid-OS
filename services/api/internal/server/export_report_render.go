@@ -58,7 +58,14 @@ func reportSpecFor(reportKey string) (reportSpec, bool) {
 	switch reportKey {
 	case "revenue", "station-close", "sales":
 		return reportSpec{perm: "revenue.read", stationScoped: true, build: buildStationCloseEnvelope}, true
-	case "reconciliation", "inventory-reconciliation", "inventory", "delivery":
+	case "reconciliation", "inventory-reconciliation":
+		// NOTE: the "inventory" and "delivery" aliases are deliberately NOT routed
+		// here. On the legacy export surface those keys map (via buildExportURL) to
+		// the station INVENTORY snapshot (inventory.csv), gated by inventory.read —
+		// a different report AND a different permission than reconciliation. Routing
+		// them to the reconciliation builder would silently change both the data and
+		// the authorization for back-compat callers, so they fall through to the
+		// legacy receipt path unchanged.
 		return reportSpec{perm: "reconciliation.read", stationScoped: true, build: buildReconciliationEnvelope}, true
 	case "financials":
 		return reportSpec{perm: "finance.read", stationScoped: false, build: buildFinancialsEnvelope}, true

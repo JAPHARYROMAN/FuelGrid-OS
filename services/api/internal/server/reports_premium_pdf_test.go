@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xuri/excelize/v2"
+
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
 )
 
@@ -123,4 +125,75 @@ func TestRenderEnvelopeCSV_CarriesDecimalStrings(t *testing.T) {
 // contains is a tiny strings.Contains shim kept local to avoid widening imports.
 func contains(haystack, needle string) bool {
 	return bytes.Contains([]byte(haystack), []byte(needle))
+}
+
+// TestPremiumPDF_BrandingWithLogo renders the premium envelope PDF with a tenant
+// logo (real PNG bytes) AND with deliberately CORRUPT bytes whose content-type
+// claims PNG — exercising the logo-embedding branch the text-branding tests skip.
+// Both must produce a valid PDF without panicking (the corrupt case degrades to no
+// logo via the pdf.Ok()/info guards rather than crashing the worker).
+func TestPremiumPDF_BrandingWithLogo(t *testing.T) {
+	at := time.Date(2026, 6, 14, 9, 30, 0, 0, time.UTC)
+	base := LetterheadBranding{
+		DisplayName:  "Mikocheni Energy Ltd",
+		AddressLine1: "12 Bagamoyo Road",
+		City:         "Dar es Salaam",
+		Country:      "Tanzania",
+	}
+
+	withLogo := base
+	withLogo.Logo = tinyPNG(t)
+	withLogo.LogoContentType = "image/png"
+	out, err := renderEnvelopePDF(sampleEnvelope(), withLogo, "Ada Admin", at)
+	if err != nil {
+		t.Fatalf("renderEnvelopePDF (valid logo): %v", err)
+	}
+	assertValidPDF(t, out)
+
+	corrupt := base
+	corrupt.Logo = []byte("this is not a PNG even though the content-type says it is")
+	corrupt.LogoContentType = "image/png"
+	out, err = renderEnvelopePDF(sampleEnvelope(), corrupt, "Ada Admin", at)
+	if err != nil {
+		t.Fatalf("renderEnvelopePDF (corrupt logo): %v", err)
+	}
+	assertValidPDF(t, out)
+}
+
+// TestRenderEnvelopeXLSX_PreservesDecimalMoney asserts the XLSX renderer does not
+// let money/litre figures drift from their exact decimal strings: a value with a
+// significant trailing zero ("12345678.90") must be stored so the cell reads back
+// the EXACT source string, never a lossy float ("12345678.9"). Clean round values
+// may still be typed as numbers, but they must read back equal to the source too.
+func TestRenderEnvelopeXLSX_PreservesDecimalMoney(t *testing.T) {
+	env := sampleEnvelope()
+	data, err := renderEnvelopeXLSX(env)
+	if err != nil {
+		t.Fatalf("renderEnvelopeXLSX: %v", err)
+	}
+	f, err := excelize.OpenReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("open xlsx: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+	sheet := f.GetSheetName(0)
+
+	// sampleEnvelope's first data row is gross=12345678.90 in column C (3rd col).
+	// Read it back and assert it equals the exact decimal string carried by the
+	// envelope — proving no float round-trip dropped the trailing zero.
+	got, err := f.GetCellValue(sheet, "C2")
+	if err != nil {
+		t.Fatalf("get C2: %v", err)
+	}
+	if got != "12345678.90" {
+		t.Fatalf("XLSX money cell C2 = %q, want exact decimal %q (float round-trip lost precision)", got, "12345678.90")
+	}
+	// The negative cash_variance "-1500.00" (column G) must likewise survive verbatim.
+	gotNeg, err := f.GetCellValue(sheet, "G2")
+	if err != nil {
+		t.Fatalf("get G2: %v", err)
+	}
+	if gotNeg != "-1500.00" {
+		t.Fatalf("XLSX money cell G2 = %q, want exact decimal %q", gotNeg, "-1500.00")
+	}
 }

@@ -20,10 +20,11 @@ import (
 // These endpoints mirror the existing revenue / reconciliation / financials CSV
 // exports (reports_handlers.go) but produce a clean .xlsx workbook: a frozen
 // header row, a styled header band, and currency/number formatting so the file
-// opens ready-to-read in Excel/Sheets. Money/litre figures are written as exact
-// numbers parsed from their decimal strings ONLY for the cell value — the
-// figures are not recomputed. Each export is permission-gated by the route and
-// audited via writeExportFile exactly like the CSV/GL exports.
+// opens ready-to-read in Excel/Sheets. Money/litre figures are written as their
+// EXACT decimal strings (never floated — see buildWorkbook) with a number format
+// + right alignment, so the XLSX figure can never drift from the CSV/PDF. Each
+// export is permission-gated by the route and audited via writeExportFile
+// exactly like the CSV/GL exports.
 
 const (
 	xlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -41,8 +42,15 @@ type xlsxColumn struct {
 }
 
 // buildWorkbook renders a single-sheet workbook with a frozen, styled header
-// row and per-column number formats. rows are raw string cell values; numeric
-// columns are parsed to float for the cell so Excel treats them as numbers.
+// row and per-column number formats. rows are raw string cell values.
+//
+// MONEY/LITRE EXACTNESS: money and number columns carry exact decimal STRINGS
+// (the decimal-string money discipline the CSV/PDF renderers share). They are
+// written as STRING cells — never SetCellFloat — so a value like "12345678.90"
+// or "-1500.00" is stored verbatim and can never drift from the figure the
+// CSV/PDF carry. The money/number number-format style is still applied (with
+// right alignment) so the column reads cleanly in Excel/Sheets; we trade Excel
+// native-number SUM for exactness deliberately (do not float money anywhere).
 // Returns the serialised .xlsx bytes.
 func buildWorkbook(sheet string, cols []xlsxColumn, rows [][]string) ([]byte, error) {
 	f := excelize.NewFile()
@@ -65,11 +73,20 @@ func buildWorkbook(sheet string, cols []xlsxColumn, rows [][]string) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
-	moneyStyle, err := f.NewStyle(&excelize.Style{CustomNumFmt: ptr(moneyFmt)})
+	// Money/number cells are written as exact strings (see buildWorkbook doc); the
+	// number format + right alignment keep the column visually numeric without
+	// floating the value.
+	moneyStyle, err := f.NewStyle(&excelize.Style{
+		CustomNumFmt: ptr(moneyFmt),
+		Alignment:    &excelize.Alignment{Horizontal: "right"},
+	})
 	if err != nil {
 		return nil, err
 	}
-	numberStyle, err := f.NewStyle(&excelize.Style{CustomNumFmt: ptr(numberFmt)})
+	numberStyle, err := f.NewStyle(&excelize.Style{
+		CustomNumFmt: ptr(numberFmt),
+		Alignment:    &excelize.Alignment{Horizontal: "right"},
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -94,16 +111,18 @@ func buildWorkbook(sheet string, cols []xlsxColumn, rows [][]string) ([]byte, er
 			val := row[c]
 			switch col.numFmt {
 			case "money", "number":
-				if n, err := strconv.ParseFloat(val, 64); err == nil {
-					_ = f.SetCellFloat(sheet, cell, n, -1, 64)
+				// Write the EXACT decimal string (never SetCellFloat) so the figure can
+				// never drift from the CSV/PDF; apply the number format + right alignment
+				// so the column still reads numeric. Empty/non-numeric cells (e.g. a "—"
+				// placeholder) just carry their text without the numeric style.
+				_ = f.SetCellStr(sheet, cell, val)
+				if looksNumeric(val) {
 					if col.numFmt == "money" {
 						_ = f.SetCellStyle(sheet, cell, cell, moneyStyle)
 					} else {
 						_ = f.SetCellStyle(sheet, cell, cell, numberStyle)
 					}
-					continue
 				}
-				_ = f.SetCellStr(sheet, cell, val)
 			default:
 				_ = f.SetCellStr(sheet, cell, val)
 			}

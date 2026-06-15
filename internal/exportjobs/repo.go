@@ -228,6 +228,37 @@ func (r *Repo) ClaimNext(ctx context.Context) (*Job, error) {
 	return &j, nil
 }
 
+// ReclaimStale recovers jobs that were claimed ('running') but never reached a
+// terminal status — the worker process was SIGKILLed / OOM-killed / evicted after
+// the claim committed but before Complete/Fail. Such a row would otherwise be
+// wedged in 'running' forever (ClaimNext only selects 'queued'). For every running
+// row whose started_at is older than staleBefore, this:
+//
+//   - permanently FAILS it (status='failed') when attempts >= maxAttempts — a
+//     poison job that keeps crashing the worker is capped and never retried again;
+//   - otherwise RE-QUEUES it (status='queued', started_at=NULL) so the next claim
+//     re-runs it (with a fresh permission re-check at generation).
+//
+// It runs cross-tenant on the owner pool (background work, like ClaimNext) under
+// the worker's advisory lock, so only one replica reclaims per tick. Returns the
+// number of rows reclaimed (failed + re-queued) for logging.
+func (r *Repo) ReclaimStale(ctx context.Context, staleBefore time.Time, maxAttempts int) (int64, error) {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE export_jobs SET
+		    status       = CASE WHEN attempts >= $2 THEN 'failed' ELSE 'queued' END,
+		    started_at   = CASE WHEN attempts >= $2 THEN started_at ELSE NULL END,
+		    completed_at = CASE WHEN attempts >= $2 THEN now() ELSE NULL END,
+		    error        = CASE WHEN attempts >= $2
+		                        THEN 'export worker stopped before this job finished (retry limit reached)'
+		                        ELSE error END
+		WHERE status = 'running' AND started_at IS NOT NULL AND started_at < $1
+	`, staleBefore, maxAttempts)
+	if err != nil {
+		return 0, err
+	}
+	return ct.RowsAffected(), nil
+}
+
 // Complete stamps a successful render onto a running job: it stores the file
 // bytes + metadata inline and moves the job to 'completed'. Idempotent on
 // redelivery — a job already in a terminal state is left untouched (the WHERE

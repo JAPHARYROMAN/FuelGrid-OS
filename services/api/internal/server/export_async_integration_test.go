@@ -206,6 +206,88 @@ func TestExportAsync_BackCompatSyncEndpoints(t *testing.T) {
 	}
 }
 
+// TestExportAsync_CrossTenantDownloadIsNotFound proves the stored export bytes are
+// tenant-isolated: tenant A enqueues + completes an export, then tenant B's admin
+// (a different tenant entirely) tries to GET A's job status and download by the
+// SAME id and is met with a 404 on both — never A's bytes. This is the regression
+// guard the security review asked for over the hand-written tenant_id predicate.
+func TestExportAsync_CrossTenantDownloadIsNotFound(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminA := h.login(t, slug(h), h.ids.adminEmail)
+
+	// Tenant A: enqueue + complete a financials CSV export.
+	code, body := h.postJSON(t, "/api/v1/exports", adminA,
+		`{"report_key":"financials","format":"csv","filters":{"period":"this-month"}}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("enqueue (tenant A) = %d, want 202 (%v)", code, body)
+	}
+	jobID, _ := body["id"].(string)
+	final := pollExportJob(t, h, adminA, jobID)
+	if final["status"] != "completed" {
+		t.Fatalf("tenant A job status = %v, want completed", final["status"])
+	}
+
+	// Tenant B: a fully-separate tenant whose admin holds reports.export but whose
+	// queries are scoped to tenant B.
+	ids2 := seedTenant(t, ctx, h.pool)
+	defer cleanupTenant(ctx, h.pool, ids2.tenantID)
+	var slug2 string
+	if err := h.pool.QueryRow(ctx, `SELECT slug FROM tenants WHERE id = $1`, ids2.tenantID).Scan(&slug2); err != nil {
+		t.Fatalf("read tenant B slug: %v", err)
+	}
+	adminB := h.login(t, slug2, ids2.adminEmail)
+
+	// Status read by A's id under B's identity must 404 (not leak existence/data).
+	if code, _ := h.getJSON(t, "/api/v1/exports/"+jobID, adminB); code != http.StatusNotFound {
+		t.Fatalf("cross-tenant GET status = %d, want 404", code)
+	}
+	// Download by A's id under B's identity must 404 — never A's stored bytes.
+	if code, _, _, _ := h.download(t, "/api/v1/exports/"+jobID+"/download", adminB); code != http.StatusNotFound {
+		t.Fatalf("cross-tenant download = %d, want 404", code)
+	}
+}
+
+// TestExportAsync_ReclaimStaleRunningJob proves a job wedged in 'running' (the
+// worker died after the claim committed but before Complete/Fail) is recovered:
+// the worker's reclaim re-queues it once it is older than the stale threshold, and
+// the running worker then drains it to completed. We simulate the crash by writing
+// a 'running' row with a backdated started_at directly (no live render in flight).
+func TestExportAsync_ReclaimStaleRunningJob(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	admin := h.login(t, slug(h), h.ids.adminEmail)
+
+	// Insert an export job already stuck in 'running' with started_at far in the
+	// past (older than exportJobStaleAfter) and attempts below the cap, as if a
+	// previous worker claimed it and then crashed.
+	var adminID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, h.ids.adminEmail).Scan(&adminID); err != nil {
+		t.Fatalf("read admin id: %v", err)
+	}
+	var jobID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `
+		INSERT INTO export_jobs
+		    (tenant_id, report_key, format, filters, status, requested_by, started_at, attempts)
+		VALUES ($1, 'financials', 'csv', '{"period":"this-month"}', 'running', $2, now() - interval '1 hour', 1)
+		RETURNING id`,
+		h.ids.tenantID, adminID).Scan(&jobID); err != nil {
+		t.Fatalf("seed stale running job: %v", err)
+	}
+
+	// The running worker should reclaim (re-queue) the stale row and then complete
+	// it; poll the status surface until it reaches completed.
+	final := pollExportJob(t, h, admin, jobID.String())
+	if final["status"] != "completed" {
+		t.Fatalf("reclaimed job final status = %v, want completed (error=%v)", final["status"], final["error"])
+	}
+	if dl, _ := final["download_url"].(string); dl == "" {
+		t.Fatalf("reclaimed+completed job missing download_url (%v)", final)
+	}
+}
+
 // ---- helpers ----
 
 // download issues an authenticated GET and returns the status, content type,
