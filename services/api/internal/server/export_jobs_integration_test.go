@@ -29,24 +29,22 @@ func TestExportJobs_RecordListAndGet(t *testing.T) {
 
 	admin := h.login(t, tenantSlug, h.ids.adminEmail)
 
-	// (a) record a financials CSV export job.
+	// (a) enqueue a financials CSV export job. The surface is now ASYNCHRONOUS:
+	// the POST returns 202 with a queued job (the worker renders it later).
 	code, body := h.postJSON(t, "/api/v1/exports", admin,
 		`{"report_key":"financials","format":"csv","filters":{"period":"this-month"}}`)
-	if code != http.StatusCreated {
-		t.Fatalf("create export job = %d, want 201 (%v)", code, body)
+	if code != http.StatusAccepted {
+		t.Fatalf("enqueue export job = %d, want 202 (%v)", code, body)
 	}
 	jobID, _ := body["id"].(string)
 	if jobID == "" {
-		t.Fatalf("create export job: missing id (%v)", body)
+		t.Fatalf("enqueue export job: missing id (%v)", body)
 	}
-	if body["status"] != "completed" {
-		t.Fatalf("status = %v, want completed", body["status"])
+	if body["status"] != "queued" {
+		t.Fatalf("status = %v, want queued", body["status"])
 	}
 	if body["report_key"] != "financials" || body["format"] != "csv" {
 		t.Fatalf("job key/format = %v/%v, want financials/csv", body["report_key"], body["format"])
-	}
-	if url, _ := body["file_url"].(string); url != "/api/v1/reports/financials.csv?period=this-month" {
-		t.Fatalf("file_url = %q, want the mapped financials CSV URL", url)
 	}
 
 	// (b) it shows in the history and is fetchable by id.

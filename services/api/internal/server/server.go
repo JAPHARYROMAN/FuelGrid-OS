@@ -104,6 +104,12 @@ type Server struct {
 	stopHealthcheck context.CancelFunc
 	healthcheckDone chan struct{}
 
+	// Async export worker (Reports Center Phase 13). Started by Start(), stopped
+	// by Shutdown(); stopExportWork cancels its context and exportWorkerDone is
+	// closed when its goroutine exits. A nil DB leaves it unstarted.
+	stopExportWork   context.CancelFunc
+	exportWorkerDone chan struct{}
+
 	accounting     *accounting.Repo
 	attachments    *attachments.Repo
 	banking        *banking.Repo
@@ -323,6 +329,10 @@ func (s *Server) Start() error {
 	// Kick off the background DB health checker (REL-5) before we start
 	// serving so the cached health flag is primed. No-op when deps.DB is nil.
 	s.startHealthcheck()
+	// Kick off the async export worker (Reports Center Phase 13): it drains the
+	// export_jobs queue, advisory-locked so multiple replicas cooperate. No-op
+	// when deps.DB is nil.
+	s.startExportWorker()
 	s.logger.Info("api listening", "addr", s.cfg.Addr())
 	if err := s.http.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -336,5 +346,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("api shutting down")
 	err := s.http.Shutdown(ctx)
 	s.stopHealthcheckChecker()
+	// Stop the export worker after HTTP drains so an in-flight render finishes (or
+	// hits its own bounded ctx) before the goroutine exits; never leaked.
+	s.stopExportWorker()
 	return err
 }

@@ -95,9 +95,40 @@ function ExportButton({
 }
 
 /**
- * Export history — the durable receipts of report exports (Feature 10.7),
- * newest first. Gated by reports.export; the query only fires for permitted
- * users so a denied actor sees an explanatory empty state rather than a 403.
+ * Download a completed async export job's stored bytes via the SDK (the
+ * permission is re-checked server-side at delivery) and save it to disk.
+ */
+function DownloadJobButton({
+  job,
+}: {
+  job: { id: string; file_name: string | null; format: string };
+}) {
+  const [busy, setBusy] = React.useState(false);
+  async function run() {
+    setBusy(true);
+    try {
+      const blob = await api.downloadExportJob(job.id);
+      triggerDownload(blob, job.file_name ?? `${job.id}.${job.format}`);
+    } catch {
+      // The history row already shows the job status; a failed download stays quiet.
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button size="sm" variant="ghost" disabled={busy} onClick={run}>
+      <Download className="size-4" />
+      {busy ? 'Downloading…' : (job.file_name ?? 'Download')}
+    </Button>
+  );
+}
+
+/**
+ * Export history — the async export queue + receipts (Feature 10.7 / Export
+ * Center), newest first. Gated by reports.export; the query only fires for
+ * permitted users so a denied actor sees an explanatory empty state rather than
+ * a 403. While any job is still queued/running the list polls so a completed
+ * job's download action appears without a manual refresh.
  */
 function ExportHistory() {
   const allowed = usePermission('reports.export');
@@ -105,6 +136,13 @@ function ExportHistory() {
     queryKey: ['export-jobs'],
     queryFn: ({ signal }) => api.listExportJobs({ limit: 20 }, signal),
     enabled: allowed === true,
+    // Poll while any job is in flight so completed downloads surface promptly,
+    // then fall idle once everything is terminal.
+    refetchInterval: (query) => {
+      const items = query.state.data?.items ?? [];
+      const inFlight = items.some((j) => j.status === 'queued' || j.status === 'running');
+      return inFlight ? 2000 : false;
+    },
   });
 
   if (allowed === false) {
@@ -172,7 +210,16 @@ function ExportHistory() {
                 {new Date(j.created_at).toLocaleString()}
               </td>
               <td className="py-2 pr-4">
-                {j.file_url ? (
+                {j.status === 'failed' ? (
+                  <span className="text-destructive" title={j.error ?? undefined}>
+                    {j.error ?? 'Failed'}
+                  </span>
+                ) : j.download_url ? (
+                  // Async completed job — stream the stored bytes (permission
+                  // re-checked at delivery) via the SDK.
+                  <DownloadJobButton job={j} />
+                ) : j.file_url ? (
+                  // Legacy synchronous receipt — link the same-origin file URL.
                   <a
                     className="text-accent underline-offset-2 hover:underline"
                     href={j.file_url}
@@ -182,7 +229,9 @@ function ExportHistory() {
                     {j.file_name ?? 'Download'}
                   </a>
                 ) : (
-                  <span className="text-muted-foreground">—</span>
+                  <span className="text-muted-foreground">
+                    {j.status === 'completed' ? '—' : 'Preparing…'}
+                  </span>
                 )}
               </td>
             </tr>

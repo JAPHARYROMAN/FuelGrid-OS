@@ -2718,32 +2718,37 @@ paths:
     get:
       tags: [Reports]
       summary: List the tenant's report export-job history (newest first)
-      description: A durable receipt + history of report exports (Feature 10.7). Gated by reports.export.
+      description: The async export queue + history (Feature 10.7 / Export Center). Gated by reports.export.
       parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
         '403': { $ref: '#/components/responses/Forbidden' }
     post:
       tags: [Reports]
-      summary: Record a report export job
+      summary: Request a report export job (async)
       description: >-
-        Records a durable receipt of an export request (report_key, format,
-        filters) and maps it onto the existing synchronous export file URL, then
-        audits the request as a 'report.exported' event carrying the job id.
-        Gated by reports.export.
+        ENQUEUES an asynchronous export job (report_key, format, filters): the
+        advisory-locked worker re-checks the requesting actor's permission at
+        generation time, re-runs the report, renders the file (CSV/PDF/XLSX) and
+        stores the bytes durably in Postgres, then marks the job completed/failed.
+        Poll GET /exports/{id} for status and download via GET /exports/{id}/download
+        once completed. A report the worker cannot render but the legacy file
+        endpoints map returns an immediate completed receipt (201) with a file_url.
+        Audits 'report.exported'. Gated by reports.export.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/Object' }
       responses:
-        '201': { description: Export job recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '202': { description: Export job enqueued (async), content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '201': { description: Legacy synchronous receipt recorded, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
   /api/v1/exports/{id}:
     get:
       tags: [Reports]
-      summary: Fetch one report export job by id
+      summary: Fetch one report export job by id (poll for status)
       description: Tenant-scoped. Gated by reports.export.
       parameters:
         - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
@@ -2752,6 +2757,28 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/exports/{id}/download:
+    get:
+      tags: [Reports]
+      summary: Download a completed async export job's stored file bytes
+      description: >-
+        Streams the rendered file the worker stored for this job. The requesting
+        actor's permission is RE-CHECKED at delivery, so a user who has lost
+        access cannot download the data. Returns 409 when the job is not yet
+        completed (queued/running/failed, or a legacy receipt with no stored
+        bytes). Gated by reports.export.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The rendered report file (CSV/PDF/XLSX) as an attachment.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The export is not ready for download (still queued/running, failed, or a legacy receipt). }
 
   /api/v1/audit-logs/export:
     post:

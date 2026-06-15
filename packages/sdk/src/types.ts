@@ -2157,7 +2157,7 @@ export interface ReportExportResult {
   url: string;
 }
 
-/** The body to record a report export job (Feature 10.7). */
+/** The body to request a report export job (Feature 10.7 / Export Center). */
 export interface ExportJobRequest {
   report_key: string;
   format: 'csv' | 'pdf' | 'xlsx';
@@ -2165,8 +2165,14 @@ export interface ExportJobRequest {
 }
 
 /**
- * A recorded report export job: a durable receipt of an export request and the
- * resulting file's metadata, powering the reporting hub's export history.
+ * A report export job. The Export Center (Reports Center Phase 13) is
+ * asynchronous: POST /exports enqueues a job (status `queued`), an
+ * advisory-locked worker re-checks the actor's permission, re-runs the report,
+ * renders the file and stores the bytes durably in Postgres, moving the job to
+ * `completed` (with a `download_url`) or `failed` (with an `error`). The client
+ * polls status and, once completed, downloads via `download_url`. A report the
+ * worker cannot render but the legacy file endpoints map still returns an
+ * immediate `completed` receipt carrying `file_url` (and no `download_url`).
  */
 export interface ExportJob {
   id: string;
@@ -2174,13 +2180,27 @@ export interface ExportJob {
   format: string;
   filters: Record<string, string>;
   status: 'queued' | 'running' | 'completed' | 'failed';
+  /** Same-origin URL of the legacy synchronous file (back-compat receipt path). */
   file_url: string | null;
   file_name: string | null;
   file_size: number | null;
+  /** Failure reason when status is `failed` (e.g. a forbidden generation re-check). */
   error: string | null;
   requested_by: string;
   /** RFC3339 creation timestamp. */
   created_at: string;
+  /** RFC3339 worker-start timestamp; null until claimed. */
+  started_at?: string | null;
+  /** RFC3339 terminal timestamp; null until completed/failed. */
+  completed_at?: string | null;
+  /** sha256 hex checksum of the rendered file; null until completed. */
+  checksum?: string | null;
+  /**
+   * Same-origin download endpoint for the stored bytes; non-null only once the
+   * async worker has completed the job. The front-end shows the download action
+   * when this is present.
+   */
+  download_url?: string | null;
 }
 
 // ---- Phase 7: Finance & Accounting Control ----

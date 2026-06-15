@@ -126,7 +126,12 @@ func (d *pdfDoc) renderLetterhead(b LetterheadBranding, opts LetterheadOptions) 
 	startY := pdf.GetY()
 	textX := pdfMargin
 
-	// Logo top-left, scaled to fit the logo box while preserving aspect.
+	// Logo top-left, scaled to fit the logo box while preserving aspect. A logo
+	// whose bytes don't match its declared content-type (e.g. a truncated upload, or
+	// a content-type of image/png over JPEG bytes) makes RegisterImageOptionsReader
+	// set fpdf's internal error. We DEGRADE to the no-logo letterhead in that case —
+	// clearing the error so the rest of the document (and the whole export job) still
+	// renders, rather than failing the export over a bad branding asset.
 	if len(b.Logo) > 0 {
 		imgType := fpdfImageType(b.LogoContentType)
 		info := pdf.RegisterImageOptionsReader(
@@ -146,6 +151,9 @@ func (d *pdfDoc) renderLetterhead(b LetterheadBranding, opts LetterheadOptions) 
 				fpdf.ImageOptions{ImageType: imgType}, 0, "",
 			)
 			textX = pdfMargin + letterheadLogoMaxWidth + 6
+		} else if pdf.Err() {
+			// Unregisterable logo: drop it and continue with the text-only header.
+			pdf.ClearError()
 		}
 	}
 
