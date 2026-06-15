@@ -93,6 +93,9 @@ import type {
   ReportExportResult,
   ExportJobRequest,
   ExportJob,
+  ReportSnapshot,
+  CaptureSnapshotRequest,
+  ReportLockState,
   Role,
   Sale,
   SaleVoid,
@@ -3703,6 +3706,123 @@ export class Client {
       `${this.baseURL}/api/v1/exports/${encodeURIComponent(id)}/download`,
       'application/octet-stream',
       signal,
+    );
+  }
+
+  // ----------- Report snapshots & locking (Reports Center Phase 14) -----------
+
+  /**
+   * Capture an IMMUTABLE snapshot of a report (blueprint §15). Re-runs the report
+   * to its ReportEnvelope under the actor's permission, canonical-hashes it
+   * (identical data yields an identical hash) and stores it frozen (status
+   * `draft`, revision 1 — or revision N+1 superseding a reopened prior snapshot
+   * when `supersedes_id` is set). Audits 'report.snapshot.captured'. Gated by the
+   * SAME permission as running the report live.
+   */
+  captureReportSnapshot(
+    reportKey: string,
+    req?: CaptureSnapshotRequest,
+    signal?: AbortSignal,
+  ): Promise<ReportSnapshot> {
+    return this.request<ReportSnapshot>(
+      `/api/v1/reports/${encodeURIComponent(reportKey)}/snapshots`,
+      { method: 'POST', body: req ?? {}, signal },
+    );
+  }
+
+  /**
+   * List a report's snapshots (its revision chain), newest first. A station-scoped
+   * report requires `stationID`. Gated by the report's own permission.
+   */
+  listReportSnapshots(
+    reportKey: string,
+    opts?: { stationID?: string; limit?: number; offset?: number },
+    signal?: AbortSignal,
+  ): Promise<Paginated<ReportSnapshot>> {
+    const qs = new URLSearchParams();
+    if (opts?.stationID) qs.set('station_id', opts.stationID);
+    if (opts?.limit != null) qs.set('limit', String(opts.limit));
+    if (opts?.offset != null) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<ReportSnapshot>>(
+      `/api/v1/reports/${encodeURIComponent(reportKey)}/snapshots${q ? `?${q}` : ''}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Fetch a single snapshot's STORED envelope (a point-in-time view, NOT a live
+   * re-run) plus its hash + metadata. Gated by the SAME permission as running the
+   * underlying report live, so a signed-off snapshot never leaks data the actor
+   * could not run live.
+   */
+  getReportSnapshot(id: string, signal?: AbortSignal): Promise<ReportSnapshot> {
+    return this.request<ReportSnapshot>(`/api/v1/reports/snapshots/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  /**
+   * Sign off a snapshot (lock it): records the signer + time alongside the
+   * capturer. Audits 'report.snapshot.signed_off'.
+   */
+  signOffReportSnapshot(
+    id: string,
+    body?: { note?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportSnapshot> {
+    return this.request<ReportSnapshot>(
+      `/api/v1/reports/snapshots/${encodeURIComponent(id)}/sign-off`,
+      { method: 'POST', body: body ?? {}, signal },
+    );
+  }
+
+  /**
+   * Reopen a signed-off snapshot. Requires a `correction_note`; marks the snapshot
+   * `reopened` (the captured payload stays immutable — capture the corrected figure
+   * as the next revision via {@link captureReportSnapshot} with `supersedes_id`).
+   * Audits 'report.snapshot.reopened'.
+   */
+  reopenReportSnapshot(
+    id: string,
+    body: { correction_note: string },
+    signal?: AbortSignal,
+  ): Promise<ReportSnapshot> {
+    return this.request<ReportSnapshot>(
+      `/api/v1/reports/snapshots/${encodeURIComponent(id)}/reopen`,
+      { method: 'POST', body, signal },
+    );
+  }
+
+  /**
+   * Whether a SIGNED-OFF snapshot exists for the report/scope (drives the lock
+   * badge on a report view). Gated by the report's own permission.
+   */
+  getReportLockState(
+    reportKey: string,
+    opts?: { stationID?: string },
+    signal?: AbortSignal,
+  ): Promise<ReportLockState> {
+    const qs = new URLSearchParams();
+    if (opts?.stationID) qs.set('station_id', opts.stationID);
+    const q = qs.toString();
+    return this.request<ReportLockState>(
+      `/api/v1/reports/${encodeURIComponent(reportKey)}/lock-state${q ? `?${q}` : ''}`,
+      { signal },
+    );
+  }
+
+  /**
+   * Recent signed-off snapshots across reports (the hub "Locked" rail). Each row is
+   * permission-filtered server-side, so the rail only lists locked reports the
+   * actor could run live. Gated by reports.read.
+   */
+  listRecentLockedSnapshots(
+    signal?: AbortSignal,
+  ): Promise<{ items: ReportSnapshot[]; count: number }> {
+    return this.request<{ items: ReportSnapshot[]; count: number }>(
+      '/api/v1/reports/snapshots/recent',
+      { signal },
     );
   }
 

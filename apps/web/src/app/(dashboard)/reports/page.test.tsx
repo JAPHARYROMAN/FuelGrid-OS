@@ -9,10 +9,12 @@ import type { ReportCatalog } from '@fuelgrid/sdk';
 // page (and its child components) call.
 const getReportCatalog = vi.fn();
 const listExportJobs = vi.fn();
+const listRecentLockedSnapshots = vi.fn();
 vi.mock('@/lib/api', () => ({
   api: {
     getReportCatalog: (...a: unknown[]) => getReportCatalog(...a),
     listExportJobs: (...a: unknown[]) => listExportJobs(...a),
+    listRecentLockedSnapshots: (...a: unknown[]) => listRecentLockedSnapshots(...a),
   },
 }));
 
@@ -118,6 +120,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   getReportCatalog.mockResolvedValue(catalog);
   listExportJobs.mockResolvedValue({ items: [], count: 0 });
+  listRecentLockedSnapshots.mockResolvedValue({ items: [], count: 0 });
 });
 
 describe('Reports home', () => {

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, CalendarClock, Clock, Download, Lock } from 'lucide-react';
 
-import { SdkError, type ExportJob } from '@fuelgrid/sdk';
+import { SdkError, type ExportJob, type ReportSnapshot } from '@fuelgrid/sdk';
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
@@ -21,8 +21,9 @@ import { usePermission } from '@/hooks/use-permissions';
  *   - Recent   — no report_runs store yet (Phase 12/14); honest empty state.
  *   - Scheduled— no per-tenant scheduled_reports store yet (Phase 12); honest
  *                empty state pointing at the scheduled digests page.
- *   - Locked   — no report_snapshots / sign-off store yet (Phase 14); honest
- *                empty state.
+ *   - Locked   — backed by /reports/snapshots/recent (report_snapshots, Phase 14);
+ *                lists recent SIGNED-OFF snapshots, permission-filtered server-side,
+ *                or an honest empty state when none exist / no access.
  */
 
 function RailShell({
@@ -118,6 +119,52 @@ function ExportsRail() {
   );
 }
 
+function LockedRail() {
+  const canRead = usePermission('reports.read');
+  const locked = useQuery({
+    queryKey: ['reports-hub', 'locked'],
+    queryFn: ({ signal }) => api.listRecentLockedSnapshots(signal),
+    enabled: canRead !== false,
+    retry: false,
+  });
+
+  const items: ReportSnapshot[] = locked.data?.items ?? [];
+  const forbidden = locked.error instanceof SdkError && locked.error.status === 403;
+
+  return (
+    <RailShell icon={<Lock />} title="Locked">
+      {canRead === false || forbidden ? (
+        <RailEmpty>You don&apos;t have access to locked report snapshots.</RailEmpty>
+      ) : locked.isPending ? (
+        <>
+          <Skeleton className="h-9 rounded-lg" />
+          <Skeleton className="h-9 rounded-lg" />
+        </>
+      ) : items.length === 0 ? (
+        <RailEmpty>
+          No signed-off snapshots yet. Capture and sign off a report to lock it here.
+        </RailEmpty>
+      ) : (
+        items.map((s) => (
+          <div
+            key={s.id}
+            className="flex items-center justify-between gap-2 rounded-lg border border-border/70 px-3 py-2"
+          >
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-medium text-foreground">{s.report_key}</span>
+              <span className="text-xs text-muted-foreground">
+                Rev {s.revision} · signed off{' '}
+                {s.signed_off_at ? shortTime(s.signed_off_at) : shortTime(s.captured_at)}
+              </span>
+            </div>
+            <Badge tone="info">Locked</Badge>
+          </div>
+        ))
+      )}
+    </RailShell>
+  );
+}
+
 function ExportStatusBadge({ status }: { status: ExportJob['status'] }) {
   const tone =
     status === 'completed'
@@ -160,11 +207,7 @@ export function ReportRails() {
         </RailEmpty>
       </RailShell>
 
-      <RailShell icon={<Lock />} title="Locked">
-        <RailEmpty>
-          Immutable report snapshots and sign-off will be listed here once locking ships (Phase 14).
-        </RailEmpty>
-      </RailShell>
+      <LockedRail />
 
       <ExportsRail />
     </section>

@@ -2780,6 +2780,141 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The export is not ready for download (still queued/running, failed, or a legacy receipt). }
 
+  # ---------------------------------------------------------------------------
+  # Report snapshots & locking (Reports Center Phase 14 — blueprint §15)
+  # ---------------------------------------------------------------------------
+  /api/v1/reports/snapshots/recent:
+    get:
+      tags: [Reports]
+      summary: Recent signed-off report snapshots (the hub "Locked" rail)
+      description: >-
+        The most recent SIGNED-OFF snapshots across reports, each PERMISSION-FILTERED
+        so the rail only lists a locked snapshot whose underlying report the actor
+        could run live (the same gate as running the report). Coarse-gated by
+        reports.read; the per-report permission is re-checked in-handler.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/{key}/lock-state:
+    get:
+      tags: [Reports]
+      summary: Lock-state for a report/scope (does a signed-off snapshot exist?)
+      description: >-
+        Reports whether a SIGNED-OFF snapshot exists for the {key} report and the
+        optional ?station_id scope, returning the locking snapshot's id + content
+        hash + signer when locked. Drives the lock badge on a report view. Gated by
+        the SAME permission as running the report live (re-checked in-handler against
+        the report key + scope), so the badge never leaks across scope.
+      parameters:
+        - { in: path, name: key, required: true, schema: { type: string } }
+        - { in: query, name: station_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/{key}/snapshots:
+    get:
+      tags: [Reports]
+      summary: List a report's snapshots (the revision chain), newest first
+      description: >-
+        Lists the immutable snapshots captured for the {key} report (its revision
+        history). Gated by the SAME permission as running the report live; a
+        station-scoped report requires ?station_id so the scope re-check matches the
+        captured snapshots.
+      parameters:
+        - { in: path, name: key, required: true, schema: { type: string } }
+        - { in: query, name: station_id, required: false, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Reports]
+      summary: Capture an immutable snapshot of a report
+      description: >-
+        Re-runs the {key} report to its ReportEnvelope under the actor's permission,
+        canonical-hashes it (sha256 of a stable serialization — identical data yields
+        an identical hash), and stores an IMMUTABLE snapshot (status draft, revision 1,
+        or revision N+1 superseding a reopened prior snapshot when `supersedes_id` is
+        set). The captured envelope + hash are frozen by a DB trigger; a correction
+        never overwrites — it captures the next revision. Audits 'report.snapshot.captured'.
+        Gated by the SAME permission as running the report live.
+      parameters:
+        - { in: path, name: key, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Object' }
+      responses:
+        '201': { description: Snapshot captured, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The superseded snapshot must be reopened before a new revision can be captured. }
+  /api/v1/reports/snapshots/{id}:
+    get:
+      tags: [Reports]
+      summary: View a snapshot's stored envelope + metadata (point-in-time)
+      description: >-
+        Returns the STORED ReportEnvelope captured at snapshot time (a point-in-time
+        view, NOT a live re-run) plus its content hash + metadata. Gated by the SAME
+        permission as running the underlying report live (re-checked against the
+        snapshot's captured filters), so a signed-off snapshot never leaks data the
+        actor could not run live. Tenant-scoped.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Snapshot with stored envelope, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/snapshots/{id}/sign-off:
+    post:
+      tags: [Reports]
+      summary: Sign off a snapshot (lock it)
+      description: >-
+        Transitions a draft/reopened snapshot to 'signed_off', recording the signer +
+        time alongside the original capturer (both stay on the immutable record). The
+        captured payload is untouched. Audits 'report.snapshot.signed_off'. Gated by
+        the SAME permission as running the report live.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody: { required: false, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Snapshot signed off, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The snapshot is already signed off / cannot be signed off in its current state. }
+  /api/v1/reports/snapshots/{id}/reopen:
+    post:
+      tags: [Reports]
+      summary: Reopen a signed-off snapshot (requires a correction note)
+      description: >-
+        Reopens a SIGNED-OFF snapshot: requires a `correction_note`, marks the
+        snapshot 'reopened' and clears the sign-off stamp — the captured payload stays
+        immutable. The corrected figure is captured as the NEXT revision (POST
+        /reports/{key}/snapshots with supersedes_id = this snapshot). Audits
+        'report.snapshot.reopened'. Gated by the SAME permission as running the report live.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Object' }
+      responses:
+        '200': { description: Snapshot reopened, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Only a signed-off snapshot can be reopened. }
+
   /api/v1/audit-logs/export:
     post:
       tags: [Audit]

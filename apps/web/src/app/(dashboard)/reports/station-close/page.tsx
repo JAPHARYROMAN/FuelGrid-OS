@@ -23,6 +23,7 @@ import { usePermission } from '@/hooks/use-permissions';
 
 import { useStationSelection } from '../_components/filters';
 import { PageHeader, ReportFilterBar, ReportStates } from '../_components/report-shell';
+import { SnapshotsPanel } from '../_components/snapshots-panel';
 import {
   DataQualityPanel,
   DrilldownLinks,
@@ -351,6 +352,13 @@ export default function StationClosePage() {
                   <InsightPanel
                     insights={env.insights}
                     recommendedActions={env.recommended_actions}
+                  />
+
+                  <SnapshotsPanel
+                    reportKey="station-close"
+                    stationId={stationId}
+                    filters={filters}
+                    permitted={allowed}
                   />
 
                   <div className="flex flex-col gap-3">

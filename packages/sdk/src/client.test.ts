@@ -951,3 +951,112 @@ describe('Client async export-job methods (Export Center)', () => {
     await expect(client.downloadExportJob('job-1')).rejects.toBeInstanceOf(SdkError);
   });
 });
+
+describe('Client report snapshots & locking (Phase 14)', () => {
+  const snap = {
+    id: 'snap-1',
+    report_key: 'station-close',
+    filters_used: { station_id: 'st-1' },
+    content_hash: 'a'.repeat(64),
+    captured_by: 'user-1',
+    captured_at: '2026-06-15T08:00:00Z',
+    status: 'draft' as const,
+    revision: 1,
+    supersedes_id: null,
+    signed_off_by: null,
+    signed_off_at: null,
+    correction_note: null,
+    created_at: '2026-06-15T08:00:00Z',
+  };
+
+  it('captures a snapshot (POST /reports/{key}/snapshots)', async () => {
+    const f = jsonFetch(201, snap);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.captureReportSnapshot('station-close', {
+      filters: { station_id: 'st-1' },
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/station-close/snapshots');
+    expect(init.method).toBe('POST');
+    expect(res.id).toBe('snap-1');
+    expect(res.content_hash).toHaveLength(64);
+    expect(res.status).toBe('draft');
+  });
+
+  it('lists a report revision chain (GET /reports/{key}/snapshots)', async () => {
+    const f = jsonFetch(200, { items: [snap], count: 1, limit: 20, offset: 0, has_more: false });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listReportSnapshots('station-close', { stationID: 'st-1' });
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/station-close/snapshots?station_id=st-1');
+    expect(res.items).toHaveLength(1);
+  });
+
+  it('views a stored snapshot envelope (GET /reports/snapshots/{id})', async () => {
+    const f = jsonFetch(200, {
+      ...snap,
+      envelope: {
+        metadata: { report_key: 'station-close', title: 'Daily Station Close' },
+        summary: [{ label: 'Sales value', value: '500000.00', unit: 'TZS' }],
+      },
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getReportSnapshot('snap-1');
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/snapshots/snap-1');
+    expect(res.envelope?.metadata.report_key).toBe('station-close');
+  });
+
+  it('signs off a snapshot (POST /reports/snapshots/{id}/sign-off)', async () => {
+    const f = jsonFetch(200, {
+      ...snap,
+      status: 'signed_off',
+      signed_off_by: 'user-1',
+      signed_off_at: '2026-06-15T09:00:00Z',
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.signOffReportSnapshot('snap-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/snapshots/snap-1/sign-off');
+    expect(init.method).toBe('POST');
+    expect(res.status).toBe('signed_off');
+    expect(res.signed_off_by).toBe('user-1');
+  });
+
+  it('reopens a snapshot with a correction note (POST /reports/snapshots/{id}/reopen)', async () => {
+    const f = jsonFetch(200, { ...snap, status: 'reopened', correction_note: 'restate cash' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.reopenReportSnapshot('snap-1', { correction_note: 'restate cash' });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/snapshots/snap-1/reopen');
+    expect(init.method).toBe('POST');
+    expect(res.status).toBe('reopened');
+    expect(res.correction_note).toBe('restate cash');
+  });
+
+  it('reads the lock state of a report (GET /reports/{key}/lock-state)', async () => {
+    const f = jsonFetch(200, {
+      report_key: 'station-close',
+      locked: true,
+      snapshot_id: 'snap-1',
+      content_hash: 'a'.repeat(64),
+      revision: 1,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getReportLockState('station-close', { stationID: 'st-1' });
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/station-close/lock-state?station_id=st-1');
+    expect(res.locked).toBe(true);
+    expect(res.snapshot_id).toBe('snap-1');
+  });
+
+  it('lists recent locked snapshots for the hub rail (GET /reports/snapshots/recent)', async () => {
+    const f = jsonFetch(200, { items: [{ ...snap, status: 'signed_off' }], count: 1 });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listRecentLockedSnapshots();
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/snapshots/recent');
+    expect(res.items).toHaveLength(1);
+    expect(res.count).toBe(1);
+  });
+});

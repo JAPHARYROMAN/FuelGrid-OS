@@ -2203,6 +2203,71 @@ export interface ExportJob {
   download_url?: string | null;
 }
 
+// ---- Report snapshots & locking (Reports Center Phase 14 — blueprint §15) ----
+
+/** A snapshot's sign-off lifecycle status. */
+export type ReportSnapshotStatus = 'draft' | 'signed_off' | 'reopened';
+
+/**
+ * An IMMUTABLE captured report snapshot. The `envelope` (the rendered
+ * {@link ReportEnvelope} captured at snapshot time) and `content_hash` (sha256 of
+ * a canonical serialization of that envelope) are frozen once written — a DB
+ * trigger blocks any mutation. A correction never overwrites: it captures the
+ * NEXT revision (`revision`+1) whose `supersedes_id` points at the prior one, so
+ * every revision stays readable. The list/lock views omit `envelope`; only the
+ * single-snapshot view returns it.
+ */
+export interface ReportSnapshot {
+  id: string;
+  report_key: string;
+  /** The filters that produced the captured report (station_id, period, …). */
+  filters_used: Record<string, string>;
+  /** sha256 hex of the canonical envelope — identical data yields an identical hash. */
+  content_hash: string;
+  captured_by: string;
+  /** RFC3339 capture timestamp. */
+  captured_at: string;
+  status: ReportSnapshotStatus;
+  /** Revision number in the report/scope's chain (starts at 1). */
+  revision: number;
+  /** The prior revision this one supersedes (a correction), or null. */
+  supersedes_id: string | null;
+  signed_off_by: string | null;
+  /** RFC3339 sign-off timestamp; null until signed off. */
+  signed_off_at: string | null;
+  /** The correction note recorded when the snapshot was reopened, or null. */
+  correction_note: string | null;
+  created_at: string;
+  /**
+   * The STORED ReportEnvelope captured at snapshot time (a point-in-time view,
+   * NOT a live re-run). Present only on the single-snapshot view endpoint.
+   */
+  envelope?: ReportEnvelope;
+}
+
+/** The body to capture a snapshot of a report. */
+export interface CaptureSnapshotRequest {
+  /** The report inputs (station_id, period, operating_day_id, …). */
+  filters?: Record<string, string>;
+  /** When correcting, the reopened snapshot this capture supersedes. */
+  supersedes_id?: string;
+}
+
+/**
+ * The lock state of a report/scope: whether a SIGNED-OFF snapshot exists. Drives
+ * the lock badge on a report view.
+ */
+export interface ReportLockState {
+  report_key: string;
+  locked: boolean;
+  /** Present when `locked`: the locking snapshot's id + hash + signer. */
+  snapshot_id?: string;
+  content_hash?: string;
+  revision?: number;
+  signed_off_by?: string | null;
+  signed_off_at?: string | null;
+}
+
 // ---- Phase 7: Finance & Accounting Control ----
 
 export interface Account {
