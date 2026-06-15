@@ -82,10 +82,24 @@ CREATE INDEX idx_report_snapshots_signed_off
     ON report_snapshots (tenant_id, signed_off_at DESC)
     WHERE status = 'signed_off';
 
--- Walk a revision chain by its supersedes link.
-CREATE INDEX idx_report_snapshots_supersedes
+-- Walk a revision chain by its supersedes link. UNIQUE so a prior revision can be
+-- superseded AT MOST ONCE: this prevents the revision chain from FORKING when a
+-- reopened snapshot is (re)captured more than once (two captures both pointing at
+-- the same reopened prior). The second capture fails loudly instead of branching
+-- the chain. Partial so the many rows with no supersedes link don't collide.
+CREATE UNIQUE INDEX idx_report_snapshots_supersedes
     ON report_snapshots (supersedes_id)
     WHERE supersedes_id IS NOT NULL;
+
+-- Each (tenant, report, scope) chain has ONE row per revision number. Two concurrent
+-- captures of the same report/scope both read max(revision)=N and try to insert N+1;
+-- this UNIQUE makes the loser fail (unique_violation) instead of silently creating a
+-- duplicate revision that breaks the audit/restate "revision N" identity. The scope
+-- key MIRRORS MaxRevisionForChain (report_key + station_id), COALESCEd so tenant-wide
+-- reports (station_id NULL) still collide on a duplicate revision rather than treating
+-- every NULL as distinct.
+CREATE UNIQUE INDEX idx_report_snapshots_chain_revision
+    ON report_snapshots (tenant_id, report_key, COALESCE(filters_used->>'station_id', ''), revision);
 
 ALTER TABLE report_snapshots ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON report_snapshots

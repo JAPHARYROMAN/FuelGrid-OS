@@ -143,13 +143,29 @@ func (r *Repo) Get(ctx context.Context, tenantID, id uuid.UUID) (*Snapshot, erro
 
 // ListForReport returns the tenant's snapshots for one report key, newest first
 // (the report page's snapshot panel + revision chain). id breaks ties for stable
-// paging.
-func (r *Repo) ListForReport(ctx context.Context, tenantID uuid.UUID, reportKey string, limit, offset int) ([]Snapshot, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT `+snapshotColumns+` FROM report_snapshots
-		WHERE tenant_id = $1 AND report_key = $2
-		ORDER BY captured_at DESC, id LIMIT $3 OFFSET $4
-	`, tenantID, reportKey, limit, offset)
+// paging. When stationID is non-nil/non-empty the result is SCOPED to that station
+// (filters_used->>'station_id'), mirroring LatestSignedOffForReport /
+// MaxRevisionForChain — so a station-scoped report's list never returns another
+// station's snapshot metadata (notes, signer/capturer ids, hashes, timestamps) to
+// an actor authorized only for their own station. A nil stationID lists every
+// scope (tenant-wide reports, or an explicit cross-scope listing).
+func (r *Repo) ListForReport(ctx context.Context, tenantID uuid.UUID, reportKey string, stationID *string, limit, offset int) ([]Snapshot, error) {
+	var rows pgx.Rows
+	var err error
+	if stationID != nil && *stationID != "" {
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+snapshotColumns+` FROM report_snapshots
+			WHERE tenant_id = $1 AND report_key = $2
+			  AND filters_used->>'station_id' = $3
+			ORDER BY captured_at DESC, id LIMIT $4 OFFSET $5
+		`, tenantID, reportKey, *stationID, limit, offset)
+	} else {
+		rows, err = r.pool.Query(ctx, `
+			SELECT `+snapshotColumns+` FROM report_snapshots
+			WHERE tenant_id = $1 AND report_key = $2
+			ORDER BY captured_at DESC, id LIMIT $3 OFFSET $4
+		`, tenantID, reportKey, limit, offset)
+	}
 	if err != nil {
 		return nil, err
 	}

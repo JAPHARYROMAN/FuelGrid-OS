@@ -35,6 +35,24 @@ import (
 // signed-off snapshot can never leak data to someone who could not run the report
 // live. This mirrors the Export Center's generation-time + delivery-time re-checks.
 
+// snapshotCanonicalKey is the set of report keys the SNAPSHOT surface accepts,
+// mapping each to itself. It is exactly the CANONICAL key each registered builder
+// stamps into metadata.report_key (export_report_render.go: the station-close
+// builder stamps "station-close", reconciliation "inventory-reconciliation",
+// financials "financials", receivables "ar-aging"). The export/live surfaces also
+// accept aliases (e.g. "sales"/"revenue", "reconciliation", "receivables") that
+// normalise onto the same builder, but a snapshot is an immutable, sign-off-bearing
+// record whose report_key must agree with the envelope it actually captured — so
+// aliases are rejected at the snapshot boundary and only the canonical key is
+// snapshot-able. Adding a new snapshot-able report means registering its canonical
+// key here (and in reportSpecFor).
+var snapshotCanonicalKey = map[string]string{
+	"station-close":            "station-close",
+	"inventory-reconciliation": "inventory-reconciliation",
+	"financials":               "financials",
+	"ar-aging":                 "ar-aging",
+}
+
 // snapshotView is the JSON wire shape for a snapshot's metadata (no envelope).
 // The list/lock surfaces use this; the single-view endpoint additionally returns
 // the stored envelope.
@@ -86,6 +104,20 @@ func (s *Server) authorizeSnapshotReport(
 		writeError(w, http.StatusNotFound, "unknown report")
 		return reportSpec{}, false
 	}
+	// PROVENANCE INTEGRITY: a snapshot's report_key must MATCH the report its
+	// envelope actually describes. reportSpecFor normalises several export-surface
+	// aliases onto one builder (e.g. "sales"/"revenue" -> the station-close
+	// builder, "receivables" -> the ar-aging builder), but a snapshot is an
+	// append-only, sign-off-bearing record: storing station-close figures under
+	// report_key="sales" would mean an auditor signs off a "Sales" record that is
+	// actually the station-close rollup. So the snapshot surface accepts ONLY the
+	// CANONICAL key each builder stamps into metadata.report_key; alias keys are
+	// rejected (the live report + export paths still accept the aliases). This
+	// guarantees report_key always agrees with the captured envelope's identity.
+	if canon, known := snapshotCanonicalKey[reportKey]; !known || canon != reportKey {
+		writeError(w, http.StatusNotFound, "unknown report")
+		return reportSpec{}, false
+	}
 	resource := policy.Resource{}
 	if spec.stationScoped {
 		sid, perr := uuid.Parse(strings.TrimSpace(filters["station_id"]))
@@ -96,7 +128,18 @@ func (s *Server) authorizeSnapshotReport(
 		resource = policy.AtStation(sid)
 	}
 	if cerr := s.policy.Can(r.Context(), actor, spec.perm, resource); cerr != nil {
-		writeError(w, http.StatusForbidden, "forbidden")
+		// Distinguish a genuine DENY (ErrForbidden -> 403) from an internal
+		// policy-evaluation failure (DB/loader error -> 500), matching the live
+		// export path (renderExportJob). Masking every error as 403 would tell a
+		// fully-authorized user they're forbidden when the policy store is merely
+		// unreachable. Still fails closed (never grants on error) — only the status
+		// code + logging differ.
+		if errors.Is(cerr, policy.ErrForbidden) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return reportSpec{}, false
+		}
+		s.logger.Error("snapshot authorize: policy check", "error", cerr, "report_key", reportKey)
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return reportSpec{}, false
 	}
 	return spec, true
@@ -216,6 +259,16 @@ func (s *Server) handleCaptureSnapshot(w http.ResponseWriter, r *http.Request) {
 		SupersedesID: supersedesID,
 	})
 	if cerr != nil {
+		// A unique-constraint violation here is a lost RACE, not a server fault:
+		// either two concurrent captures of the same report/scope both computed the
+		// same next revision (idx_report_snapshots_chain_revision), or two captures
+		// tried to supersede the same reopened prior (idx_report_snapshots_supersedes,
+		// which keeps the revision chain from forking). Surface a clean 409 so the
+		// loser can re-read and retry rather than seeing an opaque 500.
+		if isUniqueViolation(cerr) {
+			writeError(w, http.StatusConflict, "a concurrent capture for this report already advanced the revision chain; reload and retry")
+			return
+		}
 		s.logger.Error("snapshot capture: insert", "error", cerr, "report_key", reportKey)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -262,7 +315,10 @@ func (s *Server) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	snaps, lerr := s.reportSnaps.ListForReport(r.Context(), actor.TenantID, reportKey, limit+1, offset)
+	// Scope the list to the station the actor was just authorized for, so a
+	// station-scoped report's revision chain never returns another station's
+	// snapshot metadata (mirrors the lock-state / max-revision station scoping).
+	snaps, lerr := s.reportSnaps.ListForReport(r.Context(), actor.TenantID, reportKey, stationFilterPtr(filters), limit+1, offset)
 	if lerr != nil {
 		s.logger.Error("snapshot list", "error", lerr, "report_key", reportKey)
 		writeError(w, http.StatusInternalServerError, "internal error")

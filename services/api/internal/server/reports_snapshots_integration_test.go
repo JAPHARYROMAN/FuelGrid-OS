@@ -33,11 +33,19 @@ import (
 // station-close report renders real figures. Returns the operating day id.
 func seedStationCloseDay(t *testing.T, ctx context.Context, h *harness, adminID uuid.UUID, businessDate, gross string) uuid.UUID {
 	t.Helper()
+	return seedStationCloseDayAt(t, ctx, h, h.ids.station1, adminID, businessDate, gross)
+}
+
+// seedStationCloseDayAt seeds a revenue_days row for a SPECIFIC station, so a test
+// can stand up captureable station-close data on more than one station (e.g. to
+// prove a station-A actor's snapshot list never returns station-B's snapshots).
+func seedStationCloseDayAt(t *testing.T, ctx context.Context, h *harness, stationID, adminID uuid.UUID, businessDate, gross string) uuid.UUID {
+	t.Helper()
 	var dayID uuid.UUID
 	if err := h.pool.QueryRow(ctx, `
 		INSERT INTO operating_days (tenant_id, station_id, business_date, opened_by)
 		VALUES ($1, $2, $3, $4) RETURNING id
-	`, h.ids.tenantID, h.ids.station1, businessDate, adminID).Scan(&dayID); err != nil {
+	`, h.ids.tenantID, stationID, businessDate, adminID).Scan(&dayID); err != nil {
 		t.Fatalf("seed operating day: %v", err)
 	}
 	if _, err := h.pool.Exec(ctx, `
@@ -45,7 +53,7 @@ func seedStationCloseDay(t *testing.T, ctx context.Context, h *harness, adminID 
 		    (tenant_id, station_id, operating_day_id, business_date,
 		     gross_revenue, net_revenue, cash_total, tender_total, cash_variance, status)
 		VALUES ($1, $2, $3, $4, $5, $5, $5, $5, 0, 'draft')
-	`, h.ids.tenantID, h.ids.station1, dayID, businessDate, gross); err != nil {
+	`, h.ids.tenantID, stationID, dayID, businessDate, gross); err != nil {
 		t.Fatalf("seed revenue day: %v", err)
 	}
 	return dayID
@@ -405,5 +413,136 @@ func TestSnapshot_PermissionGated(t *testing.T) {
 	// And the attendant cannot list financials snapshots either.
 	if code, _ := h.getJSON(t, "/api/v1/reports/financials/snapshots", att); code != http.StatusForbidden {
 		t.Fatalf("attendant list = %d, want 403", code)
+	}
+}
+
+// TestSnapshot_ListIsStationScoped proves the snapshot LIST for a station-scoped
+// report returns only the requested station's snapshots — a station-A actor (or
+// admin querying ?station_id=A) must NOT receive station-B snapshot metadata
+// (station ids, capturer/signer ids, hashes, timestamps, correction notes). This
+// closes the cross-station metadata leak: ListForReport was keyed only by
+// tenant+report_key, ignoring the station the actor was authorized for.
+func TestSnapshot_ListIsStationScoped(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+
+	// Capture a station-close snapshot on station1 AND on station2.
+	seedStationCloseDayAt(t, ctx, h, h.ids.station1, adminID, "2026-05-10", "500000")
+	seedStationCloseDayAt(t, ctx, h, h.ids.station2, adminID, "2026-05-10", "700000")
+
+	s1 := captureStationClose(t, h, admin) // station1
+	code, s2 := h.postJSON(t, "/api/v1/reports/station-close/snapshots", admin,
+		`{"filters":{"station_id":"`+h.ids.station2.String()+`"}}`)
+	if code != http.StatusCreated {
+		t.Fatalf("capture station2 snapshot = %d, want 201 (%v)", code, s2)
+	}
+	id1, id2 := snapID(t, s1), snapID(t, s2)
+
+	// List for station1 -> only station1's snapshot is returned.
+	code, list1 := h.getJSON(t, "/api/v1/reports/station-close/snapshots?station_id="+h.ids.station1.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("list station1 = %d, want 200 (%v)", code, list1)
+	}
+	items1, _ := list1["items"].([]any)
+	if len(items1) != 1 {
+		t.Fatalf("station1 list length = %d, want 1 (must not include station2)", len(items1))
+	}
+	if got := items1[0].(map[string]any)["id"]; got != id1 {
+		t.Fatalf("station1 list returned id %v, want %s", got, id1)
+	}
+
+	// List for station2 -> only station2's snapshot. The leak would show id1 here.
+	code, list2 := h.getJSON(t, "/api/v1/reports/station-close/snapshots?station_id="+h.ids.station2.String(), admin)
+	if code != http.StatusOK {
+		t.Fatalf("list station2 = %d, want 200 (%v)", code, list2)
+	}
+	items2, _ := list2["items"].([]any)
+	if len(items2) != 1 {
+		t.Fatalf("station2 list length = %d, want 1 (must not include station1)", len(items2))
+	}
+	if got := items2[0].(map[string]any)["id"]; got != id2 {
+		t.Fatalf("station2 list returned id %v, want %s", got, id2)
+	}
+}
+
+// TestSnapshot_RevisionChainCannotFork proves a reopened snapshot can be superseded
+// AT MOST ONCE: after a recapture supersedes a reopened prior, a SECOND capture
+// trying to supersede the SAME prior is rejected (the unique supersedes index keeps
+// the revision chain a single line, never a fork). The chain stays linear.
+func TestSnapshot_RevisionChainCannotFork(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+	dayID := seedStationCloseDay(t, ctx, h, adminID, "2026-05-10", "500000")
+
+	rev1 := captureStationClose(t, h, admin)
+	id1 := snapID(t, rev1)
+
+	// Sign off then reopen rev1, so it becomes a supersede-able 'reopened' prior.
+	if code, _ := h.postJSON(t, "/api/v1/reports/snapshots/"+id1+"/sign-off", admin, `{}`); code != http.StatusOK {
+		t.Fatalf("sign-off = %d, want 200", code)
+	}
+	if code, _ := h.postJSON(t, "/api/v1/reports/snapshots/"+id1+"/reopen", admin,
+		`{"correction_note":"restate"}`); code != http.StatusOK {
+		t.Fatalf("reopen = %d, want 200", code)
+	}
+
+	// First supersede succeeds (rev2).
+	if _, err := h.pool.Exec(ctx,
+		`UPDATE revenue_days SET gross_revenue = 600000, net_revenue = 600000 WHERE operating_day_id = $1`, dayID); err != nil {
+		t.Fatalf("mutate live: %v", err)
+	}
+	code, rev2 := h.postJSON(t, "/api/v1/reports/station-close/snapshots", admin,
+		`{"filters":{"station_id":"`+h.ids.station1.String()+`"},"supersedes_id":"`+id1+`"}`)
+	if code != http.StatusCreated {
+		t.Fatalf("first supersede = %d, want 201 (%v)", code, rev2)
+	}
+
+	// SECOND supersede of the SAME reopened prior must be rejected — the chain
+	// cannot fork. (id1 is still 'reopened', so the status guard alone would let it
+	// through; the unique supersedes index is what blocks it -> 409.)
+	code, forked := h.postJSON(t, "/api/v1/reports/station-close/snapshots", admin,
+		`{"filters":{"station_id":"`+h.ids.station1.String()+`"},"supersedes_id":"`+id1+`"}`)
+	if code != http.StatusConflict {
+		t.Fatalf("second supersede of same prior = %d, want 409 conflict — the chain must not fork (%v)", code, forked)
+	}
+
+	// And the chain is still a single line: exactly one row supersedes id1.
+	var superseders int
+	if err := h.pool.QueryRow(ctx,
+		`SELECT count(*) FROM report_snapshots WHERE supersedes_id = $1`, id1).Scan(&superseders); err != nil {
+		t.Fatalf("count superseders: %v", err)
+	}
+	if superseders != 1 {
+		t.Fatalf("id1 superseded %d times, want exactly 1 (no fork)", superseders)
+	}
+}
+
+// TestSnapshot_AliasKeysRejected proves the snapshot surface accepts only the
+// CANONICAL report key each builder stamps, never an export-surface alias. The
+// "sales"/"revenue" aliases route to the station-close builder on the live/export
+// paths, but capturing them as snapshots would store station-close figures under a
+// mislabeled report_key on an immutable, sign-off-bearing record. They must 404.
+func TestSnapshot_AliasKeysRejected(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	adminID, _, admin := h.adminContext(t, ctx)
+	seedStationCloseDay(t, ctx, h, adminID, "2026-05-10", "500000")
+
+	for _, alias := range []string{"sales", "revenue", "reconciliation", "receivables", "customer-aging"} {
+		body := `{"filters":{"station_id":"` + h.ids.station1.String() + `"}}`
+		if code, resp := h.postJSON(t, "/api/v1/reports/"+alias+"/snapshots", admin, body); code != http.StatusNotFound {
+			t.Fatalf("capture alias %q = %d, want 404 (only canonical keys are snapshot-able) (%v)", alias, code, resp)
+		}
+	}
+
+	// The canonical key still works.
+	if code, _ := h.postJSON(t, "/api/v1/reports/station-close/snapshots", admin,
+		`{"filters":{"station_id":"`+h.ids.station1.String()+`"}}`); code != http.StatusCreated {
+		t.Fatalf("capture canonical station-close = %d, want 201", code)
 	}
 }

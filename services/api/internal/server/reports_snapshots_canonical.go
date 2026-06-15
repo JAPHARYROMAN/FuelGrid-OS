@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -47,9 +48,19 @@ func canonicalEnvelopeJSON(env ReportEnvelope) (storage json.RawMessage, content
 // so two renders of identical data hash identically. Operating on the raw JSON
 // (not the typed struct) means the canonicalisation is robust to any chart_data
 // shape the report carries.
+//
+// Numbers are decoded with UseNumber() so a JSON number is preserved as its exact
+// literal text (json.Number) rather than round-tripped through float64. The four
+// currently snapshot-able builders emit all money/litre figures as decimal STRINGS
+// and never set numeric chart_data, so this is belt-and-suspenders today; but it
+// makes the hash deterministic by construction for any FUTURE report that carries a
+// numeric field (e.g. a large integer > 2^53 or a high-precision decimal), where a
+// float64 round-trip could otherwise perturb the canonical bytes and the hash.
 func hashCanonicalEnvelope(raw json.RawMessage) (string, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
 	var generic map[string]any
-	if err := json.Unmarshal(raw, &generic); err != nil {
+	if err := dec.Decode(&generic); err != nil {
 		return "", err
 	}
 	// Strip the per-render timestamp so the hash is stable across captures of the
