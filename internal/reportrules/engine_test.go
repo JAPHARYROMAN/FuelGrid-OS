@@ -211,6 +211,50 @@ func TestEvalMarginHealth_NegativeIsCritical(t *testing.T) {
 	if len(got) != 1 || got[0].Severity != SeverityCritical {
 		t.Fatalf("negative margin should be critical, got %+v", got)
 	}
+	// The negative branch uses the rule's configured template verbatim.
+	if got[0].Message != "neg margin" {
+		t.Fatalf("negative branch must render the rule template, got %q", got[0].Message)
+	}
+}
+
+// TestEvalMarginHealth_ContractionUsesOwnTemplate guards the regression where a
+// positive-but-shrinking margin rendered the rule's fixed "negative" template. The
+// contraction branch must supply its own composer-matching message and warn
+// severity, never the negative sentence.
+func TestEvalMarginHealth_ContractionUsesOwnTemplate(t *testing.T) {
+	// Seeded template is the NEGATIVE sentence; the contraction branch must NOT use it.
+	r := baseRule("m", "margin_health", "Latest margin is negative — sales are running below cost.")
+	r.Severity = SeverityCritical
+	r.ThresholdConfig = map[string]any{"contract_pct": float64(15)}
+	f := NewFacts()
+	f.Nums["margin_current"] = "80" // positive
+	f.Nums["margin_prior"] = "100"  // contracted 20% (>= 15 floor)
+	got := Evaluate("sales", []Rule{r}, f)
+	if len(got) != 1 {
+		t.Fatalf("a 20%% contraction should fire once, got %+v", got)
+	}
+	if got[0].Severity != SeverityWarning {
+		t.Fatalf("contraction should be a warning, got %s", got[0].Severity)
+	}
+	if got[0].Message != "Margin contracted -20.0% vs the prior period." {
+		t.Fatalf("contraction message mismatch: %q", got[0].Message)
+	}
+	if got[0].Message == "Latest margin is negative — sales are running below cost." {
+		t.Fatalf("contraction must never claim the margin is negative")
+	}
+}
+
+// TestEvalMarginHealth_ShallowContractionSilent confirms a contraction below the
+// configured floor stays silent (no false warning).
+func TestEvalMarginHealth_ShallowContractionSilent(t *testing.T) {
+	r := baseRule("m", "margin_health", "neg")
+	r.ThresholdConfig = map[string]any{"contract_pct": float64(15)}
+	f := NewFacts()
+	f.Nums["margin_current"] = "95" // only -5% vs prior, below the 15% floor
+	f.Nums["margin_prior"] = "100"
+	if got := Evaluate("sales", []Rule{r}, f); len(got) != 0 {
+		t.Fatalf("a shallow contraction below the floor must stay silent, got %+v", got)
+	}
 }
 
 func TestEvalTankOverTolerance_FiresOnCount(t *testing.T) {

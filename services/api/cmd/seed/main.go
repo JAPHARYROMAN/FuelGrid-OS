@@ -553,10 +553,10 @@ func run() error {
 		     message_template, recommended_action, report_placement, mode, is_system,
 		     enabled, status)
 		VALUES
-		    ($1, 'gross_swing', 'Gross revenue swing', 'Mirrors the PeriodOverPeriod composer.', 'sales', 'sales', 'period_over_period',
+		    ($1, 'gross_swing', 'Gross revenue swing', 'Tunable period-over-period gross-swing rule (default 25%, the PeriodOverPeriod composer warn floor); composer stays authoritative.', 'sales', 'sales', 'period_over_period',
 		     25, '{"metric":"Gross revenue","warn_pct":25}', NULL, 'warning',
 		     '{metric} moved {direction} {pct}% vs the prior period.', 'Confirm the day''s transactions before relying on the swing.', 'insight', 'shadow', true, true, 'active'),
-		    ($1, 'gross_variance', 'Gross vs recent average', 'Mirrors the VarianceVs30dAverage composer.', 'sales', 'sales', 'variance_vs_average',
+		    ($1, 'gross_variance', 'Gross vs recent average', 'Tunable variance-vs-recent-average rule (default 20%, the VarianceVs30dAverage composer threshold); composer stays authoritative.', 'sales', 'sales', 'variance_vs_average',
 		     20, '{"metric":"Gross revenue","warn_pct":20}', 30, 'warning',
 		     '{metric} is {pct}% vs its recent average — an unusual reading.', 'Confirm the underlying transactions before relying on this figure.', 'insight', 'shadow', true, true, 'active'),
 		    ($1, 'cash_variance', 'Cash variance over tolerance', 'Mirrors the cashVarianceInsight composer.', 'cash-reconciliation', 'cash', 'cash_variance_over_tolerance',

@@ -229,6 +229,83 @@ func TestGolden_AugmentRuleAddsOneInsight(t *testing.T) {
 	}
 }
 
+// composerMarginMessage renders the marginInsight composer line for a margin
+// series by extracting it from the composer's SalesSummary envelope (the margin
+// insight is the only insight a flat gross series + a margin series produces).
+func composerMarginMessage(t *testing.T, marginVals ...string) string {
+	t.Helper()
+	pts := make([]reporting.PeriodPoint, len(marginVals))
+	for i, v := range marginVals {
+		pts[i] = reporting.PeriodPoint{Label: "d", Value: v}
+	}
+	rep := reporting.SalesSummary(reporting.SalesInput{
+		GrossSeries:  []reporting.PeriodPoint{{Label: "d", Value: "100"}}, // <2 pts: no gross insight
+		MarginSeries: pts, PeriodLocked: true,
+	})
+	for i := range rep.Insights {
+		if rep.Insights[i].Message != "" {
+			return rep.Insights[i].Message
+		}
+	}
+	t.Fatalf("composer produced no margin insight for %v", marginVals)
+	return ""
+}
+
+// engineMarginMessage folds the margin_health system rule (flipped to augment) for
+// the given facts and returns the single rendered engine message.
+func engineMarginMessage(t *testing.T, facts reportrules.Facts) string {
+	t.Helper()
+	rule := reportrules.Rule{
+		ID: "sys-margin_health", Code: "margin_health", ReportKey: "sales",
+		Condition: "margin_health", Severity: reportrules.SeverityCritical,
+		MessageTemplate: "Latest margin is negative — sales are running below cost.",
+		Placement:       reportrules.PlacementInsight, Mode: reportrules.ModeAugment,
+		Enabled: true, Status: "active", ThresholdConfig: map[string]any{"contract_pct": float64(15)},
+	}
+	fired := reportrules.Evaluate("sales", []reportrules.Rule{rule}, facts)
+	if len(fired) != 1 {
+		t.Fatalf("expected exactly one margin_health insight, got %d", len(fired))
+	}
+	return fired[0].Message
+}
+
+// TestGolden_AugmentMarginParity_MatchesComposer locks the augment path's
+// correctness for BOTH margin_health branches: the folded engine line must be
+// byte-identical to the composer's marginInsight line. This is the assertion that
+// would have caught the contraction-branch regression (the rule emitting the fixed
+// "negative" sentence while the composer says "Margin contracted -X.X%…").
+func TestGolden_AugmentMarginParity_MatchesComposer(t *testing.T) {
+	// Negative margin → both say "Latest margin is negative…".
+	negFacts := reportrules.NewFacts()
+	negFacts.Nums["margin_current"] = "-5"
+	if got, want := engineMarginMessage(t, negFacts), composerMarginMessage(t, "-5"); got != want {
+		t.Fatalf("negative-margin augment line diverges from composer:\n got %q\nwant %q", got, want)
+	}
+
+	// Positive but contracting 20% (100 -> 80) → both say "Margin contracted -20.0%…".
+	contractFacts := reportrules.NewFacts()
+	contractFacts.Nums["margin_current"] = "80"
+	contractFacts.Nums["margin_prior"] = "100"
+	if got, want := engineMarginMessage(t, contractFacts), composerMarginMessage(t, "100", "80"); got != want {
+		t.Fatalf("contraction augment line diverges from composer:\n got %q\nwant %q", got, want)
+	}
+}
+
+// TestGolden_AugmentMarginContraction_NotNegativeSentence is a direct regression
+// guard: a positive-but-shrinking margin must NEVER render the "negative" sentence.
+func TestGolden_AugmentMarginContraction_NotNegativeSentence(t *testing.T) {
+	facts := reportrules.NewFacts()
+	facts.Nums["margin_current"] = "80" // positive
+	facts.Nums["margin_prior"] = "100"  // contracted 20%
+	msg := engineMarginMessage(t, facts)
+	if msg == "Latest margin is negative — sales are running below cost." {
+		t.Fatalf("contraction (positive margin) must not claim the margin is negative: %q", msg)
+	}
+	if msg != "Margin contracted -20.0% vs the prior period." {
+		t.Fatalf("unexpected contraction message: %q", msg)
+	}
+}
+
 // TestGolden_DisabledRuleRemovesItsInsight proves disabling an augment rule
 // removes its line (the kill switch works end to end).
 func TestGolden_DisabledRuleRemovesItsInsight(t *testing.T) {

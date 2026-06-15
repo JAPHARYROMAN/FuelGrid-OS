@@ -137,14 +137,18 @@ func evalTankOverTolerance(rule Rule, f Facts) []Fired {
 
 // evalMarginHealth fires when the latest margin is negative (critical) or has
 // contracted past the configured percentage vs the prior period (warning).
-// Mirrors reporting.marginInsight (default contraction 15%). Vars: {pct} (the
-// contraction magnitude) for the warning branch.
+// Mirrors reporting.marginInsight (default contraction 15%): the negative branch
+// uses the rule's seeded "Latest margin is negative…" template; the CONTRACTION
+// branch supplies its own template ("Margin contracted {pct}% vs the prior
+// period.") so the folded line is byte-identical to the composer's contraction
+// prose and never asserts a positive-but-shrinking margin is "negative".
 func evalMarginHealth(rule Rule, f Facts) []Fired {
 	cur, ok := f.num("margin_current")
 	if !ok {
 		return nil
 	}
 	if cur < 0 {
+		// Negative-margin branch: use the rule's configured (critical) template.
 		return []Fired{{
 			Severity: SeverityCritical,
 			Vars:     map[string]string{},
@@ -159,11 +163,15 @@ func evalMarginHealth(rule Rule, f Facts) []Fired {
 	if pct > -contract {
 		return nil
 	}
-	// A contraction past the floor: override to a warning with the contraction
-	// magnitude and a contraction-specific message via the action surface.
+	// Contraction past the floor (margin still POSITIVE): warn with the contraction
+	// magnitude and a contraction-specific template, mirroring the composer's
+	// "Margin contracted %s vs the prior period." (fmtPct renders the signed pct,
+	// e.g. "-20.0%"). {pct} carries the signed magnitude, so the rendered line is
+	// "Margin contracted -20.0% vs the prior period." — identical to the composer.
 	return []Fired{{
 		Severity: SeverityWarning,
 		Action:   "Review pump pricing and COGS for the contraction.",
+		Template: "Margin contracted {pct}% vs the prior period.",
 		Vars: map[string]string{
 			"pct": "-" + fmtPct1(math.Abs(pct)),
 		},

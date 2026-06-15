@@ -167,14 +167,14 @@ CROSS JOIN (VALUES
      'period_over_period', 25::numeric, '{"metric":"Gross revenue","warn_pct":25}', NULL::integer,
      'warning', '{metric} moved {direction} {pct}% vs the prior period.',
      'Confirm the day''s transactions before relying on the swing.', 'insight',
-     'Mirrors the PeriodOverPeriod composer: a period-over-period gross swing past the warn threshold.'),
+     'Tunable period-over-period gross-swing rule. Fires (as a warning) when the swing meets or exceeds its configured threshold (default 25%, the PeriodOverPeriod composer''s warn floor). The composer remains authoritative and additionally emits an info note for smaller swings; this rule is the tunable, augment-on-demand sibling.'),
     -- Variance-vs-recent-average on gross (sales / daily-close). Composer:
     -- VarianceVs30dAverage(threshold 20).
     ('gross_variance', 'Gross vs recent average', 'sales', 'sales',
      'variance_vs_average', 20::numeric, '{"metric":"Gross revenue","warn_pct":20}', 30,
      'warning', '{metric} is {pct}% vs its recent average — an unusual reading.',
      'Confirm the underlying transactions before relying on this figure.', 'insight',
-     'Mirrors the VarianceVs30dAverage composer: the latest gross deviates from its window average past the threshold.'),
+     'Tunable variance-vs-recent-average rule. Fires when the latest gross deviates from its window average by at least the configured threshold (default 20%, the VarianceVs30dAverage composer''s threshold). The composer stays authoritative; this is the tunable, augment-on-demand sibling.'),
     -- Cash variance over tolerance (daily-close / cash-recon). Composer:
     -- cashVarianceInsight (any non-zero over tolerance warns; >2x tolerance critical).
     ('cash_variance', 'Cash variance over tolerance', 'cash', 'cash-reconciliation',

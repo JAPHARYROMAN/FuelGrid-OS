@@ -130,9 +130,18 @@ func (f Facts) intVal(key string) (int, bool) { v, ok := f.Ints[key]; return v, 
 // Fired is one insight an evaluator produced. Severity/Action override the rule's
 // configured defaults when the evaluator computes a sharper grade (e.g. a cash
 // variance beyond 2x tolerance escalates to critical); Vars feed the template.
+//
+// Template overrides the rule's configured MessageTemplate for THIS fired insight
+// only. It is needed when a single evaluator has two distinct branches whose prose
+// differs (e.g. margin_health: a NEGATIVE-margin sentence vs a CONTRACTION
+// sentence) and the seeded rule carries one template. The override is rendered
+// through the same single-pass, injection-safe RenderTemplate with the fired Vars,
+// so determinism and the "no value re-expansion" guarantee are preserved. Empty =>
+// use the rule's MessageTemplate.
 type Fired struct {
 	Severity Severity
 	Action   string
+	Template string
 	Vars     map[string]string
 }
 
@@ -223,12 +232,16 @@ func Evaluate(reportKey string, rules []Rule, facts Facts) []Insight {
 			if fired.Action != "" {
 				action = fired.Action
 			}
+			tmpl := r.MessageTemplate
+			if fired.Template != "" {
+				tmpl = fired.Template
+			}
 			out = append(out, Insight{
 				RuleID:            r.ID,
 				RuleCode:          r.Code,
 				RuleName:          r.Name,
 				Severity:          sev,
-				Message:           RenderTemplate(r.MessageTemplate, fired.Vars),
+				Message:           RenderTemplate(tmpl, fired.Vars),
 				RecommendedAction: action,
 				Placement:         r.Placement,
 				Mode:              r.Mode,
