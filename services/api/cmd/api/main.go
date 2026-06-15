@@ -119,6 +119,50 @@ func run() error {
 
 	srv := server.New(cfg, logger, deps)
 
+	// Background scheduler. Runs recurring business processes (revenue compute,
+	// AR/AP aging refresh, risk detection + scoring, enterprise projection rebuild,
+	// outbox dead-letter sweep, expired-session cleanup, AND the per-tenant
+	// Scheduled Reports dispatcher — Phase 12) on their own timers alongside the
+	// API. It is multi-instance-safe via a per-job Postgres advisory lock, so
+	// running several API replicas runs each job once per tick. Started here (after
+	// the Server is built) so the Scheduled Reports job can use the Server as its
+	// dispatcher: the Server owns the report-rendering path (reportSpecFor /
+	// spec.build), the renderers, notifications and email. SCHEDULER_ENABLED=false
+	// (or every SCHEDULER_*_INTERVAL <= 0) leaves it idle.
+	if deps.DB != nil && cfg.SchedulerEnabled {
+		jobs := scheduler.BuildJobs(scheduler.Deps{
+			Pool:             deps.DB,
+			Revenue:          revenue.New(deps.DB),
+			Risk:             risk.New(deps.DB),
+			Receivables:      receivables.New(deps.DB),
+			Payables:         payables.New(deps.DB),
+			Enterprise:       enterprise.New(deps.DB),
+			Logger:           logger.With("component", "scheduler"),
+			ScheduledReports: srv,
+		}, scheduler.Intervals{
+			RevenueCompute:     cfg.SchedulerRevenueComputeInterval,
+			AgingRefresh:       cfg.SchedulerAgingRefreshInterval,
+			RiskDetect:         cfg.SchedulerRiskDetectInterval,
+			Projection:         cfg.SchedulerProjectionInterval,
+			OutboxSweep:        cfg.SchedulerOutboxSweepInterval,
+			SessionCleanup:     cfg.SchedulerSessionCleanupInterval,
+			RetentionSweep:     cfg.SchedulerRetentionSweepInterval,
+			ScheduledReports:   cfg.SchedulerScheduledReportsInterval,
+			SessionRetention:   cfg.SchedulerSessionRetention,
+			OutboxRequeueAfter: cfg.SchedulerOutboxRequeueAfter,
+			JobRunRetention:    cfg.SchedulerJobRunRetention,
+		})
+		sched := scheduler.New(deps.DB, deps.Metrics, logger.With("component", "scheduler"), cfg.SchedulerLockTimeout, jobs...)
+		sched.Start()
+		defer func() {
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stopCancel()
+			if err := sched.Stop(stopCtx); err != nil {
+				logger.Warn("scheduler stop", "error", err)
+			}
+		}()
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- srv.Start()
@@ -390,68 +434,6 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 			defer stopCancel()
 			if err := publisher.Stop(stopCtx); err != nil {
 				logger.Warn("publisher stop", "error", err)
-			}
-		})
-	}
-
-	// Background scheduler. Runs recurring business processes (revenue compute,
-	// AR/AP aging refresh, risk detection + scoring, enterprise projection
-	// rebuild, outbox dead-letter sweep, expired-session cleanup) on their own
-	// timers alongside the API, the same way the outbox publisher does. It is
-	// multi-instance-safe via a per-job Postgres advisory lock, so running
-	// several API replicas runs each job once per tick. Needs Postgres only;
-	// jobs call the existing domain repos on the owner pool (cross-tenant).
-	// SCHEDULER_ENABLED=false (or every SCHEDULER_*_INTERVAL <= 0) leaves it
-	// effectively idle — the integration harness, which constructs Config{},
-	// gets zero-value intervals and therefore no jobs.
-	if deps.DB != nil && cfg.SchedulerEnabled {
-		// Canned report-email digests. REPORT_DIGEST_ENABLED is the master switch;
-		// when off (the default) the shared digest interval is left at 0 so both
-		// report jobs are dropped at registration. Even when on, the jobs no-op
-		// unless real SMTP + recipients are configured (the console sender drops
-		// mail). The figures are sourced cross-tenant via the same owner pool.
-		reportInterval := time.Duration(0)
-		var reportDeps scheduler.ReportDeps
-		if cfg.ReportDigestEnabled {
-			reportInterval = cfg.SchedulerReportDigestInterval
-			reportDeps = scheduler.ReportDeps{
-				Email:      deps.Email,
-				Accounting: accounting.New(deps.DB),
-				Recipients: cfg.ReportDigestRecipients,
-				SendHour:   cfg.ReportDigestSendHour,
-				Logger:     logger.With("component", "scheduler.reports"),
-			}
-		}
-
-		jobs := scheduler.BuildJobs(scheduler.Deps{
-			Pool:        deps.DB,
-			Revenue:     revenue.New(deps.DB),
-			Risk:        risk.New(deps.DB),
-			Receivables: receivables.New(deps.DB),
-			Payables:    payables.New(deps.DB),
-			Enterprise:  enterprise.New(deps.DB),
-			Logger:      logger.With("component", "scheduler"),
-			Report:      reportDeps,
-		}, scheduler.Intervals{
-			RevenueCompute:     cfg.SchedulerRevenueComputeInterval,
-			AgingRefresh:       cfg.SchedulerAgingRefreshInterval,
-			RiskDetect:         cfg.SchedulerRiskDetectInterval,
-			Projection:         cfg.SchedulerProjectionInterval,
-			OutboxSweep:        cfg.SchedulerOutboxSweepInterval,
-			SessionCleanup:     cfg.SchedulerSessionCleanupInterval,
-			RetentionSweep:     cfg.SchedulerRetentionSweepInterval,
-			ReportDigest:       reportInterval,
-			SessionRetention:   cfg.SchedulerSessionRetention,
-			OutboxRequeueAfter: cfg.SchedulerOutboxRequeueAfter,
-			JobRunRetention:    cfg.SchedulerJobRunRetention,
-		})
-		sched := scheduler.New(deps.DB, metrics, logger.With("component", "scheduler"), cfg.SchedulerLockTimeout, jobs...)
-		sched.Start()
-		cleanups = append(cleanups, func() {
-			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer stopCancel()
-			if err := sched.Stop(stopCtx); err != nil {
-				logger.Warn("scheduler stop", "error", err)
 			}
 		})
 	}

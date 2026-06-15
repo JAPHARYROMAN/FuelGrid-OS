@@ -287,6 +287,36 @@ func (r *Repo) Complete(ctx context.Context, tenantID, id uuid.UUID, in Complete
 	return nil
 }
 
+// CompleteQueued stores the already-rendered file bytes and moves a QUEUED job
+// straight to 'completed', bypassing the async worker. Used by the per-tenant
+// Scheduled Reports dispatcher (Phase 12), which has already rendered the file
+// under the owner's permission and only needs a durable, downloadable receipt — so
+// the async worker must NOT re-render it. Idempotent: guards on status = 'queued'.
+func (r *Repo) CompleteQueued(ctx context.Context, tenantID, id uuid.UUID, in CompleteInput) error {
+	ct, err := r.pool.Exec(ctx, `
+		UPDATE export_jobs SET
+		    status              = 'completed',
+		    result_bytes        = $3,
+		    result_content_type = $4,
+		    result_filename     = $5,
+		    result_size         = $6,
+		    result_checksum     = $7,
+		    file_name           = $5,
+		    file_size           = $6,
+		    error               = NULL,
+		    started_at          = COALESCE(started_at, now()),
+		    completed_at        = now()
+		WHERE tenant_id = $1 AND id = $2 AND status = 'queued'
+	`, tenantID, id, in.Bytes, in.ContentType, in.Filename, int64(len(in.Bytes)), in.Checksum)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Fail moves a running job to 'failed' with a human-readable reason. Idempotent:
 // guards on status = 'running' so a terminal job is never clobbered.
 func (r *Repo) Fail(ctx context.Context, tenantID, id uuid.UUID, reason string) error {

@@ -202,13 +202,14 @@ type Config struct {
 	// (it does not purge — the audit ledger is append-only), so a once-a-day tick
 	// is plenty. <= 0 disables it.
 	SchedulerRetentionSweepInterval time.Duration `envconfig:"SCHEDULER_RETENTION_SWEEP_INTERVAL" default:"24h"`
-	// SchedulerReportDigestInterval is the shared tick cadence for the canned
-	// scheduled-email digests (daily station-close + monthly P&L). It is
-	// deliberately sub-day: each job gates on REPORT_DIGEST_SEND_HOUR and a
-	// job_runs ledger guard, so a 1h tick still yields exactly one daily / one
-	// monthly send while landing it promptly after the send hour. <= 0 (or
-	// REPORT_DIGEST_ENABLED=false) disables both report jobs.
-	SchedulerReportDigestInterval time.Duration `envconfig:"SCHEDULER_REPORT_DIGEST_INTERVAL" default:"1h"`
+	// SchedulerScheduledReportsInterval is the tick cadence for the per-tenant
+	// Scheduled Reports dispatcher (Reports Center Phase 12). Each tick claims
+	// schedules whose next_run_at <= now and atomically advances next_run_at, so a
+	// frequent tick delivers exactly once per period (the advance + per-period
+	// ledger guard collapse duplicates). A sub-period cadence (default 1m) keeps a
+	// schedule's actual delivery close to its configured time. <= 0 disables it.
+	// This SUPERSEDES the removed global env-digest jobs.
+	SchedulerScheduledReportsInterval time.Duration `envconfig:"SCHEDULER_SCHEDULED_REPORTS_INTERVAL" default:"1m"`
 	// SchedulerSessionRetention is how long a session row is kept after it
 	// expires or is revoked before the cleanup job prunes it; the durable
 	// sessions table is an audit trail, so we keep terminated rows for a window
@@ -234,18 +235,13 @@ type Config struct {
 	// email (e.g. the password-reset URL). Falls back to localhost in dev.
 	AppBaseURL string `envconfig:"APP_BASE_URL" default:"http://localhost:3000"`
 
-	// Canned scheduled report-email digests (internal/scheduler report jobs).
-	// ReportDigestEnabled is a master switch for BOTH the daily station-close
-	// digest and the monthly P&L summary; ReportDigestRecipients is the
-	// comma-separated To: list. When recipients are empty — or SMTP is
-	// unconfigured (console driver) — the jobs are a deliberate no-op, matching
-	// the rest of the env-gated email surface. ReportDigestSendHour (0–23, server
-	// local time) is the hour at/after which a once-per-period digest is allowed
-	// to send; combined with the sub-day scheduler tick and a job_runs ledger
-	// guard it collapses to exactly one send per day / per month.
-	ReportDigestEnabled    bool     `envconfig:"REPORT_DIGEST_ENABLED" default:"false"`
-	ReportDigestRecipients []string `envconfig:"REPORT_DIGEST_RECIPIENTS"`
-	ReportDigestSendHour   int      `envconfig:"REPORT_DIGEST_SEND_HOUR" default:"6"`
+	// ScheduledReportsWebhookAllowHosts is an OPTIONAL allowlist of exact hostnames
+	// the per-tenant Scheduled Reports webhook channel may POST to (Phase 12). When
+	// non-empty ONLY these hosts are permitted (in addition to the always-on SSRF
+	// guard: https required, private/loopback/link-local addresses rejected). When
+	// empty the SSRF guard alone applies — any public https host is allowed. Set
+	// this to lock webhook delivery down to known integration endpoints.
+	ScheduledReportsWebhookAllowHosts []string `envconfig:"SCHEDULED_REPORTS_WEBHOOK_ALLOW_HOSTS"`
 
 	// M-Pesa (Safaricom Daraja) mobile-money collections. When
 	// MPESA_CONSUMER_KEY / MPESA_CONSUMER_SECRET are unset the client is a

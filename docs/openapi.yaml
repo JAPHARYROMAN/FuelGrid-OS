@@ -2915,6 +2915,122 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Only a signed-off snapshot can be reopened. }
 
+  # ---------------------------------------------------------------------------
+  # Scheduled Reports (Reports Center Phase 12 — blueprint §8): per-tenant
+  # recurring report deliveries. Gated by reports.schedule; each write ALSO
+  # re-checks the underlying report's own run permission. The dispatcher
+  # re-checks permission at delivery per recipient, so a revoked grant leaks
+  # nothing. Webhook URLs are SSRF-guarded (https only, private/loopback hosts
+  # rejected).
+  # ---------------------------------------------------------------------------
+  /api/v1/reports/scheduled:
+    get:
+      tags: [Reports]
+      summary: List the tenant's scheduled reports
+      description: Lists the tenant's scheduled report definitions, newest first. Gated by reports.schedule.
+      parameters: [{ $ref: '#/components/parameters/LimitParam' }, { $ref: '#/components/parameters/OffsetParam' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Reports]
+      summary: Create a scheduled report
+      description: >-
+        Creates a per-tenant scheduled report: a report_key + filters re-run on a
+        recurrence (daily/weekly/monthly/cron) and delivered to recipients over a
+        channel (in_app/email/webhook). Gated by reports.schedule AND the underlying
+        report's own run permission (re-checked from report_key + station scope). A
+        webhook_url is SSRF-validated. Audits 'report.scheduled.created'.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Object' }
+      responses:
+        '201': { description: Scheduled report created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/scheduled/{id}:
+    get:
+      tags: [Reports]
+      summary: Get one scheduled report
+      description: Returns one scheduled report (tenant-scoped; a cross-tenant id is a 404). Gated by reports.schedule.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Reports]
+      summary: Update a scheduled report
+      description: >-
+        Replaces a scheduled report's definition (report_key is immutable). Re-checks
+        the report's run permission + SSRF-validates a webhook_url. Audits
+        'report.scheduled.updated'.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Object' }
+      responses:
+        '200': { description: Scheduled report updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Reports]
+      summary: Delete a scheduled report
+      description: Deletes a scheduled report (its run history cascades). Audits 'report.scheduled.deleted'. Gated by reports.schedule.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/scheduled/{id}/enabled:
+    post:
+      tags: [Reports]
+      summary: Enable or disable a scheduled report
+      description: >-
+        Enables/disables a scheduled report. On re-enable the next_run_at is
+        recomputed from now so a long-paused schedule doesn't fire for every missed
+        period. Gated by reports.schedule.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { enabled: { type: boolean } }, required: [enabled] }
+      responses:
+        '200': { description: Toggled, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/scheduled/{id}/run-now:
+    post:
+      tags: [Reports]
+      summary: Run a scheduled report immediately
+      description: >-
+        Triggers an immediate, out-of-band run of a scheduled report. Re-checks the
+        caller can run the report, renders + delivers under a unique manual period key
+        (so it never collides with the scheduled period's idempotency key), and
+        records the run. Gated by reports.schedule + the report's own permission.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Run dispatched, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/scheduled/{id}/runs:
+    get:
+      tags: [Reports]
+      summary: List a scheduled report's recent runs
+      description: Returns a scheduled report's run history (one row per delivered period), newest first. Gated by reports.schedule.
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/audit-logs/export:
     post:
       tags: [Audit]

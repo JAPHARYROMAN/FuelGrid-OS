@@ -64,7 +64,7 @@ func TestJobLockKeyStableAndDistinct(t *testing.T) {
 	names := []string{
 		"revenue_compute", "aging_refresh", "risk_detect",
 		"enterprise_projection", "outbox_dead_letter_sweep", "session_token_cleanup",
-		"retention_sweep", "report_daily_close_digest", "report_monthly_pnl",
+		"retention_sweep", "scheduled_reports_dispatch",
 	}
 	seen := map[int64]string{}
 	for _, n := range names {
@@ -114,20 +114,19 @@ func TestTruncateDetail(t *testing.T) {
 func TestBuildJobsCatalog(t *testing.T) {
 	t.Parallel()
 	jobs := BuildJobs(Deps{}, Intervals{
-		RevenueCompute: time.Hour,
-		AgingRefresh:   time.Hour,
-		RiskDetect:     time.Hour,
-		Projection:     time.Hour,
-		OutboxSweep:    time.Hour,
-		SessionCleanup: time.Hour,
-		RetentionSweep: time.Hour,
-		ReportDigest:   time.Hour,
+		RevenueCompute:   time.Hour,
+		AgingRefresh:     time.Hour,
+		RiskDetect:       time.Hour,
+		Projection:       time.Hour,
+		OutboxSweep:      time.Hour,
+		SessionCleanup:   time.Hour,
+		RetentionSweep:   time.Hour,
+		ScheduledReports: time.Hour,
 	})
 	want := map[string]bool{
 		"revenue_compute": false, "aging_refresh": false, "risk_detect": false,
 		"enterprise_projection": false, "outbox_dead_letter_sweep": false, "session_token_cleanup": false,
-		"retention_sweep":           false,
-		"report_daily_close_digest": false, "report_monthly_pnl": false,
+		"retention_sweep": false, "scheduled_reports_dispatch": false,
 	}
 	if len(jobs) != len(want) {
 		t.Fatalf("expected %d jobs, got %d", len(want), len(jobs))

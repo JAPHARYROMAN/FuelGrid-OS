@@ -10,8 +10,10 @@ package email
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -19,12 +21,24 @@ import (
 	"time"
 )
 
+// Attachment is one file attached to a Message. ContentType defaults to
+// application/octet-stream when blank. Used by the per-tenant Scheduled Reports
+// email channel to deliver the rendered CSV/PDF/XLSX file (Reports Center
+// Phase 12).
+type Attachment struct {
+	Filename    string
+	ContentType string
+	Data        []byte
+}
+
 // Message is one outbound email. Body is plain text; HTML is intentionally out
 // of scope for this boundary (the templates are short transactional notices).
+// Attachments, when present, are encoded as a MIME multipart/mixed message.
 type Message struct {
-	To      string
-	Subject string
-	Body    string
+	To          string
+	Subject     string
+	Body        string
+	Attachments []Attachment
 }
 
 // Sender delivers transactional email. Implementations must be safe for
@@ -148,16 +162,73 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 // Driver returns "smtp".
 func (s *SMTPSender) Driver() string { return "smtp" }
 
-// render builds the RFC 5322 message bytes (headers + plain-text body).
+// render builds the RFC 5322 message bytes. With no attachments it is a plain-text
+// message; with attachments it is a multipart/mixed message (a text/plain body
+// part followed by a base64-encoded application part per attachment).
 func (s *SMTPSender) render(msg Message) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + s.from + "\r\n")
 	b.WriteString("To: " + msg.To + "\r\n")
-	b.WriteString("Subject: " + msg.Subject + "\r\n")
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", msg.Subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
+
+	if len(msg.Attachments) == 0 {
+		b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
+		b.WriteString("\r\n")
+		b.WriteString(msg.Body)
+		b.WriteString("\r\n")
+		return []byte(b.String())
+	}
+
+	// A fixed, syntactically-valid boundary. The body parts never contain it (the
+	// text body is operator-authored prose and the attachments are base64), so a
+	// constant boundary is safe and keeps the message deterministic.
+	const boundary = "----=_FuelGridReportBoundary_7f3b9c"
+	b.WriteString("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"\r\n")
+	b.WriteString("\r\n")
+
+	// Text body part.
+	b.WriteString("--" + boundary + "\r\n")
 	b.WriteString("Content-Type: text/plain; charset=\"utf-8\"\r\n")
 	b.WriteString("\r\n")
 	b.WriteString(msg.Body)
 	b.WriteString("\r\n")
+
+	for _, att := range msg.Attachments {
+		ct := att.ContentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		b.WriteString("--" + boundary + "\r\n")
+		b.WriteString("Content-Type: " + ct + "\r\n")
+		b.WriteString("Content-Transfer-Encoding: base64\r\n")
+		b.WriteString("Content-Disposition: attachment; filename=\"" + sanitizeFilename(att.Filename) + "\"\r\n")
+		b.WriteString("\r\n")
+		b.WriteString(chunk76(base64.StdEncoding.EncodeToString(att.Data)))
+		b.WriteString("\r\n")
+	}
+
+	b.WriteString("--" + boundary + "--\r\n")
 	return []byte(b.String())
+}
+
+// sanitizeFilename strips characters that would break the Content-Disposition
+// header (quotes / CR / LF), so a filename can never inject a header.
+func sanitizeFilename(name string) string {
+	r := strings.NewReplacer("\"", "", "\r", "", "\n", "")
+	return r.Replace(name)
+}
+
+// chunk76 inserts CRLF every 76 characters, as RFC 2045 requires for base64
+// transfer encoding.
+func chunk76(s string) string {
+	const width = 76
+	var b strings.Builder
+	for len(s) > width {
+		b.WriteString(s[:width])
+		b.WriteString("\r\n")
+		s = s[width:]
+	}
+	b.WriteString(s)
+	return b.String()
 }

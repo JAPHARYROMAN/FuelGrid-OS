@@ -96,6 +96,10 @@ import type {
   ReportSnapshot,
   CaptureSnapshotRequest,
   ReportLockState,
+  ScheduledReport,
+  ScheduledReportRequest,
+  ScheduledReportRun,
+  ScheduledReportRunResult,
   Role,
   Sale,
   SaleVoid,
@@ -3822,6 +3826,115 @@ export class Client {
   ): Promise<{ items: ReportSnapshot[]; count: number }> {
     return this.request<{ items: ReportSnapshot[]; count: number }>(
       '/api/v1/reports/snapshots/recent',
+      { signal },
+    );
+  }
+
+  // ----------- Scheduled Reports (Reports Center Phase 12) -----------
+
+  /**
+   * Create a per-tenant scheduled report (blueprint §8): a catalog report re-run on
+   * a recurrence and delivered to recipients over a channel (in_app/email/webhook).
+   * Gated by reports.schedule AND the underlying report's own run permission; a
+   * webhook_url is SSRF-validated. Audits 'report.scheduled.created'.
+   */
+  createScheduledReport(
+    req: ScheduledReportRequest,
+    signal?: AbortSignal,
+  ): Promise<ScheduledReport> {
+    return this.request<ScheduledReport>('/api/v1/reports/scheduled', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** List the tenant's scheduled reports, newest first. Gated by reports.schedule. */
+  listScheduledReports(
+    opts?: { limit?: number; offset?: number },
+    signal?: AbortSignal,
+  ): Promise<Paginated<ScheduledReport>> {
+    const qs = new URLSearchParams();
+    if (opts?.limit != null) qs.set('limit', String(opts.limit));
+    if (opts?.offset != null) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<ScheduledReport>>(
+      `/api/v1/reports/scheduled${q ? `?${q}` : ''}`,
+      { signal },
+    );
+  }
+
+  /** Fetch one scheduled report by id (tenant-scoped). Gated by reports.schedule. */
+  getScheduledReport(id: string, signal?: AbortSignal): Promise<ScheduledReport> {
+    return this.request<ScheduledReport>(`/api/v1/reports/scheduled/${encodeURIComponent(id)}`, {
+      signal,
+    });
+  }
+
+  /**
+   * Update a scheduled report's definition (report_key is immutable). Re-checks the
+   * report's run permission + SSRF-validates a webhook_url. Audits
+   * 'report.scheduled.updated'.
+   */
+  updateScheduledReport(
+    id: string,
+    req: ScheduledReportRequest,
+    signal?: AbortSignal,
+  ): Promise<ScheduledReport> {
+    return this.request<ScheduledReport>(`/api/v1/reports/scheduled/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Delete a scheduled report (its run history cascades). Gated by reports.schedule. */
+  deleteScheduledReport(id: string, signal?: AbortSignal): Promise<void> {
+    return this.request<void>(`/api/v1/reports/scheduled/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  /**
+   * Enable or disable a scheduled report. On re-enable next_run_at is recomputed
+   * from now so a long-paused schedule doesn't fire for every missed period.
+   */
+  setScheduledReportEnabled(
+    id: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<ScheduledReport> {
+    return this.request<ScheduledReport>(
+      `/api/v1/reports/scheduled/${encodeURIComponent(id)}/enabled`,
+      { method: 'POST', body: { enabled }, signal },
+    );
+  }
+
+  /**
+   * Trigger an immediate, out-of-band run of a scheduled report. Re-checks the
+   * caller can run the report, renders + delivers under a unique manual period key,
+   * and records the run. Gated by reports.schedule + the report's own permission.
+   */
+  runScheduledReportNow(id: string, signal?: AbortSignal): Promise<ScheduledReportRunResult> {
+    return this.request<ScheduledReportRunResult>(
+      `/api/v1/reports/scheduled/${encodeURIComponent(id)}/run-now`,
+      { method: 'POST', body: {}, signal },
+    );
+  }
+
+  /** List a scheduled report's recent runs (its delivery history), newest first. */
+  listScheduledReportRuns(
+    id: string,
+    opts?: { limit?: number; offset?: number },
+    signal?: AbortSignal,
+  ): Promise<Paginated<ScheduledReportRun>> {
+    const qs = new URLSearchParams();
+    if (opts?.limit != null) qs.set('limit', String(opts.limit));
+    if (opts?.offset != null) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<ScheduledReportRun>>(
+      `/api/v1/reports/scheduled/${encodeURIComponent(id)}/runs${q ? `?${q}` : ''}`,
       { signal },
     );
   }
