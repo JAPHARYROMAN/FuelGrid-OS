@@ -29,21 +29,61 @@ You do almost all of your work on the **computer**, not the phone. (More on this
 
 Read this little list once. Each word is explained in plain language. You can come back here any time.
 
+**About the work**
+
 - **Shift** — one work period. Like the morning team from 6am to 2pm, or the evening team from 2pm to 10pm.
+- **Operating day** — the whole working day at the station. It holds all the shifts for that day. It must be opened before any shift can start, and closed at the end.
+- **Slot** — which part of the day a shift is for: **morning** or **evening**.
 - **Attendant** — the worker at the pump who serves customers and records the numbers on the phone.
-- **Nozzle / Pump** — the hose and handle a customer uses to fill their tank. One pump can have more than one nozzle. In the app a nozzle is named like "**Pump 1 · Nozzle 2**".
+- **Substitute** — a fill-in worker who is not on the normal team for that day, but works the shift in place of someone who is away.
+- **Roster / rostered** — the work schedule that says which team works which day. A "rostered" person is one the schedule says should be working.
+
+**About pumps and readings**
+
+- **Nozzle / Pump** — the hose and handle a customer uses to fill their tank. One pump can have more than one nozzle. In the app a nozzle is named like "**Pump 1 · Nozzle 2**". In a picker (a drop-down list) this may be shortened to "**P1·N2**", which is short for **Pump 1, Nozzle 2**.
+- **Tank code** — the short name of the fuel tank that a nozzle draws its fuel from. Your station sets these names. You do not need to change them.
 - **Meter reading** — the number on the pump that counts total litres ever sold through that nozzle. It only goes up.
 - **Opening reading** — the meter number at the **start** of the shift.
 - **Closing reading** — the meter number at the **end** of the shift.
 - **Litres sold** — closing reading minus opening reading. This is how much fuel was sold in the shift.
+- **Nozzle assignment** — saying who works which nozzle. Each attendant is responsible for the fuel and money on the nozzles assigned to them.
+
+**About money**
+
 - **Collection** — the money the attendant collected during the shift (cash, mobile money, card, and credit).
+- **Tender type** — the way money was paid: cash, mobile money, card, or credit. (You may just think of it as "the way the money came in.")
 - **Shortage** — when the money handed over is **less** than expected. Money is missing.
 - **Excess** — when the money handed over is **more** than expected. There is extra money.
-- **Variance** — the difference between what was expected and what actually came in. A shortage or an excess is a variance.
+- **Variance** — how much more or less the money is than expected. A shortage or an excess is a variance.
+- **Revenue** — the money the station earns from selling fuel. **Revenue recognized** means the app now counts a shift's fuel sales as real, final money in the station's records.
+
+**About checking and deciding**
+
 - **Verify** — to check a reading and decide if it is correct.
 - **Approve** — to say "this is correct and final."
+- **Verdict** — your decision. When the app asks for a "verdict," it just means: choose what you have decided to do.
+- **Exception** — an open problem the app is holding onto, like a rejected or flagged reading. A shift cannot be approved while there are open exceptions.
+- **Void** — to cancel a sale. As a supervisor you can only **request** a void; a higher manager must approve it.
+- **Incident** — a problem someone reports, like a broken pump, a safety worry, or a payment fault. Incidents are tracked until they are fixed.
+- **Reconciliation** — checking that the fuel counted in the tank matches what the records say should be there.
 - **Handover** — when one shift ends and the next shift starts. The ending shift's closing numbers become the next shift's opening numbers.
 - **Separation of duties** — a safety rule: the person who **recorded** a number is **not allowed** to also be the person who **approves** it. This stops cheating. The app will block you if you try.
+- **Audit log / audited** — a record the app keeps of who did what and when. It cannot be erased. "Audited" means the app saved a permanent note of your action.
+
+**About using the computer**
+
+- **Web browser** — the program you use to open websites, like Chrome.
+- **Sidebar** — the menu on the left side of the screen.
+- **QR code** — a square barcode you scan with your phone camera to open or install something.
+- **Hover** — rest your mouse pointer on a button without clicking it.
+- **Tooltip** — the small message that pops up when you hover over a button (often telling you why it is greyed out).
+- **Badge** — a small coloured label on the screen that shows a status, like **Checked in** or **Approved**.
+- **Filter** — to show only some items instead of all of them.
+- **Feed** — your running list of messages (your notifications).
+
+### A note about words in curly braces { }
+
+In a few places this manual shows words inside curly braces, like **{slot}**, **{shift name}**, **{next status}**, or **{time}**. The braces are **not** real. They mean the app fills in the real word there. For example, **{slot}** becomes **morning** or **evening**, and **{time}** becomes the real time. You will never see the braces on the screen.
 
 ---
 
@@ -74,7 +114,7 @@ Print this list and keep it near you until it feels easy.
 
 ### How to log in
 
-1. Open the main app on your **computer or tablet** in a web browser.
+1. Open the main app on your **computer or tablet** in a **web browser** (the program you use to open websites, like Chrome).
 2. Type your **username** and **password**.
 3. Click **Sign in**.
 
@@ -85,11 +125,11 @@ Why this matters: the app knows who you are. Some buttons only show for supervis
 On the **left side** of the screen there is a menu (we call it the **sidebar**). These are the areas you will use most:
 
 - **Operations** — your main daily screen. This is where shifts live.
-- **Teams & Roster** — where teams and the rotation are set up.
+- **Teams & Roster** — where teams and the rotation are set up. (Note: this menu item is named "Teams & Roster", but a warning message on the Operations screen may call the same area "Teams & Rotation". They mean the same place.)
 - **Sales** — where you can request to cancel (void) a sale.
 - **Reconciliation** — where tank counts are checked.
 - **Incidents** — where you handle problems and issues.
-- **Notifications** — your message feed (the bell).
+- **Notifications** — your message feed (your running list of messages, opened with the bell).
 - **Reports** — daily reports you should look at.
 
 Why this matters: knowing where things are saves you time during a busy shift.
@@ -140,7 +180,7 @@ Each station has **three teams** that take turns. Each day, **two teams work** (
 **On the computer (you):**
 
 1. On the **Operations** screen, look at the **scheduled team** line. It says something like: _"Scheduled team for morning: **Team A** · 3 member(s) · John, Mary, Peter."_
-2. If instead you see a warning — _"No team scheduled for {slot}. Configure teams + the rotation anchor under Teams & Rotation before opening a shift"_ — it means the teams or the rotation are not set up yet. You must fix that under **Teams & Roster** first. The **Open shift** button stays off until a team appears.
+2. If instead you see a warning — _"No team scheduled for {slot}. Configure teams + the rotation anchor under Teams & Rotation before opening a shift"_ — it means the teams or the turn-taking are not set up yet. (Here **{slot}** will show the real word, **morning** or **evening**. The "**rotation anchor**" is the setting that tells the app where the team turn-taking starts.) You must fix this under **Teams & Roster** first. If you do not know how to set this up, ask whoever set up your station — you may not be able to fix it yourself. The **Open shift** button stays off until a team appears.
 3. In the **New shift name** box, type a simple name like `Morning`.
 4. In the slot picker, choose **Morning** or **Evening**.
 5. Click **Open shift**. (It says "Opening…" while it works.)
@@ -162,10 +202,10 @@ Now you say **who works which nozzle**. This is important because each attendant
 **Place A — on the shift card (Operations screen):**
 
 1. Find the shift card. Look for the **"Nozzle assignment"** section (it shows while the shift is open).
-2. In the **Nozzle** picker, choose a nozzle (for example "P1·N2 · tank code").
+2. In the **Nozzle** picker (drop-down list), choose a nozzle (for example "P1·N2 · tank code"). Here "**P1·N2**" is short for **Pump 1, Nozzle 2**, and the **tank code** is the short name of the fuel tank that nozzle draws from (your station sets these names).
 3. In the **Attendant** picker, choose the attendant.
 4. Click **Assign**. (It says "Assigning…" while it works.)
-5. To remove an assignment, click the small **trash icon** next to it.
+5. To remove an assignment, click the small **rubbish-bin picture (delete)** next to it.
 
 **Place B — on the shift review page (for substitutes):**
 
@@ -208,10 +248,18 @@ The **Review** page is where you do most of your checking. Open it like this:
 
 1. On the **Operations** screen, find the shift card.
 2. Click the shift **name** (it is a link), or click the **Review** button.
-3. You are now on the shift review page. The title says "**{shift name} · review**".
+3. You are now on the shift review page. The title says "**{shift name} · review**" — where **{shift name}** shows your shift's real name, like **Morning · review**.
 4. To go back, click the **Operations** button at the top right.
 
-The Review page has these parts, from top to bottom: a **shift summary**, the **Attendance** panel, the **Attendant assignment** panel (only while open), the **Closing readings verification** queue, the **Collection receipt** panel (after the shift is closed), the **Approval readiness** checklist (after the shift is closed), and a **Timeline**.
+From top to bottom you will see:
+
+- **Shift summary** — the key facts about the shift.
+- **Attendance** — who has checked in.
+- **Attendant assignment** (shows only while the shift is open) — who works which nozzle.
+- **Closing readings to verify** — the readings waiting for you to check.
+- **Collection receipt** (shows after the shift is closed) — where you confirm the cash.
+- **Approval readiness** checklist (shows after the shift is closed) — the green ticks you need before approving.
+- **Timeline** — the history of what happened during the shift.
 
 ---
 
@@ -220,8 +268,8 @@ The Review page has these parts, from top to bottom: a **shift summary**, the **
 **On the phone (attendant):**
 
 1. The attendant presses **Verify opening readings**.
-2. The phone shows each nozzle with the **expected** opening number already filled in (this comes from the last shift's approved closing). The attendant confirms or types the real meter number, then presses **Confirm & save**.
-3. If they type a number **below** the expected opening, the phone blocks it (a meter only goes up) and offers **Report issue**.
+2. The phone shows each nozzle with the **expected** opening number already filled in (this comes from the last shift's approved closing). The attendant confirms or types the real meter number, then presses **Confirm and save**.
+3. If they type a number **below** the expected opening, the phone blocks it (a meter only goes up) and offers **Report issue to supervisor**.
 4. After that, the phone shows **Enter closing readings** and the attendant works the shift, serving customers.
 
 **On the computer (you):**
@@ -236,7 +284,7 @@ When the shift ends, the attendant types the **closing** meter numbers on the ph
 
 **On the phone (attendant):**
 
-1. The attendant presses **Enter closing readings** and types each closing number, then **Confirm & save**.
+1. The attendant presses **Enter closing readings** and types each closing number, then **Confirm and save**.
 2. The phone then says: _"Closing readings submitted. Wait for your supervisor to verify them."_ It checks for updates every 30 seconds.
 
 **On the computer (you):** go to the shift Review page and find the **"Closing readings verification"** queue.
@@ -311,13 +359,19 @@ After the readings are verified, the attendant sends in the **collection** — t
 
 **On the computer (you):** on the shift Review page, find the **"Collection receipt"** panel. (This only shows after the shift is closed.)
 
-You will see: **Expected collection**, **Attendant submitted**, the four tender types (**Cash, Mobile money, Card, Credit**), the **Variance vs expected**, and any note the attendant left.
+You will see:
+
+- **Expected collection** — how much money the app expects, based on the fuel sold.
+- **Attendant submitted** — how much the attendant said they collected.
+- The four ways money comes in: **Cash, Mobile money, Card, Credit**.
+- **Variance vs expected** — how much more or less the money is than expected (a shortage or an excess).
+- Any note the attendant left.
 
 Now count the real cash in your hand and record it:
 
 1. In **Received total**, type the amount you actually received. (Up to 2 decimals, like `450000.00`.)
    - If your number is **different** from the expected number, a warning shows the difference, and a **reason becomes required**.
-2. Choose a **Verdict** (pick one):
+2. Choose a **Verdict** (this just means your decision — pick one):
    - **Confirm the cash received** — the money is fine, you accept it.
    - **Reject — send back to the attendant to resubmit** — there is a problem; the attendant must fix and resend. A reason is required.
    - **Flag for investigation — hold the cash review** — hold it for a closer look. A reason is required.
@@ -356,9 +410,9 @@ The three checks are:
 When all three are green:
 
 1. Click **Approve shift**. (It says "Approving…" while it works.)
-2. The panel then shows: _"Shift approved {time} — revenue recognized from the verified readings."_
+2. The panel then shows: _"Shift approved {time} — revenue recognized from the verified readings."_ (Here **{time}** is the real time it was approved.) "**Revenue recognized**" means the app now counts this shift's fuel sales as real, final money in the station's records.
 
-If the **Approve shift** button is greyed out, hover over it. It will say **"Complete the checklist first."** That means one of the three checks is not green yet.
+If the **Approve shift** button is greyed out, **hover** over it (rest your mouse pointer on it without clicking). A small message (a **tooltip**) will pop up saying **"Complete the checklist first."** That means one of the three checks is not green yet.
 
 **Blocked messages explained.** If you try to approve too early, the app shows a clear message. Here is what each one means and how to fix it:
 
@@ -367,7 +421,7 @@ If the **Approve shift** button is greyed out, hover over it. It will say **"Com
 - _"… still awaiting verification — verify them above, then approve."_ → Some readings are not checked yet. Go verify them (Step 7).
 - _"The collection has not been confirmed — record the cash receipt above, then approve."_ → You have not confirmed the cash. Go do Step 8.
 
-_Why this matters:_ approving the shift makes the sales count as real revenue. The checks make sure nothing is missing or wrong before that happens.
+_Why this matters:_ approving the shift makes the sales count as real, final money in the station's records. The checks make sure nothing is missing or wrong before that happens.
 
 ---
 
@@ -384,7 +438,7 @@ The **handover** is the link between one shift and the next. The next shift's op
 
 You will see a warning box: **"Shift handover incomplete — approve the previous shift before opening a new one."** It lists the shift(s) blocking you, as links. Click a link to go approve that shift first.
 
-**Override (only if you are allowed):** If you have approval rights, you may force it. In the warning box, type a reason in **Handover override reason** and click **Override and open**. This is recorded (audited), so only use it when truly needed. If you do not have approval rights, you will see a message that the override needs the approval permission — in that case, ask a manager.
+**Override (only if you are allowed):** If you have approval rights, you may force it. In the warning box, type a reason in **Handover override reason** and click **Override and open**. The app keeps a permanent record of this, so only use it when you really must. If you do not have approval rights, you will see a message that the override needs the approval permission — in that case, ask a manager.
 
 _Why this matters:_ if you skip the handover, the next shift's opening numbers could be wrong, and the fuel count breaks.
 
@@ -395,9 +449,9 @@ _Why this matters:_ if you skip the handover, the next shift's opening numbers c
 At the end of all shifts:
 
 1. On the **Operations** screen, click **Close day**.
-   - This button is off while any shift is still open. The tooltip says **"Close open shifts first."** So finish your shifts first.
+   - This button is off while any shift is still open. If you hover over it (rest your mouse pointer on it), the small pop-up message (the **tooltip**) says **"Close open shifts first."** So finish your shifts first.
 2. Once the day is closed, you can click **Lock day**.
-   - This button is off until every shift is **approved**. The tooltip says **"Approve shifts first."**
+   - This button is off until every shift is **approved**. Its tooltip (pop-up message) says **"Approve shifts first."**
    - There is also a **Reopen** button if you need to open the day again.
 
 _Why this matters:_ closing and locking the day finishes the station's record for that day so the numbers are safe and final.
@@ -417,7 +471,7 @@ Things go wrong sometimes. Here is how to handle the common ones. Stay calm — 
 
 1. You click **Reject…** and give a reason.
 2. The attendant gets a message on the phone: _"Closing reading rejected — please re-capture it."_ with your reason.
-3. The attendant types the number again on the phone and presses **Resubmit**. (This works while the shift is still open.)
+3. The attendant types the number again on the phone and presses **Resubmit closing reading**. (This works while the shift is still open.)
 4. The new number comes back to your queue. **Verify it again** (Step 7).
 5. The shift stays blocked from approval until this is done.
 
@@ -435,11 +489,11 @@ If the difference is large or looks like theft, use **Reject handover** or **Fla
 
 ### An attendant reports an issue (pump, safety, etc.)
 
-1. The attendant presses **Report a problem** on their phone, picks a type (pump, nozzle, meter, payment, safety, or other), an urgency, and a description.
+1. The attendant presses **Report an issue** on their phone, picks a type (pump, nozzle, meter, payment, safety, or other), an urgency, and a description, then presses **Send to supervisor**.
 2. You get a **notification**: _"Incident opened — check the incidents queue."_ (A critical issue may also send an email.)
 3. Go to **Incidents** in the left menu.
 4. Find the incident. Read it.
-5. Click **Mark {next status}** to move it forward: open → investigating → resolved → closed.
+5. Click the **Mark** button to move it forward one step at a time: open → investigating → resolved → closed. The button names the next step, so it will read **Mark investigating**, then **Mark resolved**, then **Mark closed**.
 6. You can also click **Open incident** yourself to log a problem you noticed.
 
 _Why this matters:_ logging issues keeps a record and makes sure problems get fixed, not forgotten.
@@ -451,7 +505,7 @@ _Why this matters:_ logging issues keeps a record and makes sure problems get fi
 3. Pick the nozzle and the substitute (their name shows "(substitute)"), then click **Assign**.
 4. The substitute confirms the nozzle on their own phone.
 
-_Why this matters:_ every nozzle needs a responsible attendant, even when the rostered person is absent.
+_Why this matters:_ every nozzle needs a responsible attendant, even when the rostered person (the one the schedule says should be working) is absent.
 
 ---
 
@@ -476,7 +530,7 @@ These buttons may not appear for you, and that is correct:
 - **Opening stock** entry and approval — a manager does this.
 - **Approve a sale void** — a regional manager (or finance) approves; you only request.
 - **Expenses** — handled by finance, not by supervisors.
-- **Audit log** — only senior roles see this.
+- **Audit log** (the permanent record of who did what) — only senior roles see this.
 
 If you need one of these done, **contact your manager**.
 
@@ -497,8 +551,8 @@ _Why check reports:_ they help you spot problems early — like a pump losing fu
 
 ### Notifications
 
-- Click **Notifications** (the bell) to see your feed.
-- Use **All** or **Unread** to filter, and **Mark all read** to clear them.
+- Click **Notifications** (the bell) to see your feed (your running list of messages).
+- Use **All** or **Unread** to filter (to filter means to show only some of the messages, not all), and **Mark all read** to clear them.
 - Your feed includes shift closes, incidents, approvals, and alerts.
 - In **Notification settings** you can turn categories on or off and set **quiet hours** (a start and end time when you are not disturbed).
 
@@ -528,11 +582,11 @@ The attendant's phone shows **one big button at a time** — the next thing to d
 
 Whenever the phone says "**wait for your supervisor**," it is waiting for **you** to act on the computer. The phone checks for updates every 30 seconds.
 
-The attendant can also press **Report a problem** at any time to raise an issue, which reaches you in **Incidents**.
+The attendant can also press **Report an issue** at any time to raise a problem (then **Send to supervisor**), which reaches you in **Incidents**.
 
 ### How the attendant installs the app
 
-On the **login page** of the system there is a **QR code** for attendants (the install helper). The attendant points their phone camera at the QR code to install the app. After that, the app sits on their phone like any other app.
+On the **login page** of the system there is a **QR code** for attendants (the install helper). A QR code is a square barcode you scan with your phone camera. The attendant points their phone camera at the QR code to install the app. After that, the app sits on their phone like any other app.
 
 ### It works even with bad internet
 
@@ -550,16 +604,16 @@ Keep this near you. It is the short version of everything above.
 
 ### Your daily checklist
 
-1. Log in → **Operations** → pick **Station**.
-2. **Open operating day** (if needed).
-3. Check **scheduled team** → **Open shift** (Morning/Evening).
-4. **Assign** attendants to nozzles.
-5. Attendants **check in** and work (on their phones).
-6. Closing readings arrive → **verify** them.
-7. Cash arrives → **confirm** it (record shortage/excess + reason).
-8. **Approve shift** (when all green).
-9. **Open next shift** (handover).
-10. **Close day**, then **Lock day**.
+1. **(you)** Log in → **Operations** → pick **Station**.
+2. **(you)** **Open operating day** (if needed).
+3. **(you)** Check **scheduled team** → **Open shift** (Morning/Evening).
+4. **(you)** **Assign** attendants to nozzles.
+5. **(attendant)** Attendants **check in** and work (on their phones).
+6. **(attendant → you)** Closing readings arrive → **you verify** them.
+7. **(attendant → you)** Cash arrives → **you confirm** it (record shortage/excess + reason).
+8. **(you)** **Approve shift** (when all green).
+9. **(you)** **Open next shift** (handover).
+10. **(you)** **Close day**, then **Lock day**.
 
 ### Reading statuses — what each means
 
