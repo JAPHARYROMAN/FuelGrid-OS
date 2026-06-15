@@ -12,6 +12,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/receivables"
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
+	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 )
 
 // Customer Credit report (Reports Center §5.9) — the signature receivables-aging
@@ -202,6 +203,12 @@ func (s *Server) handleCustomerCreditReport(w http.ResponseWriter, r *http.Reque
 		UnallocatedPayments:    totals.UnallocatedPayments,
 		ExposureShown:          exposureShown,
 	}))
+
+	// ---- config-driven report rules (Phase 15): additive over the composer ----
+	creditFacts := reportrules.NewFacts()
+	creditFacts.Nums["overdue"] = totals.Overdue
+	creditFacts.Nums["outstanding"] = totals.Outstanding
+	s.runReportRules(r.Context(), actor.TenantID, &env, "customer-credit", creditFacts)
 
 	// ---- drilldown + export (the AR-aging CSV remains the export of record) ----
 	env.Drilldown = []drilldownLink{

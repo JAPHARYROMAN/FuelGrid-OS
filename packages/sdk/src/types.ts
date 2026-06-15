@@ -1803,6 +1803,71 @@ export interface RiskRule {
   enabled: boolean;
 }
 
+// ReportRuleInput is the configurable surface for a report INSIGHT rule (Reports
+// Center Phase 15). `condition` names a registered deterministic evaluator (not an
+// expression, no AI); `message_template` uses safe {token} substitution.
+// `threshold_config` is the structured multi-field threshold surface; `mode`
+// 'shadow' evaluates for preview only while 'augment' folds the fired insight into
+// the report; `report_placement` chooses where it surfaces.
+export interface ReportRuleInput {
+  code: string;
+  name: string;
+  description?: string;
+  report_key?: string;
+  category?: string;
+  condition?: string;
+  threshold?: string;
+  threshold_config?: Record<string, unknown>;
+  comparison_period_days?: number;
+  severity?: 'info' | 'warning' | 'critical';
+  message_template?: string;
+  recommended_action?: string;
+  report_placement?: 'insight' | 'data_quality' | 'summary';
+  mode?: 'shadow' | 'augment';
+  notify_on_fire?: boolean;
+  status?: 'draft' | 'active' | 'paused' | 'retired';
+  enabled?: boolean;
+}
+
+// ReportRule is one configurable report insight rule. is_system rules mirror the
+// composer thresholds and cannot be deleted (only disabled / tuned / re-moded).
+export interface ReportRule {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  report_key?: string | null;
+  category: string;
+  condition: string;
+  threshold?: string | null;
+  threshold_config?: Record<string, unknown>;
+  comparison_period_days?: number | null;
+  severity: 'info' | 'warning' | 'critical';
+  message_template?: string;
+  recommended_action?: string | null;
+  report_placement: 'insight' | 'data_quality' | 'summary';
+  mode: 'shadow' | 'augment';
+  notify_on_fire: boolean;
+  is_system: boolean;
+  enabled: boolean;
+  status: string;
+}
+
+// InsightRuleHit is one fired report-rule attribution carried on a ReportEnvelope
+// (the "which rules drove these insights" surface). folded=true means its rendered
+// message was folded into the visible insights/data-quality; folded=false is a
+// shadow rule shown for preview only.
+export interface InsightRuleHit {
+  rule_id: string;
+  rule_code: string;
+  rule_name: string;
+  severity: string;
+  message: string;
+  placement: string;
+  mode: string;
+  folded: boolean;
+}
+
 export interface ARentry {
   id: string;
   customer_id: string;
@@ -2028,6 +2093,10 @@ export interface ReportEnvelope {
   recommended_actions: string[];
   drilldown: ReportDrilldownLink[];
   export_options: ReportExportOption[];
+  // The fired report-insight rules driving this envelope (Phase 15). Always
+  // present (possibly empty); folded=true rows are reflected in insights/
+  // data_quality above, folded=false rows are shadow previews.
+  insight_rules: InsightRuleHit[];
 }
 
 /**

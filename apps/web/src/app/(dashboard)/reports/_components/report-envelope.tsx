@@ -126,6 +126,46 @@ export function InsightPanel({
   );
 }
 
+/**
+ * "Which rules drove these insights" (Reports Center Phase 15). Surfaces the
+ * config-driven report rules that FIRED for this envelope: the rendered message,
+ * its rule code, and whether it was folded into the visible insights above
+ * (Augment) or evaluated for preview only (Preview/shadow). Renders nothing when
+ * no rule fired, so reports without tuned rules show no extra chrome.
+ */
+export function InsightRulesPanel({
+  rules,
+}: {
+  rules: ReportEnvelope['insight_rules'] | undefined;
+}) {
+  if (!rules || rules.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Rules behind these insights</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col divide-y divide-border/60 p-0">
+        {rules.map((r, i) => (
+          <div
+            key={`${r.rule_id}-${i}`}
+            className="flex flex-col gap-1 px-4 py-2.5 text-sm"
+            data-testid="insight-rule-row"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium">{r.rule_name}</span>
+              <span className="font-mono text-xs text-muted-foreground">{r.rule_code}</span>
+              <span className="rounded border border-border/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                {r.folded ? 'Augment' : 'Preview'}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">{r.message}</p>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** Decide how to format a table cell from its column name. */
 function formatCell(column: string, value: string): React.ReactNode {
   const lc = column.toLowerCase();

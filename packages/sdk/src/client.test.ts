@@ -1216,3 +1216,97 @@ describe('Client scheduled reports (Phase 12)', () => {
     ).rejects.toBeInstanceOf(SdkError);
   });
 });
+
+describe('Client report insight rules (Phase 15)', () => {
+  const rule = {
+    id: 'rr-1',
+    code: 'gross_swing',
+    name: 'Gross revenue swing',
+    report_key: 'sales',
+    category: 'sales',
+    condition: 'period_over_period',
+    threshold: null,
+    threshold_config: { warn_pct: 25 },
+    comparison_period_days: null,
+    severity: 'warning',
+    message_template: '{metric} moved {direction} {pct}%',
+    recommended_action: null,
+    report_placement: 'insight',
+    mode: 'shadow',
+    notify_on_fire: false,
+    is_system: true,
+    enabled: true,
+    status: 'active',
+  };
+
+  it('lists report rules (GET /reports/rules)', async () => {
+    const f = jsonFetch(200, { items: [rule], count: 1, limit: 20, offset: 0, has_more: false });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listReportRules({ reportKey: 'sales' });
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/rules?report_key=sales');
+    expect(res.items[0]?.code).toBe('gross_swing');
+  });
+
+  it('gets one report rule (GET /reports/rules/{id})', async () => {
+    const f = jsonFetch(200, rule);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getReportRule('rr-1');
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/rules/rr-1');
+    expect(res.is_system).toBe(true);
+  });
+
+  it('creates a report rule (POST /reports/rules)', async () => {
+    const f = jsonFetch(201, { id: 'rr-2' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.createReportRule({
+      code: 'custom',
+      name: 'Custom',
+      condition: 'period_over_period',
+      message_template: '{pct}',
+      mode: 'augment',
+      threshold_config: { warn_pct: 5 },
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/rules');
+    expect(init.method).toBe('POST');
+    expect(res.id).toBe('rr-2');
+  });
+
+  it('updates a report rule (PUT /reports/rules/{id})', async () => {
+    const f = jsonFetch(200, { id: 'rr-1' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await client.updateReportRule('rr-1', { severity: 'critical' });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/rules/rr-1');
+    expect(init.method).toBe('PUT');
+  });
+
+  it('enables/disables a report rule (POST /reports/rules/{id}/enabled)', async () => {
+    const f = jsonFetch(200, { id: 'rr-1', enabled: false });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.setReportRuleEnabled('rr-1', false);
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/rules/rr-1/enabled');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: false });
+    expect(res.enabled).toBe(false);
+  });
+
+  it('deletes a report rule (DELETE /reports/rules/{id})', async () => {
+    const f = jsonFetch(200, { id: 'rr-2', deleted: true });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.deleteReportRule('rr-2');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/rules/rr-2');
+    expect(init.method).toBe('DELETE');
+    expect(res.deleted).toBe(true);
+  });
+
+  it('rejects deleting a system rule as an SdkError (409)', async () => {
+    const f = jsonFetch(409, { error: 'a system rule cannot be deleted; disable it instead' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.deleteReportRule('rr-1')).rejects.toBeInstanceOf(SdkError);
+  });
+});

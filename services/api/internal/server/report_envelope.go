@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
+	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 )
 
 // Structured report envelope (REPORTS-STRUCTURED).
@@ -29,6 +30,26 @@ type ReportEnvelope struct {
 	RecommendedActions []string            `json:"recommended_actions"`
 	Drilldown          []drilldownLink     `json:"drilldown"`
 	ExportOptions      []exportOption      `json:"export_options"`
+	// InsightRules surfaces "which rules drove these insights": for every report
+	// rule that FIRED (config-driven engine, Phase 15), a transparent attribution
+	// row. It lists BOTH the augment rules whose insight was folded into Insights
+	// above and the shadow rules that fired for preview only (folded=false), so the
+	// management UI can show what each rule would say. Always non-nil.
+	InsightRules []insightRuleHit `json:"insight_rules"`
+}
+
+// insightRuleHit is one fired report-rule attribution: the source rule, the
+// rendered message, the resolved severity/placement, and whether it was actually
+// folded into the live envelope (augment) or evaluated for preview only (shadow).
+type insightRuleHit struct {
+	RuleID    string `json:"rule_id"`
+	RuleCode  string `json:"rule_code"`
+	RuleName  string `json:"rule_name"`
+	Severity  string `json:"severity"`
+	Message   string `json:"message"`
+	Placement string `json:"placement"`
+	Mode      string `json:"mode"`
+	Folded    bool   `json:"folded"`
 }
 
 // tenderMix is an additive, report-specific breakdown of a station-day's
@@ -114,6 +135,7 @@ func newEnvelope(reportKey, title, period string, stationID *string) ReportEnvel
 		RecommendedActions: []string{},
 		Drilldown:          []drilldownLink{},
 		ExportOptions:      []exportOption{},
+		InsightRules:       []insightRuleHit{},
 	}
 }
 
@@ -140,4 +162,65 @@ func (e *ReportEnvelope) applyReport(rep reporting.Report) {
 			seen[a] = true
 		}
 	}
+}
+
+// applyReportRules runs the config-driven report insight engine (Phase 15) for
+// this report's key against the supplied figures and folds the result in. It is
+// ADDITIVE and NO-REGRESSION: the composer output applied via applyReport above
+// stays the byte-identical source of truth; this only folds in rules whose mode
+// is "augment" (tenant-tuned thresholds and custom rules), placed per the rule's
+// report_placement. Every fired rule — augment AND shadow — is recorded in
+// InsightRules for the "which rules drove these insights" surface. With no rules
+// (or only shadow rules) the visible envelope is unchanged. It returns the fired
+// insights so the handler can dispatch opt-in notifications. The engine never
+// errors the report: an empty rules slice is a clean no-op.
+func (e *ReportEnvelope) applyReportRules(reportKey string, rules []reportrules.Rule, facts reportrules.Facts) []reportrules.Insight {
+	if len(rules) == 0 {
+		return nil
+	}
+	fired := reportrules.Evaluate(reportKey, rules, facts)
+	if len(fired) == 0 {
+		return nil
+	}
+
+	seenAction := map[string]bool{}
+	for i := range e.RecommendedActions {
+		seenAction[e.RecommendedActions[i]] = true
+	}
+
+	for i := range fired {
+		ins := fired[i]
+		folded := ins.Mode == reportrules.ModeAugment
+		e.InsightRules = append(e.InsightRules, insightRuleHit{
+			RuleID:    ins.RuleID,
+			RuleCode:  ins.RuleCode,
+			RuleName:  ins.RuleName,
+			Severity:  string(ins.Severity),
+			Message:   ins.Message,
+			Placement: string(ins.Placement),
+			Mode:      string(ins.Mode),
+			Folded:    folded,
+		})
+		if !folded {
+			continue // shadow: recorded for preview, not folded into the live view
+		}
+		switch ins.Placement {
+		case reportrules.PlacementDataQuality:
+			e.DataQuality = append(e.DataQuality, dataQualityItem{
+				Level:   "warning",
+				Message: ins.Message,
+			})
+		default: // insight | summary both surface as an insight line
+			e.Insights = append(e.Insights, reporting.Insight{
+				Severity:          reporting.Severity(ins.Severity),
+				Message:           ins.Message,
+				RecommendedAction: ins.RecommendedAction,
+			})
+		}
+		if a := ins.RecommendedAction; a != "" && !seenAction[a] {
+			e.RecommendedActions = append(e.RecommendedActions, a)
+			seenAction[a] = true
+		}
+	}
+	return fired
 }
