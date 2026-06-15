@@ -320,20 +320,44 @@ func (d ReportDeps) broadcast(ctx context.Context, subject, body string) error {
 	return nil
 }
 
-// sentSince reports whether the named job has a successful run recorded in the
-// job_runs ledger at or after since. This is the once-per-period guard: a
-// sub-day interval ticker fires many times, but only the first tick past the
-// send hour finds no prior success and actually sends. A deployment without the
-// job_runs table (migration 0079 not applied) degrades to "never sent" — the
-// SendHour gate alone then bounds sends to once per (hour the ticker fires), so
-// the operator still isn't spammed every tick.
+// sentSince reports whether the named job has already run (or is mid-run) within
+// the current period — the once-per-period guard. A sub-day interval ticker
+// fires many times, but only the first tick past the send hour finds no prior
+// run and actually sends.
+//
+// IDEMPOTENCY / DOUBLE-DELIVERY: the guard matches status IN ('success',
+// 'running'), NOT just 'success'. The ledger row is written 'running' at the
+// start of the tick (scheduler.ledgerStart), the body sends every email, and
+// only THEN is the row flipped to 'success' (scheduler.ledgerFinish). If a
+// replica sends the whole digest and crashes (OOM/SIGKILL/deploy) before the
+// 'success' write, the row is stuck 'running'. Matching 'success' only would let
+// the next tick re-send the entire financial digest to every recipient. By also
+// treating an in-period 'running' row as "already handled" we fail closed: a
+// crash after sending suppresses the re-send for the rest of the period (the next
+// period sends normally). This trades a possible single missed digest (if the
+// crash happened BEFORE any send) for never double-delivering financial data —
+// the correct bias for an at-most-once digest. A 'failure' row is intentionally
+// NOT matched, so a run where every recipient failed still retries next tick.
+//
+// A deployment without the job_runs table (migration 0079 not applied) degrades
+// to "never sent" — the SendHour gate alone then bounds sends to once per (hour
+// the ticker fires), so the operator still isn't spammed every tick.
 func (d ReportDeps) sentSince(ctx context.Context, jobName string, since time.Time) (bool, error) {
+	// Exclude this tick's own 'running' row (scheduler.execute inserts it before
+	// the body runs and threads its id on the context). Without this, matching
+	// 'running' would make the job find the row it just wrote and skip itself,
+	// so nothing would ever send. selfID is the empty string when no ledger row
+	// was threaded (table missing / insert failed); $3 = '' then excludes nothing.
+	selfID, _ := runIDFromContext(ctx)
 	var exists bool
 	err := d.Pool.QueryRow(ctx, `
 		SELECT EXISTS (
 		    SELECT 1 FROM job_runs
-		    WHERE job_name = $1 AND status = 'success' AND started_at >= $2
-		)`, jobName, since).Scan(&exists)
+		    WHERE job_name = $1
+		      AND status IN ('success', 'running')
+		      AND started_at >= $2
+		      AND ($3 = '' OR id <> $3::uuid)
+		)`, jobName, since, selfID).Scan(&exists)
 	if err != nil {
 		if isMissingLedger(err) {
 			return false, nil

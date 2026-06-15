@@ -201,6 +201,15 @@ func (s *Scheduler) execute(j Job) {
 	runID := s.ledgerStart(ctx, j.Name)
 	log.Info("scheduler: job started")
 
+	// Thread this run's own ledger id into the body's context. The
+	// once-per-period guard (ReportDeps.sentSince) treats an in-period 'running'
+	// row as "already handled" to close the crash-after-send double-delivery
+	// window — but it must NOT count the row this very tick just inserted, or the
+	// job would suppress itself and never send. The body excludes withRunID(ctx).
+	if runID != nil {
+		ctx = withRunID(ctx, *runID)
+	}
+
 	detail, runErr := s.runBody(ctx, j)
 	dur := time.Since(started)
 
@@ -287,6 +296,24 @@ func (s *Scheduler) ledgerFinish(id *string, status, detail string) {
 	); err != nil && !isMissingLedger(err) {
 		s.logger.Warn("scheduler: ledger finish", "id", *id, "error", err)
 	}
+}
+
+// runIDCtxKey is the context key under which execute stashes the current run's
+// job_runs ledger id, so a job body's once-per-period guard can exclude its own
+// in-flight 'running' row. Unexported type prevents collisions.
+type runIDCtxKey struct{}
+
+// withRunID returns ctx carrying the current ledger run id.
+func withRunID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, runIDCtxKey{}, id)
+}
+
+// runIDFromContext returns the current ledger run id and whether one was set.
+// When the ledger is unavailable (no job_runs table / insert failed) no id is
+// threaded and the second return is false.
+func runIDFromContext(ctx context.Context) (string, bool) {
+	id, ok := ctx.Value(runIDCtxKey{}).(string)
+	return id, ok && id != ""
 }
 
 // isMissingLedger reports whether err is "relation job_runs does not exist"
