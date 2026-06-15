@@ -102,7 +102,7 @@ CREATE POLICY tenant_isolation ON report_templates
 UPDATE report_categories
    SET availability = 'live',
        required_permission = 'reports.builder',
-       target_route = '/reports/custom',
+       target_route = '/reports/builder',
        updated_at = now()
  WHERE tenant_id IS NULL AND key = 'custom';
 
