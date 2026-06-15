@@ -182,6 +182,27 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 		r.Delete("/reports/rules/{id}", s.handleDeleteReportRule)
 	})
 
+	// Custom Report Builder (Reports Center Phase 11 — blueprint §6 / §22). The
+	// whitelisted dataset registry + safe query composer: pick a dataset + a subset
+	// of its allowlisted dimensions / measures / filters / sort + a visualization,
+	// and the composer builds a parameterized, tenant- AND station-scoped query from
+	// ONLY the registry's identifiers (NO free SQL). Coarse-gated by reports.builder
+	// at the route; the DATASET's own permission is the authoritative data gate,
+	// re-checked in-handler at preview AND run time, and sensitive columns (margin /
+	// cost / exposure) are margin.view-gated and OMITTED for non-holders. Saved
+	// templates enforce share-scope on read and ownership on edit/delete; writes are
+	// audited. Results render through the shared ReportEnvelope.
+	r.With(s.requirePermissionHeld("reports.builder")).Group(func(r chi.Router) {
+		r.Get("/reports/builder/datasets", s.handleBuilderDatasets)
+		r.Post("/reports/builder/preview", s.handleBuilderPreview)
+		r.Post("/reports/builder/templates", s.handleCreateTemplate)
+		r.Get("/reports/builder/templates", s.handleListTemplates)
+		r.Get("/reports/builder/templates/{id}", s.handleGetTemplate)
+		r.Put("/reports/builder/templates/{id}", s.handleUpdateTemplate)
+		r.Delete("/reports/builder/templates/{id}", s.handleDeleteTemplate)
+		r.Post("/reports/builder/templates/{id}/run", s.handleRunTemplate)
+	})
+
 	r.With(s.requirePermissionHeld("reports.read")).Group(func(r chi.Router) {
 		// Recent signed-off snapshots across reports — the hub "Locked" rail. The
 		// handler permission-filters each row by the underlying report's permission.

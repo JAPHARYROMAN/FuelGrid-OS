@@ -3101,6 +3101,112 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ---------------------------------------------------------------------------
+  # Custom Report Builder (Reports Center Phase 11) — a whitelisted dataset
+  # registry + a SAFE query composer (NO free SQL). Gated by reports.builder;
+  # the dataset's own permission is re-checked at preview AND run time, and
+  # sensitive columns (margin/cost/exposure) are omitted for non-holders.
+  # ---------------------------------------------------------------------------
+  /api/v1/reports/builder/datasets:
+    get:
+      tags: [Reports]
+      summary: List the curated builder dataset registry
+      description: >-
+        Returns the permission-filtered datasets the actor may build a report
+        from, each with its allowlisted dimensions, measures (with their allowed
+        aggregate functions) and filters (with allowed operators). Sensitive
+        measures the actor cannot read are stripped. Gated by reports.builder.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/builder/preview:
+    post:
+      tags: [Reports]
+      summary: Preview a builder spec (validate + run, no save)
+      description: >-
+        Validates a builder spec against the dataset registry allowlist and, if
+        valid, composes a parameterized, tenant- and station-scoped query and
+        returns a ReportEnvelope. A spec referencing a non-allowlisted dimension,
+        measure, agg or operator is rejected (400 with a precise code) and no
+        query runs. The dataset's own permission is re-checked here.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /api/v1/reports/builder/templates:
+    get:
+      tags: [Reports]
+      summary: List saved report templates
+      description: >-
+        Returns the saved custom report templates visible to the actor — its own
+        templates plus the tenant/role-shared ones it is permitted to see (a
+        private template is never listed for others). Gated by reports.builder.
+      parameters:
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Reports]
+      summary: Save a report template
+      description: >-
+        Saves a validated builder spec as a template with a share scope
+        (private | tenant | role). The spec is validated against the registry and
+        the run-time permission is derived from the dataset + any sensitive
+        columns. Gated by reports.builder.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A template with this name already exists }
+  /api/v1/reports/builder/templates/{id}:
+    get:
+      tags: [Reports]
+      summary: Get a saved report template
+      description: Share-scope enforced — a template not visible to the actor is a clean 404.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Reports]
+      summary: Update a saved report template
+      description: Owner (or system admin) only. Re-validates the spec against the registry.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A template with this name already exists }
+    delete:
+      tags: [Reports]
+      summary: Delete a saved report template
+      description: Owner (or system admin) only.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/reports/builder/templates/{id}/run:
+    post:
+      tags: [Reports]
+      summary: Run a saved report template
+      description: >-
+        Runs a saved template and returns a ReportEnvelope, RE-CHECKING the
+        dataset permission at run time — a shared template never exposes data the
+        runner cannot read live. Share-scope is enforced on the read.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ReportEnvelope' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/audit-logs/export:
     post:
       tags: [Audit]
