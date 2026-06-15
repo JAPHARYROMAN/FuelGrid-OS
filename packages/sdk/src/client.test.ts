@@ -1310,3 +1310,189 @@ describe('Client report insight rules (Phase 15)', () => {
     await expect(client.deleteReportRule('rr-1')).rejects.toBeInstanceOf(SdkError);
   });
 });
+
+describe('Client custom report builder (Phase 11)', () => {
+  const datasets = {
+    generated_at: '2026-06-15T00:00:00Z',
+    datasets: [
+      {
+        key: 'revenue_days',
+        name: 'Daily Revenue',
+        description: 'Per-station, per-day revenue.',
+        required_permission: 'revenue.read',
+        sensitive_permission: 'margin.view',
+        dimensions: [{ id: 'business_date', label: 'Business date', type: 'date' }],
+        measures: [
+          {
+            id: 'gross_revenue',
+            label: 'Gross revenue',
+            allowed_aggs: ['sum', 'avg', 'min', 'max'],
+            decimal: true,
+            unit: 'TZS',
+            sensitive: false,
+          },
+        ],
+        filters: [{ id: 'status', label: 'Lock status', type: 'text', operators: ['eq', 'ne'] }],
+      },
+    ],
+    aggregates: ['sum', 'avg', 'count', 'min', 'max'],
+  };
+
+  const envelope = {
+    metadata: {
+      report_key: 'custom:revenue_days',
+      title: 'Daily Revenue',
+      generated_at: 'x',
+      period: 'custom',
+    },
+    filters_used: { dataset: 'revenue_days', viz: 'table' },
+    data_quality: [],
+    summary: [],
+    chart_data: { viz: 'table', columns: [], rows: [] },
+    table: {
+      columns: ['Business date', 'Gross revenue (sum)'],
+      rows: [['2026-05-10', '1000000.00']],
+    },
+    insights: [],
+    recommended_actions: [],
+    drilldown: [],
+    export_options: [],
+    insight_rules: [],
+  };
+
+  const template = {
+    id: 'tpl-1',
+    name: 'My Sales',
+    dataset_key: 'revenue_days',
+    spec: {
+      dataset: 'revenue_days',
+      dimensions: ['business_date'],
+      measures: [{ measure: 'gross_revenue', agg: 'sum' }],
+    },
+    required_permission: 'revenue.read',
+    shared_scope: 'private',
+    shared_roles: [],
+    is_system: false,
+    created_at: 'x',
+    updated_at: 'x',
+  };
+
+  it('lists datasets (GET /reports/builder/datasets)', async () => {
+    const f = jsonFetch(200, datasets);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getBuilderDatasets();
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/datasets');
+    expect(res.datasets[0]?.key).toBe('revenue_days');
+    expect(res.aggregates).toContain('sum');
+  });
+
+  it('previews a spec (POST /reports/builder/preview)', async () => {
+    const f = jsonFetch(200, envelope);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.previewBuilderReport({
+      dataset: 'revenue_days',
+      dimensions: ['business_date'],
+      measures: [{ measure: 'gross_revenue', agg: 'sum' }],
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/preview');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string).spec.dataset).toBe('revenue_days');
+    expect(res.table.rows[0]?.[1]).toBe('1000000.00');
+  });
+
+  it('rejects a non-allowlisted spec as an SdkError (400)', async () => {
+    const f = jsonFetch(400, { error: 'dimension not allowed', code: 'unknown_dimension' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(
+      client.previewBuilderReport({ dataset: 'revenue_days', dimensions: ['evil'], measures: [] }),
+    ).rejects.toBeInstanceOf(SdkError);
+  });
+
+  it('creates a template (POST /reports/builder/templates)', async () => {
+    const f = jsonFetch(201, { id: 'tpl-1' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.createReportTemplate({
+      name: 'My Sales',
+      spec: {
+        dataset: 'revenue_days',
+        dimensions: ['business_date'],
+        measures: [{ measure: 'gross_revenue', agg: 'sum' }],
+      },
+      shared_scope: 'private',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/templates');
+    expect(init.method).toBe('POST');
+    expect(res.id).toBe('tpl-1');
+  });
+
+  it('lists templates (GET /reports/builder/templates)', async () => {
+    const f = jsonFetch(200, {
+      items: [template],
+      count: 1,
+      limit: 20,
+      offset: 0,
+      has_more: false,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.listReportTemplates({ limit: 20 });
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/templates?limit=20');
+    expect(res.items[0]?.id).toBe('tpl-1');
+  });
+
+  it('gets one template (GET /reports/builder/templates/{id})', async () => {
+    const f = jsonFetch(200, template);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.getReportTemplate('tpl-1');
+    const { url } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/templates/tpl-1');
+    expect(res.name).toBe('My Sales');
+  });
+
+  it('updates a template (PUT /reports/builder/templates/{id})', async () => {
+    const f = jsonFetch(200, { id: 'tpl-1' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.updateReportTemplate('tpl-1', {
+      name: 'My Sales shared',
+      spec: {
+        dataset: 'revenue_days',
+        dimensions: ['business_date'],
+        measures: [{ measure: 'gross_revenue', agg: 'sum' }],
+      },
+      shared_scope: 'tenant',
+    });
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/templates/tpl-1');
+    expect(init.method).toBe('PUT');
+    expect(res.id).toBe('tpl-1');
+  });
+
+  it('deletes a template (DELETE /reports/builder/templates/{id})', async () => {
+    const f = jsonFetch(200, { id: 'tpl-1', deleted: true });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.deleteReportTemplate('tpl-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/templates/tpl-1');
+    expect(init.method).toBe('DELETE');
+    expect(res.deleted).toBe(true);
+  });
+
+  it('runs a template (POST /reports/builder/templates/{id}/run)', async () => {
+    const f = jsonFetch(200, envelope);
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    const res = await client.runReportTemplate('tpl-1');
+    const { url, init } = callArgs(f);
+    expect(url).toBe('http://api.test/api/v1/reports/builder/templates/tpl-1/run');
+    expect(init.method).toBe('POST');
+    expect(res.metadata.report_key).toBe('custom:revenue_days');
+  });
+
+  it('404s a private template not visible to the actor', async () => {
+    const f = jsonFetch(404, { error: 'template not found' });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+    await expect(client.getReportTemplate('tpl-private')).rejects.toBeInstanceOf(SdkError);
+  });
+});

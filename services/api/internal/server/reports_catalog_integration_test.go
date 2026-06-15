@@ -127,11 +127,13 @@ func TestReportCatalog_PermissionFilteringAndGating(t *testing.T) {
 
 	// (4) Placeholder categories are marked honestly with a null metric. NOTE:
 	// 'scheduled' is now LIVE (Reports Center Phase 12 — per-tenant scheduled
-	// reports ship with a real CRUD page + backing API), so only tank/custom remain
-	// placeholders.
+	// reports ship with a real CRUD page + backing API) and 'custom' is now LIVE
+	// (Reports Center Phase 11 — the Custom Report Builder ships with the
+	// whitelisted dataset registry + safe composer + saved templates), so only
+	// 'tank' (no ATG/sensor feed) remains a placeholder.
 	for i := range adminCat.Categories {
 		c := adminCat.Categories[i]
-		if c.Key == "tank" || c.Key == "custom" {
+		if c.Key == "tank" {
 			if c.Availability != "placeholder" {
 				t.Errorf("category %q availability = %q, want placeholder", c.Key, c.Availability)
 			}

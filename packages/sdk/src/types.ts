@@ -2212,6 +2212,137 @@ export interface ReportCatalog {
   data_quality: ReportCatalogDataQuality[];
 }
 
+// ---------------------------------------------------------------------------
+// Custom Report Builder (Reports Center Phase 11). A whitelisted dataset
+// REGISTRY + a SAFE query composer: the user picks a registered dataset + a
+// subset of its allowlisted dimensions / measures (with an agg) / filters / sort
+// + a visualization; the backend composes a parameterized, tenant- AND
+// station-scoped query from ONLY the registry's identifiers (NO free SQL).
+// ---------------------------------------------------------------------------
+
+/** A fixed, allowlisted aggregate function. */
+export type BuilderAggFunc = 'sum' | 'avg' | 'count' | 'min' | 'max';
+
+/** A fixed, allowlisted filter operator. */
+export type BuilderOperator = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'like' | 'between';
+
+/** A column's value/render type. */
+export type BuilderColumnType = 'text' | 'uuid' | 'date' | 'numeric' | 'int' | 'bool';
+
+/** One groupable dimension a dataset exposes. */
+export interface BuilderDimension {
+  id: string;
+  label: string;
+  type: BuilderColumnType;
+}
+
+/** One aggregatable measure a dataset exposes, with its per-measure agg allowlist. */
+export interface BuilderMeasure {
+  id: string;
+  label: string;
+  allowed_aggs: BuilderAggFunc[];
+  /** Money/litre measures render as exact decimal STRINGS. */
+  decimal: boolean;
+  unit?: string;
+  /** A sensitive measure (margin/cost/exposure); omitted for non-holders. */
+  sensitive: boolean;
+}
+
+/** One filterable column with its allowed operators. */
+export interface BuilderFilter {
+  id: string;
+  label: string;
+  type: BuilderColumnType;
+  operators: BuilderOperator[];
+}
+
+/** One curated dataset the actor may build from. */
+export interface BuilderDataset {
+  key: string;
+  name: string;
+  description: string;
+  required_permission: string;
+  sensitive_permission?: string;
+  dimensions: BuilderDimension[];
+  measures: BuilderMeasure[];
+  filters: BuilderFilter[];
+}
+
+/** The permission-filtered dataset registry the actor may use. */
+export interface BuilderDatasets {
+  generated_at: string;
+  datasets: BuilderDataset[];
+  aggregates: BuilderAggFunc[];
+}
+
+/** One chosen measure + the agg to apply. */
+export interface BuilderSpecMeasure {
+  measure: string;
+  agg: BuilderAggFunc;
+}
+
+/**
+ * One chosen filter: a filter column id, an operator and a VALUE (always bound as
+ * a parameter server-side, never concatenated into SQL). For `in` the value is a
+ * list (`values`); for `between` a `[lo, hi]` pair; otherwise a scalar (`value`).
+ */
+export interface BuilderSpecFilter {
+  filter: string;
+  operator: BuilderOperator;
+  value?: unknown;
+  values?: unknown[];
+}
+
+/** Sort by a selected dimension id or measure id. */
+export interface BuilderSpecSort {
+  by: string;
+  desc?: boolean;
+}
+
+/**
+ * A validated builder spec: a dataset key + chosen dims / measures / filters /
+ * sort / limit + a visualization. Every identifier is validated against the
+ * dataset's registry allowlist server-side before any query is composed.
+ */
+export interface BuilderSpec {
+  dataset: string;
+  dimensions: string[];
+  measures: BuilderSpecMeasure[];
+  filters?: BuilderSpecFilter[];
+  sort?: BuilderSpecSort[];
+  limit?: number;
+  viz?: 'table' | 'bar' | 'line' | 'pie';
+}
+
+/** How a saved template is shared. */
+export type BuilderSharedScope = 'private' | 'tenant' | 'role';
+
+/** A saved custom report template (a validated builder spec + share scope). */
+export interface ReportTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  dataset_key: string;
+  spec: BuilderSpec;
+  required_permission: string;
+  sensitive_permission?: string;
+  shared_scope: BuilderSharedScope;
+  shared_roles: string[];
+  created_by?: string;
+  is_system: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The create/update body for a saved template. */
+export interface ReportTemplateInput {
+  name: string;
+  description?: string;
+  spec: BuilderSpec;
+  shared_scope?: BuilderSharedScope;
+  shared_roles?: string[];
+}
+
 /** The keys + formats accepted by the unified export endpoint. */
 export interface ReportExportRequest {
   report_key: string;

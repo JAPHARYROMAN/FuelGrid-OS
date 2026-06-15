@@ -81,6 +81,7 @@ const ROUTES_WITH_PAGE = new Set<string>([
   '/reports/attendance',
   '/reports/corrections-variances',
   '/reports/station-comparison',
+  '/reports/builder',
 ]);
 
 /**

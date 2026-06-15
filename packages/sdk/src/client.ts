@@ -15,6 +15,10 @@ import type {
   RiskRuleInput,
   ReportRule,
   ReportRuleInput,
+  BuilderDatasets,
+  BuilderSpec,
+  ReportTemplate,
+  ReportTemplateInput,
   StationGroup,
   StationRank,
   StockTransfer,
@@ -4795,6 +4799,89 @@ export class Client {
       method: 'DELETE',
       signal,
     });
+  }
+
+  // ----- Custom Report Builder (Reports Center Phase 11) -----
+  // Gated by reports.builder; the dataset's own permission is re-checked at
+  // preview AND run time (a shared template never exposes data the runner cannot
+  // read live). Sensitive columns are omitted for non-holders.
+
+  /** The permission-filtered dataset registry the actor may build from. */
+  getBuilderDatasets(signal?: AbortSignal): Promise<BuilderDatasets> {
+    return this.request<BuilderDatasets>('/api/v1/reports/builder/datasets', { signal });
+  }
+
+  /** Validate a spec + run it, returning a ReportEnvelope. Does NOT save. */
+  previewBuilderReport(spec: BuilderSpec, signal?: AbortSignal): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>('/api/v1/reports/builder/preview', {
+      method: 'POST',
+      body: { spec },
+      signal,
+    });
+  }
+
+  /** Save a custom report template. */
+  createReportTemplate(req: ReportTemplateInput, signal?: AbortSignal): Promise<{ id: string }> {
+    return this.request('/api/v1/reports/builder/templates', {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
+  /** List the templates visible to the actor (share-scope enforced). */
+  listReportTemplates(
+    opts: { limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<ReportTemplate>> {
+    const qs = new URLSearchParams();
+    if (opts.limit != null) qs.set('limit', String(opts.limit));
+    if (opts.offset != null) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return this.request<Paginated<ReportTemplate>>(
+      `/api/v1/reports/builder/templates${q ? `?${q}` : ''}`,
+      { signal },
+    );
+  }
+
+  /** Read one template (404 when not visible — no existence leak). */
+  getReportTemplate(id: string, signal?: AbortSignal): Promise<ReportTemplate> {
+    return this.request<ReportTemplate>(
+      `/api/v1/reports/builder/templates/${encodeURIComponent(id)}`,
+      { signal },
+    );
+  }
+
+  /** Update a template (owner / admin only). */
+  updateReportTemplate(
+    id: string,
+    req: ReportTemplateInput,
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request(`/api/v1/reports/builder/templates/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: req,
+      signal,
+    });
+  }
+
+  /** Delete a template (owner / admin only). */
+  deleteReportTemplate(
+    id: string,
+    signal?: AbortSignal,
+  ): Promise<{ id: string; deleted: boolean }> {
+    return this.request(`/api/v1/reports/builder/templates/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  /** Run a saved template, re-checking the dataset permission at run time. */
+  runReportTemplate(id: string, signal?: AbortSignal): Promise<ReportEnvelope> {
+    return this.request<ReportEnvelope>(
+      `/api/v1/reports/builder/templates/${encodeURIComponent(id)}/run`,
+      { method: 'POST', signal },
+    );
   }
 
   listRiskAlerts(

@@ -49,6 +49,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/receivables"
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
+	"github.com/japharyroman/fuelgrid-os/internal/reportbuilder"
 	"github.com/japharyroman/fuelgrid-os/internal/reportcatalog"
 	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 	"github.com/japharyroman/fuelgrid-os/internal/reportsnapshots"
@@ -148,6 +149,7 @@ type Server struct {
 	reconciliation *reconciliation.Repo
 	reportCatalog  *reportcatalog.Repo
 	reportRules    *reportrules.Repo
+	reportTemplate *reportbuilder.TemplateRepo
 	reportSnaps    *reportsnapshots.Repo
 	scheduledRpts  *scheduledreports.Repo
 	retention      *retention.Repo
@@ -260,6 +262,11 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		// pool and scope every query explicitly by tenant_id (mirrors risk /
 		// reportSnaps); the table's RLS policy is defense-in-depth.
 		s.reportRules = reportrules.New(deps.DB)
+		// report_templates (Custom Report Builder, Phase 11) — saved builder specs.
+		// Runs on the owner pool and scopes every query explicitly by tenant_id;
+		// the table's RLS is defense-in-depth, and share-scope is enforced per actor
+		// in the handler. The dataset registry + safe composer are stateless Go.
+		s.reportTemplate = reportbuilder.NewTemplateRepo(deps.DB)
 		s.reportSnaps = reportsnapshots.New(deps.DB)
 		// scheduled_reports CRUD + the cross-tenant dispatcher both run on the owner
 		// pool and scope every query explicitly by tenant_id (mirrors exportJobs /
