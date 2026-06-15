@@ -32,6 +32,7 @@ import {
   EnvelopeExports,
   EnvelopeTable,
   InsightPanel,
+  InsightRulesPanel,
   SummaryGrid,
 } from '../_components/report-envelope';
 
@@ -409,6 +410,8 @@ export default function SalesReportPage() {
                     insights={env.insights}
                     recommendedActions={env.recommended_actions}
                   />
+
+                  <InsightRulesPanel rules={env.insight_rules} />
 
                   <div className="flex flex-col gap-3">
                     <DrilldownLinks links={env.drilldown} />

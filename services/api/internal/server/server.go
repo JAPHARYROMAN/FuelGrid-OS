@@ -50,6 +50,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/regions"
 	"github.com/japharyroman/fuelgrid-os/internal/reportcatalog"
+	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 	"github.com/japharyroman/fuelgrid-os/internal/reportsnapshots"
 	"github.com/japharyroman/fuelgrid-os/internal/retention"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
@@ -146,6 +147,7 @@ type Server struct {
 	receivables    *receivables.Repo
 	reconciliation *reconciliation.Repo
 	reportCatalog  *reportcatalog.Repo
+	reportRules    *reportrules.Repo
 	reportSnaps    *reportsnapshots.Repo
 	scheduledRpts  *scheduledreports.Repo
 	retention      *retention.Repo
@@ -254,6 +256,10 @@ func New(cfg config.Config, logger *slog.Logger, deps Deps) *Server {
 		s.receivables = receivables.New(deps.DB)
 		s.reconciliation = reconciliation.New(deps.DB)
 		s.reportCatalog = reportcatalog.New(deps.DB)
+		// report_rules CRUD + the per-report insight engine both run on the owner
+		// pool and scope every query explicitly by tenant_id (mirrors risk /
+		// reportSnaps); the table's RLS policy is defense-in-depth.
+		s.reportRules = reportrules.New(deps.DB)
 		s.reportSnaps = reportsnapshots.New(deps.DB)
 		// scheduled_reports CRUD + the cross-tenant dispatcher both run on the owner
 		// pool and scope every query explicitly by tenant_id (mirrors exportJobs /

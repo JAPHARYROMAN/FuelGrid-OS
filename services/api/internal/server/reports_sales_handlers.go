@@ -10,6 +10,7 @@ import (
 
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
+	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 	"github.com/japharyroman/fuelgrid-os/internal/revenue"
 )
 
@@ -231,6 +232,13 @@ func (s *Server) handleSalesReport(w http.ResponseWriter, r *http.Request) {
 		MarginSeries: marginPts,
 		PeriodLocked: dq.RevenueDays > 0 && dq.UnlockedDays == 0,
 	}))
+
+	// ---- config-driven report rules (Phase 15): additive over the composer ----
+	salesFacts := reportrules.NewFacts()
+	seriesFacts(salesFacts, "gross", pointValues(grossPts))
+	seriesFacts(salesFacts, "margin", pointValues(marginPts))
+	salesFacts.Flags["period_locked"] = dq.RevenueDays > 0 && dq.UnlockedDays == 0
+	s.runReportRules(r.Context(), actor.TenantID, &env, "sales", salesFacts)
 
 	// ---- honest data-quality: empty window, unapproved shifts, unlocked days ----
 	if totals.TxnCount == 0 {

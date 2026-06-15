@@ -17,6 +17,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/reconciliation"
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
+	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 )
 
 // Structured, permission-aware report API (REPORTS-STRUCTURED).
@@ -308,6 +309,12 @@ func (s *Server) handleReconciliationReport(w http.ResponseWriter, r *http.Reque
 	}
 	env.applyReport(reporting.StockReconciliation(reconIn))
 
+	// ---- config-driven report rules (Phase 15): additive over the composer ----
+	reconFacts := reportrules.NewFacts()
+	reconFacts.Ints["tanks_over_tolerance"] = exceptions
+	reconFacts.Flags["period_locked"] = reconIn.AllShiftsClosed
+	s.runReportRules(ctx, actor.TenantID, &env, "inventory-reconciliation", reconFacts)
+
 	// Harden data-quality beyond the composer: an empty day (no reconciliations)
 	// reads honestly, and an unpriced tank means the variance VALUE is incomplete.
 	if len(recs) == 0 {
@@ -475,6 +482,13 @@ func (s *Server) handleStationCloseReport(w http.ResponseWriter, r *http.Request
 		GrossSeries: grossPts, CashVariance: cashVariance,
 		UnclosedShiftCount: unclosed, DayLocked: latestLocked,
 	}))
+
+	// ---- config-driven report rules (Phase 15): additive over the composer ----
+	closeFacts := reportrules.NewFacts()
+	seriesFacts(closeFacts, "gross", pointValues(grossPts))
+	closeFacts.Nums["cash_variance"] = cashVariance
+	closeFacts.Flags["period_locked"] = latestLocked
+	s.runReportRules(ctx, actor.TenantID, &env, "station-close", closeFacts)
 
 	// Harden data-quality for the close-specific gaps the composer does not see:
 	// no revenue day at all, and no cash reconciliation submitted for the day.
@@ -707,6 +721,12 @@ func (s *Server) handleCashReconciliationReport(w http.ResponseWriter, r *http.R
 	env.applyReport(reporting.CashReconciliation(reporting.CashReconInput{
 		Variance: latestVariance, GrossSeries: cashPts, PeriodLocked: latestLocked,
 	}))
+
+	// ---- config-driven report rules (Phase 15): additive over the composer ----
+	cashFacts := reportrules.NewFacts()
+	cashFacts.Nums["cash_variance"] = latestVariance
+	cashFacts.Flags["period_locked"] = latestLocked
+	s.runReportRules(ctx, actor.TenantID, &env, "cash-reconciliation", cashFacts)
 
 	// Harden data-quality for the §20.5 gaps the composer does not see: no cash
 	// submitted, mobile-money/card settlement still pending (day unlocked while

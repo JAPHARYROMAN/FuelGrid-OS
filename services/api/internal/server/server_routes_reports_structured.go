@@ -167,6 +167,21 @@ func (s *Server) registerReportsStructuredRoutes(r chi.Router) {
 		r.Get("/reports/scheduled/{id}/runs", s.handleListScheduledReportRuns)
 	})
 
+	// Report insight rules (Reports Center Phase 15 — blueprint §9 / §9.3 / §21.3 /
+	// §23): the config-driven, tunable, auditable surface for the deterministic
+	// rules that drive report insights. Mirrors /risk/rules — gated by
+	// reports.rules.manage, tenant-isolated, audited; DELETE refuses a seeded
+	// system rule (disable it instead). The engine itself is wired into each
+	// report envelope (runReportRules), additive over the composer output.
+	r.With(s.requirePermissionHeld("reports.rules.manage")).Group(func(r chi.Router) {
+		r.Get("/reports/rules", s.handleListReportRules)
+		r.Get("/reports/rules/{id}", s.handleGetReportRule)
+		r.Post("/reports/rules", s.handleCreateReportRule)
+		r.Put("/reports/rules/{id}", s.handleUpdateReportRule)
+		r.Post("/reports/rules/{id}/enabled", s.handleSetReportRuleEnabled)
+		r.Delete("/reports/rules/{id}", s.handleDeleteReportRule)
+	})
+
 	r.With(s.requirePermissionHeld("reports.read")).Group(func(r chi.Router) {
 		// Recent signed-off snapshots across reports — the hub "Locked" rail. The
 		// handler permission-filters each row by the underlying report's permission.

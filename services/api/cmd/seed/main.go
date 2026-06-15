@@ -540,6 +540,48 @@ func run() error {
 		return err
 	}
 
+	// Report Insight Rules Engine (Reports Center Phase 15): the system rules that
+	// mirror the deterministic composer thresholds. Mirrors the 0115 migration so a
+	// freshly seeded demo tenant has the report-rules surface populated. Seeded with
+	// mode='shadow' so default report output stays byte-identical to the composer;
+	// a tenant flips a rule to 'augment' (or tunes it) to have the engine fold the
+	// line in. Idempotent via the (tenant_id, code) unique index.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO report_rules
+		    (tenant_id, code, name, description, report_key, category, condition,
+		     threshold, threshold_config, comparison_period_days, severity,
+		     message_template, recommended_action, report_placement, mode, is_system,
+		     enabled, status)
+		VALUES
+		    ($1, 'gross_swing', 'Gross revenue swing', 'Mirrors the PeriodOverPeriod composer.', 'sales', 'sales', 'period_over_period',
+		     25, '{"metric":"Gross revenue","warn_pct":25}', NULL, 'warning',
+		     '{metric} moved {direction} {pct}% vs the prior period.', 'Confirm the day''s transactions before relying on the swing.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'gross_variance', 'Gross vs recent average', 'Mirrors the VarianceVs30dAverage composer.', 'sales', 'sales', 'variance_vs_average',
+		     20, '{"metric":"Gross revenue","warn_pct":20}', 30, 'warning',
+		     '{metric} is {pct}% vs its recent average — an unusual reading.', 'Confirm the underlying transactions before relying on this figure.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'cash_variance', 'Cash variance over tolerance', 'Mirrors the cashVarianceInsight composer.', 'cash-reconciliation', 'cash', 'cash_variance_over_tolerance',
+		     NULL, '{"critical_multiple":2}', NULL, 'warning',
+		     'Cash drawer is off by {variance} — beyond tolerance.', 'Reconcile the drawer and confirm the tender breakdown before locking the day.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'tank_over_tolerance', 'Tank variance over tolerance', 'Mirrors the StockReconciliation composer.', 'inventory-reconciliation', 'inventory', 'tank_over_tolerance',
+		     NULL, '{}', NULL, 'warning',
+		     '{count} tank(s) exceeded their variance tolerance.', 'Investigate possible loss, theft, or a miscalibrated dip.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'margin_health', 'Margin health', 'Mirrors the marginInsight composer.', 'sales', 'sales', 'margin_health',
+		     15, '{"contract_pct":15}', NULL, 'critical',
+		     'Latest margin is negative — sales are running below cost.', 'Review pump pricing and COGS for the period.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'overdue_receivables', 'Overdue receivables share', 'Mirrors the CustomerCredit composer.', 'customer-credit', 'credit', 'overdue_share',
+		     50, '{"critical_pct":50}', NULL, 'warning',
+		     '{overdue} of receivables is overdue ({pct}% of outstanding).', 'Chase the overdue balances and review the affected customers'' credit standing.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'delivery_shortfall', 'Delivery shortfall', 'Mirrors the Delivery composer.', 'delivery', 'procurement', 'delivery_shortfall',
+		     5, '{"warn_pct":5}', NULL, 'warning',
+		     'Received {shortfall} L less than ordered this period ({pct}% of the ordered volume).', 'Reconcile short deliveries with the supplier and confirm the goods-receipt dips.', 'insight', 'shadow', true, true, 'active'),
+		    ($1, 'period_unlocked', 'Period not locked', 'Mirrors the shared period-lock data-quality note.', NULL, 'general', 'period_unlocked',
+		     NULL, '{}', NULL, 'info',
+		     'This period is not locked yet, so its totals are provisional.', NULL, 'data_quality', 'shadow', true, true, 'active')
+		ON CONFLICT (tenant_id, code) DO NOTHING
+	`, tenantID); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}

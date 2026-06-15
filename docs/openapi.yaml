@@ -3031,6 +3031,76 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/reports/rules:
+    get:
+      tags: [Reports]
+      summary: List report insight rules
+      description: >-
+        Returns the tenant's report insight rules (Reports Center Phase 15). The
+        config-driven, deterministic engine that augments the report composers.
+        Optional ?report_key filters to a report's own rules plus the broad rules.
+        Gated by reports.rules.manage.
+      parameters:
+        - { in: query, name: report_key, required: false, schema: { type: string } }
+        - { $ref: '#/components/parameters/LimitParam' }
+        - { $ref: '#/components/parameters/OffsetParam' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Paged' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Reports]
+      summary: Create a report insight rule
+      description: >-
+        Creates a tenant report insight rule. condition must name a registered
+        deterministic evaluator; message_template uses safe {token} substitution.
+        Gated by reports.rules.manage.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: A rule with this code already exists }
+  /api/v1/reports/rules/{id}:
+    get:
+      tags: [Reports]
+      summary: Get a report insight rule
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Reports]
+      summary: Update a report insight rule's configurable fields
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Reports]
+      summary: Delete a report insight rule
+      description: Deletes a tenant rule. A seeded system rule cannot be deleted (409) — disable it instead.
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200': { description: Deleted, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A system rule cannot be deleted }
+  /api/v1/reports/rules/{id}/enabled:
+    post:
+      tags: [Reports]
+      summary: Enable or disable a report insight rule
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+      responses:
+        '200': { description: Updated, content: { application/json: { schema: { $ref: '#/components/schemas/Object' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/audit-logs/export:
     post:
       tags: [Audit]

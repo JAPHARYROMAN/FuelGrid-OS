@@ -268,6 +268,30 @@ func seedTenant(t *testing.T, ctx context.Context, pool *database.Pool) seedIDs 
 	if _, err := pool.Exec(ctx, `INSERT INTO user_station_access (user_id, station_id, tenant_id) VALUES ($1, $2, $3)`, opID, ids.station1, ids.tenantID); err != nil {
 		t.Fatalf("seed station access: %v", err)
 	}
+
+	// Report Insight Rules Engine (Reports Center Phase 15): seed the system rules
+	// for this freshly-created tenant, mirroring the 0115 migration + cmd/seed (the
+	// migration's CROSS JOIN tenants only covers tenants that existed when it ran, so
+	// a harness tenant created live needs the same per-tenant provisioning). Seeded
+	// as shadow so report output stays byte-identical to the composer by default.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO report_rules
+		    (tenant_id, code, name, report_key, category, condition, threshold,
+		     threshold_config, comparison_period_days, severity, message_template,
+		     recommended_action, report_placement, mode, is_system, enabled, status)
+		VALUES
+		    ($1,'gross_swing','Gross revenue swing','sales','sales','period_over_period',25,'{"metric":"Gross revenue","warn_pct":25}',NULL,'warning','{metric} moved {direction} {pct}% vs the prior period.','Confirm the day''s transactions.','insight','shadow',true,true,'active'),
+		    ($1,'gross_variance','Gross vs recent average','sales','sales','variance_vs_average',20,'{"metric":"Gross revenue","warn_pct":20}',30,'warning','{metric} is {pct}% vs its recent average.','Confirm the underlying transactions.','insight','shadow',true,true,'active'),
+		    ($1,'cash_variance','Cash variance over tolerance','cash-reconciliation','cash','cash_variance_over_tolerance',NULL,'{"critical_multiple":2}',NULL,'warning','Cash drawer is off by {variance} — beyond tolerance.','Reconcile the drawer.','insight','shadow',true,true,'active'),
+		    ($1,'tank_over_tolerance','Tank variance over tolerance','inventory-reconciliation','inventory','tank_over_tolerance',NULL,'{}',NULL,'warning','{count} tank(s) exceeded their variance tolerance.','Investigate possible loss.','insight','shadow',true,true,'active'),
+		    ($1,'margin_health','Margin health','sales','sales','margin_health',15,'{"contract_pct":15}',NULL,'critical','Latest margin is negative — sales are running below cost.','Review pump pricing and COGS.','insight','shadow',true,true,'active'),
+		    ($1,'overdue_receivables','Overdue receivables share','customer-credit','credit','overdue_share',50,'{"critical_pct":50}',NULL,'warning','{overdue} of receivables is overdue ({pct}% of outstanding).','Chase the overdue balances.','insight','shadow',true,true,'active'),
+		    ($1,'delivery_shortfall','Delivery shortfall','delivery','procurement','delivery_shortfall',5,'{"warn_pct":5}',NULL,'warning','Received {shortfall} L less than ordered this period ({pct}% of the ordered volume).','Reconcile short deliveries.','insight','shadow',true,true,'active'),
+		    ($1,'period_unlocked','Period not locked',NULL,'general','period_unlocked',NULL,'{}',NULL,'info','This period is not locked yet, so its totals are provisional.',NULL,'data_quality','shadow',true,true,'active')
+		ON CONFLICT (tenant_id, code) DO NOTHING
+	`, ids.tenantID); err != nil {
+		t.Fatalf("seed report rules: %v", err)
+	}
 	return ids
 }
 

@@ -8,6 +8,7 @@ import (
 	"github.com/japharyroman/fuelgrid-os/internal/identity"
 	"github.com/japharyroman/fuelgrid-os/internal/procurement"
 	"github.com/japharyroman/fuelgrid-os/internal/reporting"
+	"github.com/japharyroman/fuelgrid-os/internal/reportrules"
 )
 
 // Delivery & Procurement report (Reports Center §5.7) — the signature Delivery
@@ -198,6 +199,13 @@ func (s *Server) handleDeliveryReport(w http.ResponseWriter, r *http.Request) {
 		LateDeliveries:  dq.LateDeliveries,
 		PeriodComplete:  dq.OpenPurchaseOrders == 0,
 	}))
+
+	// ---- config-driven report rules (Phase 15): additive over the composer ----
+	deliveryFacts := reportrules.NewFacts()
+	deliveryFacts.Nums["ordered_litres"] = totals.OrderedLitres
+	deliveryFacts.Nums["received_litres"] = totals.ReceivedLitres
+	deliveryFacts.Flags["period_locked"] = dq.OpenPurchaseOrders == 0
+	s.runReportRules(r.Context(), actor.TenantID, &env, "delivery", deliveryFacts)
 
 	// ---- honest data-quality beyond the composer ----
 	if totals.DeliveryCount == 0 {

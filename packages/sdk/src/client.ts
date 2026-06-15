@@ -13,6 +13,8 @@ import type {
   RiskAlert,
   RiskRule,
   RiskRuleInput,
+  ReportRule,
+  ReportRuleInput,
   StationGroup,
   StationRank,
   StockTransfer,
@@ -4735,6 +4737,64 @@ export class Client {
 
   runRiskDetection(signal?: AbortSignal): Promise<{ alerts_created: number }> {
     return this.request('/api/v1/risk/detect', { method: 'POST', signal });
+  }
+
+  // ---- Report insight rules (Reports Center Phase 15) ----
+  // The config-driven, deterministic engine that augments the report composers.
+  // Gated by reports.rules.manage. listReportRules optionally filters by report_key.
+
+  listReportRules(
+    opts: { reportKey?: string } = {},
+    signal?: AbortSignal,
+  ): Promise<Paginated<ReportRule>> {
+    const qs = new URLSearchParams();
+    if (opts.reportKey) qs.set('report_key', opts.reportKey);
+    const q = qs.toString();
+    return this.request<Paginated<ReportRule>>(`/api/v1/reports/rules${q ? `?${q}` : ''}`, {
+      signal,
+    });
+  }
+
+  getReportRule(id: string, signal?: AbortSignal): Promise<ReportRule> {
+    return this.request<ReportRule>(`/api/v1/reports/rules/${encodeURIComponent(id)}`, { signal });
+  }
+
+  createReportRule(req: ReportRuleInput, signal?: AbortSignal): Promise<{ id: string }> {
+    return this.request('/api/v1/reports/rules', { method: 'POST', body: req, signal });
+  }
+
+  // updateReportRule fully updates a rule's configurable fields (PUT).
+  updateReportRule(
+    id: string,
+    req: Partial<ReportRuleInput>,
+    signal?: AbortSignal,
+  ): Promise<{ id: string }> {
+    return this.request(`/api/v1/reports/rules/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: req,
+      signal,
+    });
+  }
+
+  // setReportRuleEnabled flips a rule's enabled flag — disabling removes its insight.
+  setReportRuleEnabled(
+    id: string,
+    enabled: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ id: string; enabled: boolean }> {
+    return this.request(`/api/v1/reports/rules/${encodeURIComponent(id)}/enabled`, {
+      method: 'POST',
+      body: { enabled },
+      signal,
+    });
+  }
+
+  // deleteReportRule removes a tenant rule (a system rule cannot be deleted — 409).
+  deleteReportRule(id: string, signal?: AbortSignal): Promise<{ id: string; deleted: boolean }> {
+    return this.request(`/api/v1/reports/rules/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal,
+    });
   }
 
   listRiskAlerts(
