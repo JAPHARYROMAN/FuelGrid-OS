@@ -378,34 +378,24 @@ func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ps, roles, ok := s.actorRolesAndPolicy(w, r, actor)
+	ps, roleCodes, ok := s.actorRoleCodesAndPolicy(w, r, actor)
 	if !ok {
 		return
 	}
-	// Over-fetch then share-filter per actor; page on the filtered set.
-	rows, err := s.reportTemplate.List(r.Context(), actor.TenantID, limit+1+offset, 0)
+	// Share-scope is filtered IN SQL (ListVisible), so pagination is correct no
+	// matter how many invisible templates other actors created — a permitted
+	// actor's templates can never be pushed past the fetched window. Over-fetch one
+	// row to compute has_more honestly.
+	rows, err := s.reportTemplate.ListVisible(r.Context(), actor.TenantID, actor.UserID, roleCodes, ps.IsSystemAdmin, limit+1, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	visible := make([]reportbuilder.Template, 0, len(rows))
-	for i := range rows {
-		if rows[i].Visible(actor.UserID, roles, ps.IsSystemAdmin) {
-			visible = append(visible, rows[i])
-		}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
-	// Apply offset/limit on the visible set.
-	start := offset
-	if start > len(visible) {
-		start = len(visible)
-	}
-	end := start + limit
-	if end > len(visible) {
-		end = len(visible)
-	}
-	page := visible[start:end]
-	hasMore := len(visible) > end
-	writePagedMore(w, http.StatusOK, page, len(page), limit, offset, hasMore)
+	writePagedMore(w, http.StatusOK, rows, len(rows), limit, offset, hasMore)
 }
 
 func (s *Server) handleGetTemplate(w http.ResponseWriter, r *http.Request) {
@@ -611,10 +601,10 @@ func (s *Server) canManageTemplate(w http.ResponseWriter, r *http.Request, actor
 	return false
 }
 
-// actorRolesAndPolicy loads the actor's policy + role codes (as a set) for the
-// share-scope visibility check. On error it writes the response and returns
+// actorRoleCodesAndPolicy loads the actor's policy + role codes (as a slice) for
+// the share-scope visibility check. On error it writes the response and returns
 // ok=false.
-func (s *Server) actorRolesAndPolicy(w http.ResponseWriter, r *http.Request, actor identity.Actor) (policy.PermissionSet, map[string]bool, bool) {
+func (s *Server) actorRoleCodesAndPolicy(w http.ResponseWriter, r *http.Request, actor identity.Actor) (policy.PermissionSet, []string, bool) {
 	ps, err := s.policy.LoadFor(r.Context(), actor)
 	if err != nil {
 		s.logger.Error("builder: policy load", "error", err)
@@ -625,6 +615,17 @@ func (s *Server) actorRolesAndPolicy(w http.ResponseWriter, r *http.Request, act
 	if err != nil {
 		s.logger.Error("builder: list roles", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return policy.PermissionSet{}, nil, false
+	}
+	return ps, codes, true
+}
+
+// actorRolesAndPolicy loads the actor's policy + role codes (as a set) for the
+// per-row share-scope visibility check (handleGetTemplate / handleRunTemplate).
+// On error it writes the response and returns ok=false.
+func (s *Server) actorRolesAndPolicy(w http.ResponseWriter, r *http.Request, actor identity.Actor) (policy.PermissionSet, map[string]bool, bool) {
+	ps, codes, ok := s.actorRoleCodesAndPolicy(w, r, actor)
+	if !ok {
 		return policy.PermissionSet{}, nil, false
 	}
 	roles := make(map[string]bool, len(codes))

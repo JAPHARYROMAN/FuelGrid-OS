@@ -381,6 +381,86 @@ func TestBuilder_TemplateShareScopeAndRunRecheck(t *testing.T) {
 	}
 }
 
+// TestBuilder_ListVisiblePaginationIsShareFiltered proves the list endpoint
+// filters share-scope IN SQL (ListVisible), so a permitted actor's visible
+// templates can never be pushed out of the fetched page by a flood of OTHER
+// actors' private templates. Regression for the over-fetch-then-filter pagination
+// availability bug: previously List(limit+1+offset, 0) fetched the newest
+// limit+1+offset rows then share-filtered in memory, so many newer private
+// templates by user A could fill the window and hide user B's own/shared rows.
+func TestBuilder_ListVisiblePaginationIsShareFiltered(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// User A: many PRIVATE templates (the noise that used to fill the page).
+	userA := builderUserWithPerms(t, ctx, h, true, "reports.builder", "revenue.read")
+	for i := 0; i < 12; i++ {
+		body := fmt.Sprintf(`{"name":"A Private %d","spec":{"dataset":"revenue_days","dimensions":["station_id"],"measures":[{"measure":"gross_revenue","agg":"sum"}]},"shared_scope":"private"}`, i)
+		code, raw := h.do(t, http.MethodPost, "/api/v1/reports/builder/templates", userA, rawBody(body), "application/json")
+		if code != http.StatusCreated {
+			t.Fatalf("seed A private %d = %d (%s)", i, code, string(raw))
+		}
+	}
+
+	// User B: one OWN private template + one TENANT-shared template, both created
+	// AFTER A's (so without the fix they'd be the newest, but the bug is the
+	// general class — assert visibility regardless of interleaving).
+	userB := builderUserWithPerms(t, ctx, h, true, "reports.builder", "revenue.read")
+	ownBody := `{"name":"B Own Private","spec":{"dataset":"revenue_days","dimensions":["station_id"],"measures":[{"measure":"gross_revenue","agg":"sum"}]},"shared_scope":"private"}`
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/reports/builder/templates", userB, rawBody(ownBody), "application/json"); code != http.StatusCreated {
+		t.Fatalf("seed B own = %d (%s)", code, string(raw))
+	}
+	sharedBody := `{"name":"B Tenant Shared","spec":{"dataset":"revenue_days","dimensions":["station_id"],"measures":[{"measure":"gross_revenue","agg":"sum"}]},"shared_scope":"tenant"}`
+	if code, raw := h.do(t, http.MethodPost, "/api/v1/reports/builder/templates", userB, rawBody(sharedBody), "application/json"); code != http.StatusCreated {
+		t.Fatalf("seed B shared = %d (%s)", code, string(raw))
+	}
+
+	// Add MORE noise from A AFTER B's rows, so a naive over-fetch of the newest
+	// rows would bury B's templates behind A's private ones.
+	for i := 12; i < 24; i++ {
+		body := fmt.Sprintf(`{"name":"A Private %d","spec":{"dataset":"revenue_days","dimensions":["station_id"],"measures":[{"measure":"gross_revenue","agg":"sum"}]},"shared_scope":"private"}`, i)
+		if code, raw := h.do(t, http.MethodPost, "/api/v1/reports/builder/templates", userA, rawBody(body), "application/json"); code != http.StatusCreated {
+			t.Fatalf("seed A private (late) %d = %d (%s)", i, code, string(raw))
+		}
+	}
+
+	// User B lists page 1 with a small limit. B must see EXACTLY their own private
+	// + the tenant-shared template (none of A's 24 private templates leak), and the
+	// page must not be empty even though A created far more rows than the limit.
+	code, raw := h.do(t, http.MethodGet, "/api/v1/reports/builder/templates?limit=20&offset=0", userB, nil, "")
+	if code != http.StatusOK {
+		t.Fatalf("list = %d (%s)", code, string(raw))
+	}
+	var page struct {
+		Items []struct {
+			Name        string `json:"name"`
+			SharedScope string `json:"shared_scope"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &page); err != nil {
+		t.Fatalf("decode list: %v (%s)", err, string(raw))
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("B should see exactly 2 templates (own private + tenant-shared), got %d: %+v", len(page.Items), page.Items)
+	}
+	var sawOwn, sawShared bool
+	for _, it := range page.Items {
+		if containsStr(it.Name, "A Private") {
+			t.Fatalf("A's private template leaked into B's list: %q", it.Name)
+		}
+		if it.Name == "B Own Private" {
+			sawOwn = true
+		}
+		if it.Name == "B Tenant Shared" {
+			sawShared = true
+		}
+	}
+	if !sawOwn || !sawShared {
+		t.Fatalf("B must see own private + tenant-shared on page 1 (sawOwn=%v sawShared=%v)", sawOwn, sawShared)
+	}
+}
+
 func containsStr(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
 }

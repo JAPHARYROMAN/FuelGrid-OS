@@ -258,7 +258,7 @@ export function BuilderForm({
             id="b-limit"
             type="number"
             min={1}
-            max={5000}
+            max={1000}
             className={inputClasses}
             value={state.limit}
             onChange={(e) => set({ limit: e.target.value })}

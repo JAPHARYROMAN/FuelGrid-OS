@@ -210,6 +210,46 @@ func (r *TemplateRepo) List(ctx context.Context, tenantID uuid.UUID, limit, offs
 	return out, rows.Err()
 }
 
+// ListVisible returns the tenant's templates the actor may SEE, share-scope
+// enforced IN SQL (so pagination is correct regardless of how many invisible
+// templates other actors created — a permitted actor's templates can never be
+// pushed past the fetched window). The predicate mirrors Template.Visible:
+// system admins see all; everyone sees their own + tenant-shared; a role share is
+// visible when the actor holds any of the listed role codes (shared_roles && $roles).
+// Ordered newest-first; pass limit+1 to compute has_more.
+func (r *TemplateRepo) ListVisible(ctx context.Context, tenantID, actorID uuid.UUID, actorRoles []string, isAdmin bool, limit, offset int) ([]Template, error) {
+	roles := actorRoles
+	if roles == nil {
+		roles = []string{}
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT `+templateColumns+`
+		FROM report_templates
+		WHERE tenant_id = $1
+		  AND (
+		        $2::boolean
+		     OR created_by = $3
+		     OR shared_scope = 'tenant'
+		     OR (shared_scope = 'role' AND shared_roles && $4::text[])
+		  )
+		ORDER BY created_at DESC, id
+		LIMIT $5 OFFSET $6
+	`, tenantID, isAdmin, actorID, roles, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Template{}
+	for rows.Next() {
+		t, err := scanTemplate(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // Visible reports whether the template should be visible to the actor given the
 // share scope. A private template is visible only to its creator; a tenant share
 // to everyone in the tenant (the repo already tenant-scoped it); a role share to
