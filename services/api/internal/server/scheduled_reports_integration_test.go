@@ -321,6 +321,65 @@ func TestScheduledReports_ClaimDueIdempotency(t *testing.T) {
 	_ = repo.Delete(ctx, h.ids.tenantID, created.ID)
 }
 
+// TestScheduledReports_ClaimDueSurfacesDueInstant proves the period key is derived
+// from the DUE instant (the pre-advance next_run_at), not the wall-clock of the
+// tick. A late tick (worker backlog crossing a calendar-day boundary) must record
+// the run under the period it was DUE for — otherwise the run is mis-keyed and the
+// next legitimate delivery collides on the UNIQUE and is silently dropped.
+func TestScheduledReports_ClaimDueSurfacesDueInstant(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := scheduledreports.New(h.pool)
+
+	sched := scheduledreports.Schedule{Frequency: scheduledreports.FrequencyDaily, Hour: 6, Minute: 0}
+
+	// Due YESTERDAY at 06:00; the tick fires effectively "today" (well past the due
+	// instant), so now and DueAt fall on different calendar days.
+	dueAt := time.Date(2026, 6, 14, 6, 0, 0, 0, time.Local)
+	created, err := repo.Create(ctx, h.ids.tenantID, scheduledreports.CreateInput{
+		ReportKey:       "station-close",
+		Name:            "late-tick",
+		Filters:         map[string]string{"station_id": h.ids.station1.String()},
+		Schedule:        sched,
+		Recipients:      []scheduledreports.Recipient{{Type: "user", Value: h.adminID(t).String()}},
+		DeliveryChannel: "in_app",
+		Format:          "csv",
+		CreatedBy:       h.adminID(t),
+		NextRunAt:       dueAt,
+	})
+	if err != nil {
+		t.Fatalf("create schedule: %v", err)
+	}
+	defer func() { _ = repo.Delete(ctx, h.ids.tenantID, created.ID) }()
+
+	// Tick fires the NEXT day at 00:05 — a late drain across the day boundary.
+	now := time.Date(2026, 6, 15, 0, 5, 0, 0, time.Local)
+	claimed, err := repo.ClaimDue(ctx, now, 25)
+	if err != nil {
+		t.Fatalf("ClaimDue: %v", err)
+	}
+	var got *scheduledreports.ScheduledReport
+	for i := range claimed {
+		if claimed[i].ID == created.ID {
+			got = &claimed[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("ClaimDue did not return the due schedule")
+	}
+	// DueAt must equal the original due instant, not `now`.
+	if !got.DueAt.Equal(dueAt) {
+		t.Fatalf("DueAt = %s, want the pre-advance due instant %s (not the tick time)", got.DueAt, dueAt)
+	}
+	// The period key from DueAt is the 14th; from `now` it would (wrongly) be the 15th.
+	if pkDue, pkNow := sched.PeriodKey(got.DueAt), sched.PeriodKey(now); pkDue == pkNow {
+		t.Fatalf("test setup did not cross a period boundary (pkDue=%s pkNow=%s)", pkDue, pkNow)
+	} else if pkDue != "2026-06-14" {
+		t.Fatalf("period key from DueAt = %q, want 2026-06-14 (the due period)", pkDue)
+	}
+}
+
 // TestScheduledReports_CrossTenantIsolation: a schedule created in tenant A is a 404
 // (not an IDOR) for tenant B, even though B is a valid authenticated actor.
 func TestScheduledReports_CrossTenantIsolation(t *testing.T) {

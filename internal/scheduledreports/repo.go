@@ -63,6 +63,14 @@ type ScheduledReport struct {
 	Status          string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+
+	// DueAt is the instant this row was DUE when ClaimDue claimed it (its
+	// next_run_at BEFORE the claim advanced it). It is NOT a stored column — it is
+	// populated only on rows returned by ClaimDue so the dispatcher can derive the
+	// period key from the period the run is FOR, not from the wall-clock of the tick
+	// (which drifts when a tick fires late and would mis-key/defeat the idempotency
+	// UNIQUE across a period boundary). Zero on rows loaded by Get/List.
+	DueAt time.Time
 }
 
 // Run is one recorded generation (scheduled_report_runs). PeriodKey is the
@@ -152,8 +160,10 @@ func scanSchedule(row pgx.Row) (ScheduledReport, error) {
 	return sr, nil
 }
 
-// Create inserts a new schedule and returns the stored row. Runs on the request
-// (RLS) pool so tenant_isolation stamps the tenant.
+// Create inserts a new schedule and returns the stored row. Like every method on
+// this repo it runs on the OWNER pool and enforces tenant isolation by the explicit
+// tenant_id it is given (taken from the authenticated actor); the table's RLS policy
+// is defense-in-depth, not the primary boundary.
 func (r *Repo) Create(ctx context.Context, tenantID uuid.UUID, in CreateInput) (*ScheduledReport, error) {
 	filters := in.Filters
 	if filters == nil {
@@ -343,6 +353,12 @@ func (r *Repo) ClaimDue(ctx context.Context, now time.Time, limit int) ([]Schedu
 	// (shouldn't happen — Validate ran at write) is parked far in the future and
 	// flagged 'error' so it stops re-firing rather than tight-looping.
 	for i := range claimed {
+		// Capture the DUE instant (the pre-advance next_run_at) BEFORE we overwrite
+		// it. The dispatcher keys the run's period off this, not off the tick's
+		// wall-clock, so a late tick still records the run under the period it was
+		// due for and the (schedule, period_key) UNIQUE collapses duplicates correctly.
+		claimed[i].DueAt = claimed[i].NextRunAt
+
 		next, nerr := claimed[i].Schedule.NextRunAfter(now)
 		status := claimed[i].Status
 		if nerr != nil {
@@ -434,7 +450,8 @@ func (r *Repo) RecordRun(ctx context.Context, tenantID uuid.UUID, in RecordRunIn
 }
 
 // ListRuns returns a schedule's recent runs, newest first. Tenant + schedule
-// scoped. Runs on the request (RLS) pool.
+// scoped on the owner pool (tenant isolation via the explicit tenant_id filter;
+// RLS is defense-in-depth).
 func (r *Repo) ListRuns(ctx context.Context, tenantID, scheduleID uuid.UUID, limit, offset int) ([]Run, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, tenant_id, scheduled_report_id, period_key, run_at, status,

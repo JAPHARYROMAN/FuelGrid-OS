@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -69,11 +71,19 @@ func (s *Server) RunDue(ctx context.Context) (string, error) {
 	var delivered, skipped, failed int
 	for i := range due {
 		sr := due[i]
-		// periodKey identifies the logical period this claim covers. We compute it
-		// from the instant the schedule was due (the PRE-advance next_run_at), so a
-		// duplicated tick for the same period yields the same key and the run ledger's
-		// UNIQUE collapses it.
-		periodKey := sr.Schedule.PeriodKey(now)
+		// periodKey identifies the logical period this claim covers. It is derived
+		// from the instant the schedule was DUE (ClaimDue's pre-advance next_run_at,
+		// surfaced as DueAt) — NOT the wall-clock `now` of the tick. A tick that fires
+		// late (worker backlog, restart) would otherwise key off a different period
+		// than the one it is delivering, mis-keying the run and defeating the
+		// (schedule, period_key) UNIQUE across a period boundary (a dropped or
+		// duplicated delivery). DueAt keeps the key aligned with the period the run is
+		// FOR. Fall back to `now` only if DueAt is somehow unset.
+		dueAt := sr.DueAt
+		if dueAt.IsZero() {
+			dueAt = now
+		}
+		periodKey := sr.Schedule.PeriodKey(dueAt)
 
 		rctx, cancel := context.WithTimeout(ctx, scheduledRunTimeout)
 		outcome := s.dispatchOne(rctx, sr, periodKey, now)
@@ -377,12 +387,47 @@ func (s *Server) deliverWebhook(
 	return nil
 }
 
-// webhookClient returns the HTTP client used for webhook delivery. Redirects are
-// DISABLED so a 3xx to a private host can't bypass the SSRF guard (the guard ran on
-// the original URL only).
+// webhookClient returns the HTTP client used for webhook delivery.
+//
+// Two SSRF defenses are layered here:
+//   - Redirects are DISABLED so a 3xx to a private host can't bypass the guard
+//     (the guard ran on the original URL only).
+//   - The dialer pins the connection to a PUBLIC address at connect time. The
+//     up-front validateWebhookURL guard resolves DNS once, but http.Transport
+//     re-resolves independently at dial time, so a DNS-rebinding host could flip
+//     to 127.0.0.1 / 169.254.169.254 / an RFC1918 IP between validation and the
+//     POST (TOCTOU). The Control hook below inspects the ACTUAL IP the socket is
+//     about to connect to and rejects any non-public address, closing that gap.
 func (s *Server) webhookClient() *http.Client {
+	dialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+		// Control runs AFTER name resolution, right before connect(2), with the
+		// concrete resolved address. Rejecting a non-public IP here means the
+		// time-of-use IP — not just the time-of-check IP — must be public.
+		Control: func(_, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return fmt.Errorf("webhook dial: bad address %q", address)
+			}
+			ip := net.ParseIP(host)
+			if ip == nil || !isPublicUnicast(ip) {
+				return fmt.Errorf("webhook dial blocked: %s is not a public address", host)
+			}
+			return nil
+		},
+	}
 	return &http.Client{
 		Timeout: webhookPostTimeout,
+		Transport: &http.Transport{
+			DialContext:           dialer.DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: webhookPostTimeout,
+			DisableKeepAlives:     true,
+			// No Proxy: a proxy would terminate the connection at the proxy host and
+			// resolve the real webhook host itself, defeating the dial-time IP pin
+			// below. Webhook delivery must dial the destination directly.
+		},
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

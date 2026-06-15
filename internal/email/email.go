@@ -168,7 +168,11 @@ func (s *SMTPSender) Driver() string { return "smtp" }
 func (s *SMTPSender) render(msg Message) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + s.from + "\r\n")
-	b.WriteString("To: " + msg.To + "\r\n")
+	// Strip CR/LF from the recipient before it goes into the header. Callers should
+	// already validate addresses, but this is defense-in-depth against SMTP header
+	// injection (a `To` value carrying `\r\nBcc: ...` would otherwise smuggle headers
+	// into the message). Subject is neutralised separately by Q-encoding below.
+	b.WriteString("To: " + sanitizeHeaderValue(msg.To) + "\r\n")
 	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", msg.Subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 
@@ -217,6 +221,13 @@ func (s *SMTPSender) render(msg Message) []byte {
 func sanitizeFilename(name string) string {
 	r := strings.NewReplacer("\"", "", "\r", "", "\n", "")
 	return r.Replace(name)
+}
+
+// sanitizeHeaderValue strips CR/LF so an attacker-influenced value (e.g. a
+// recipient address) cannot inject additional message headers (header injection).
+func sanitizeHeaderValue(v string) string {
+	r := strings.NewReplacer("\r", "", "\n", "")
+	return r.Replace(v)
 }
 
 // chunk76 inserts CRLF every 76 characters, as RFC 2045 requires for base64

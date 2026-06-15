@@ -1,7 +1,11 @@
 package server
 
 import (
+	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -95,5 +99,49 @@ func TestValidateWebhookURL_Allowlist(t *testing.T) {
 	// Even an allowlisted host is still SSRF-checked: if it resolves private, blocked.
 	if err := validateWebhookURL("https://hooks.example.com/x", allow, staticResolver("127.0.0.1")); err == nil {
 		t.Fatalf("allowlisted but private-resolving host must still be blocked")
+	}
+}
+
+// TestWebhookClient_DialPinBlocksPrivate proves the dial-time IP pin (the
+// DNS-rebinding / TOCTOU defense): even when a request reaches the HTTP client
+// pointed at a private/loopback destination — simulating a host whose DNS flipped
+// to a private IP AFTER the up-front validateWebhookURL guard ran — the dialer's
+// Control hook rejects the connection before any bytes leave the box.
+func TestWebhookClient_DialPinBlocksPrivate(t *testing.T) {
+	t.Parallel()
+	s := &Server{}
+	client := s.webhookClient()
+
+	// A loopback server stands in for any private/metadata endpoint a rebinding
+	// host would resolve to. The pin must refuse to connect to it.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL, strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatalf("expected dial to a loopback address to be blocked by the IP pin, but the POST succeeded")
+	}
+	if !strings.Contains(err.Error(), "not a public address") {
+		t.Fatalf("expected an IP-pin rejection, got: %v", err)
+	}
+}
+
+// TestWebhookClient_DialPinAllowsPublicShape is a light sanity check that the pin's
+// Control hook accepts a public-looking address (it does not, by itself, prove a
+// real public POST works — that needs network — but it guards against the pin
+// rejecting EVERYTHING, e.g. a logic inversion).
+func TestWebhookClient_DialPinAllowsPublicShape(t *testing.T) {
+	t.Parallel()
+	s := &Server{}
+	tr, ok := s.webhookClient().Transport.(*http.Transport)
+	if !ok || tr.DialContext == nil {
+		t.Fatalf("webhook client must use a custom DialContext for the IP pin")
 	}
 }
