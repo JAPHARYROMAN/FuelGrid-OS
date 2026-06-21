@@ -18,9 +18,10 @@ export function ManualDownload() {
     <div className="mt-2 flex flex-col items-center text-center">
       <a
         href="/supervisor-operations-manual.pdf"
-        download
+        download="FuelGrid-OS-Supervisor-Manual.pdf"
+        type="application/pdf"
         rel="noopener"
-        className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        className="inline-flex min-h-11 items-center gap-1.5 rounded-md px-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:text-foreground focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         <FileText className="size-3.5" aria-hidden />
         Download the Supervisor Manual (PDF)

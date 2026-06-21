@@ -16,8 +16,9 @@ describe('ManualDownload', () => {
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute('href', '/supervisor-operations-manual.pdf');
     // The `download` attribute makes the browser save the file instead of
-    // opening it; in the DOM it surfaces as an empty-string attribute.
-    expect(link).toHaveAttribute('download', '');
+    // opening it; the value sets a branded saved filename.
+    expect(link).toHaveAttribute('download', 'FuelGrid-OS-Supervisor-Manual.pdf');
+    expect(link).toHaveAttribute('type', 'application/pdf');
     expect(link).toHaveAttribute('rel', 'noopener');
   });
 });

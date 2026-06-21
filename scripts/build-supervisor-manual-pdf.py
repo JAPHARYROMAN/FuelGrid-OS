@@ -7,11 +7,11 @@ source (docs/supervisor-operations-manual.md).
 
 How to regenerate
 -----------------
-This script embeds Windows Arial (full Unicode coverage: em-dashes, arrows,
-curly quotes, bullets) by reading the TTFs from C:\\Windows\\Fonts, so run it on
-Windows. On another OS, adjust the font path (`_FD`) below to a directory that
-holds arial.ttf / arialbd.ttf / ariali.ttf / arialbi.ttf (or substitute another
-font family).
+This script embeds Arial (full Unicode coverage: em-dashes, arrows, curly
+quotes, bullets). The font directory default is platform-aware (Windows
+C:\\Windows\\Fonts, macOS /Library/Fonts, Linux msttcorefonts). To point it at a
+different directory holding arial.ttf / arialbd.ttf / ariali.ttf / arialbi.ttf
+(or substitute another family), set the MANUAL_FONT_DIR environment variable.
 
     pip install --quiet reportlab pypdf
     python scripts/build-supervisor-manual-pdf.py \
@@ -37,7 +37,17 @@ SRC = sys.argv[1]
 OUT = sys.argv[2]
 
 # Embed Arial (full Unicode coverage: em-dashes, arrows, curly quotes, bullets).
-_FD = r"C:\Windows\Fonts"
+# Font directory default is platform-aware; override with MANUAL_FONT_DIR to
+# point at any directory holding arial.ttf / arialbd.ttf / ariali.ttf /
+# arialbi.ttf (or substitute another family).
+def _default_font_dir():
+    if sys.platform.startswith("win"):
+        return r"C:\Windows\Fonts"
+    if sys.platform == "darwin":
+        return "/Library/Fonts"
+    return "/usr/share/fonts/truetype/msttcorefonts"
+
+_FD = os.environ.get("MANUAL_FONT_DIR", _default_font_dir())
 pdfmetrics.registerFont(TTFont("AppFont", os.path.join(_FD, "arial.ttf")))
 pdfmetrics.registerFont(TTFont("AppFont-Bold", os.path.join(_FD, "arialbd.ttf")))
 pdfmetrics.registerFont(TTFont("AppFont-Italic", os.path.join(_FD, "ariali.ttf")))
