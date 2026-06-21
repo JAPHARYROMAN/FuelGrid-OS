@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 
 import { AttendantInstall } from '@/components/auth/attendant-install';
 import { LoginForm } from '@/components/auth/login-form';
+import { ManualDownload } from '@/components/auth/manual-download';
 
 export default function LoginPage() {
   return (
@@ -10,6 +11,7 @@ export default function LoginPage() {
         <LoginForm />
       </Suspense>
       <AttendantInstall />
+      <ManualDownload />
     </>
   );
 }
