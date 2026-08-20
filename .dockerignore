@@ -29,6 +29,14 @@ bin
 # (node_modules/.next/coverage are already pruned by the **/ rules above.)
 apps/*
 !apps/web
+# Re-apply generated-directory exclusions after the negation above. Docker's
+# last matching rule wins, so without these a local web build can resend the
+# entire pnpm tree and .next output (hundreds of MB) as build context.
+apps/web/node_modules
+apps/web/.next
+apps/web/coverage
+apps/web/playwright-report
+apps/web/test-results
 docs
 .env
 .env.*

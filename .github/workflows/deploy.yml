@@ -214,13 +214,21 @@ jobs:
     environment: production
     timeout-minutes: 15
     steps:
+      - name: Check out deployment definition
+        uses: actions/checkout@v4
+
       # Run on the droplet itself. The runner user is `deploy`, owns
-      # /opt/fuelgrid, and is in the docker group. The compose file, Caddyfile,
-      # and production .env already live on the droplet from the runbook.
+      # /opt/fuelgrid, and is in the docker group. ITEMBA-R owns Caddy and the
+      # public ports; this job installs only the shared-droplet FuelGrid stack.
       - name: Deploy local docker compose stack
         run: |
           set -euo pipefail
+          install -m 0644 deploy/docker-compose.shared-droplet.yml \
+            /opt/fuelgrid/docker-compose.shared-droplet.yml
+          install -m 0755 deploy/backup/pg_backup.sh \
+            /opt/fuelgrid/pg_backup.sh
           cd /opt/fuelgrid
+          compose_file=docker-compose.shared-droplet.yml
 
           owner_repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
           api_image="ghcr.io/${owner_repo}-api:sha-${GITHUB_SHA}"
@@ -241,26 +249,79 @@ jobs:
             echo "MIGRATE_IMAGE=${migrate_image}"
           } >> .env
 
+          # ITEMBA-R's Caddy and FuelGrid's public services meet only on this
+          # explicitly named network. Creating it is idempotent and does not
+          # restart either application.
+          shared_edge=$(sed -n 's/^SHARED_EDGE_NETWORK=//p' .env | tail -n1)
+          shared_edge=${shared_edge:-itemba_shared_edge}
+          docker network inspect "${shared_edge}" >/dev/null 2>&1 \
+            || docker network create "${shared_edge}"
+
+          docker compose -f "${compose_file}" config >/dev/null
+
+          # Never let a routine deployment silently replace a missing database
+          # volume with an empty one. A first installation requires a temporary,
+          # explicit opt-in in /opt/fuelgrid/.env.
+          allow_bootstrap=$(sed -n 's/^ALLOW_INITIAL_DATABASE_BOOTSTRAP=//p' .env | tail -n1)
+          allow_bootstrap=${allow_bootstrap:-false}
+          if ! docker volume inspect fuelgrid_prod_pgdata >/dev/null 2>&1 \
+            && [ "${allow_bootstrap}" != "true" ]; then
+            echo "ERROR: FuelGrid production database volume is missing." >&2
+            echo "Set ALLOW_INITIAL_DATABASE_BOOTSTRAP=true only for the first installation." >&2
+            exit 1
+          fi
+
           # Pull the freshly-built images.
-          docker compose -f docker-compose.prod.yml pull api web migrate
+          docker compose -f "${compose_file}" pull api web migrate
+
+          # Start the private data services, then protect the current state with
+          # a verified logical backup before applying any migration.
+          docker compose -f "${compose_file}" up -d postgres redis
+          has_schema=$(docker compose -f "${compose_file}" exec -T postgres \
+            sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT to_regclass('\''public.schema_migrations'\'') IS NOT NULL"' \
+            | tr -d '[:space:]')
+          if [ "${has_schema}" = "t" ]; then
+            DEPLOY_DIR=/opt/fuelgrid \
+              COMPOSE_FILE=/opt/fuelgrid/docker-compose.shared-droplet.yml \
+              ENV_FILE=/opt/fuelgrid/.env \
+              BACKUP_DIR=/var/backups/fuelgrid \
+              /opt/fuelgrid/pg_backup.sh
+          elif [ "${allow_bootstrap}" != "true" ]; then
+            echo "ERROR: FuelGrid database has no migration history." >&2
+            echo "Refusing to migrate a potentially wrong or empty volume." >&2
+            exit 1
+          else
+            echo "Authorized first installation: no existing database to back up."
+          fi
 
           # Schema first: apply migrations as the OWNER (one-shot), then roll
           # out. golang-migrate `up` is idempotent (no pending = exit 0).
-          docker compose -f docker-compose.prod.yml run --rm -T migrate
+          docker compose -f "${compose_file}" run --rm -T migrate
+          docker compose -f "${compose_file}" run --rm -T db-role-sync
 
-          # Roll out the app tiers + Caddy.
-          docker compose -f docker-compose.prod.yml up -d
+          # Roll out only FuelGrid's private app and data tiers. --remove-orphans
+          # removes the obsolete FuelGrid-owned Caddy if this host previously
+          # used the standalone compose definition.
+          docker compose -f "${compose_file}" up -d --remove-orphans postgres redis api web
+
+          # Bootstrap authorization is one-use. Persist the safe default after
+          # the first successful rollout so later volume loss stops deployment.
+          if [ "${allow_bootstrap}" = "true" ]; then
+            sed -i 's/^ALLOW_INITIAL_DATABASE_BOOTSTRAP=.*/ALLOW_INITIAL_DATABASE_BOOTSTRAP=false/' .env
+          fi
 
           # Reclaim disk from superseded image layers and print the final state.
           docker image prune -f
-          docker compose -f docker-compose.prod.yml ps
+          docker compose -f "${compose_file}" ps
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}
           GHCR_ACTOR: ${{ github.actor }}
           # Optional: a PAT with read:packages if the GHCR package is private.
           # Leave unset for a public package (compose pull needs no auth).
-          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          # The job token can pull packages built by this same workflow. A
+          # dedicated PAT remains an optional override for stricter setups.
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || github.token }}
 
   smoke:
     name: Post-deploy smoke (/readyz must be 200)

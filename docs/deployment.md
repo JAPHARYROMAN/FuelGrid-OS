@@ -1,5 +1,10 @@
 # Deployment
 
+> When FuelGrid is hosted on the existing ITEMBA-R droplet, use
+> [`deployment-shared-droplet.md`](./deployment-shared-droplet.md) and
+> `deploy/docker-compose.shared-droplet.yml`. The standalone stack documented
+> below owns its own Caddy and is only appropriate for a dedicated host.
+
 How FuelGrid OS reaches production. The CI image build + GHCR publishing is
 live; the production runtime is a single DigitalOcean Droplet running
 `docker compose`.

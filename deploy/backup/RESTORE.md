@@ -69,31 +69,29 @@ fine) and the counts look sane, the dump is good.
 the DB is still reachable.**
 
 ```sh
-cd /opt/fuelgrid    # where docker-compose.prod.yml + .env live
+cd /opt/fuelgrid    # where docker-compose.shared-droplet.yml + .env live
 
 # 1. Stop the app tiers so nothing writes mid-restore (leave postgres running).
-docker compose -f docker-compose.prod.yml stop api web caddy
+docker compose -f docker-compose.shared-droplet.yml stop api web
 
 # 2. Pick the dump to restore (local, or pull from Spaces first).
 DUMP=$(ls -1t /var/backups/fuelgrid/fuelgrid-*.dump.gz | head -1)
 
 # 3. Restore into the live postgres container as the owner.
 gunzip -c "${DUMP}" \
-  | docker compose -f docker-compose.prod.yml exec -T postgres \
+  | docker compose -f docker-compose.shared-droplet.yml exec -T postgres \
       pg_restore -U fuelgrid -d fuelgrid --clean --if-exists --no-owner
 
-# 4. Re-set the non-owner app role password (the dump recreates the role with
-#    its weak default), keeping DATABASE_APP_URL in .env in sync.
-docker compose -f docker-compose.prod.yml exec postgres \
-  psql -U fuelgrid -c "ALTER ROLE fuelgrid_app PASSWORD '<DATABASE_APP_URL password>';"
+# 4. Re-sync the non-owner app role password from DATABASE_APP_PASSWORD.
+docker compose -f docker-compose.shared-droplet.yml run --rm db-role-sync
 
 # 5. Bring the app back up and confirm health.
-docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.shared-droplet.yml up -d
 curl -fsS https://<API_DOMAIN>/readyz    # expect 200 {"status":"ready"}
 ```
 
 If you instead restore into a **fresh** database (new volume), run migrations
-first (`docker compose -f docker-compose.prod.yml run --rm migrate`) only if the
+first (`docker compose -f docker-compose.shared-droplet.yml run --rm migrate`) only if the
 dump is schema-less; a `-Fc` dump from `pg_dump` already contains the full
 schema, so a plain `pg_restore` into an empty DB is sufficient — do **not** also
 run `migrate up` against a restored dump or you risk a dirty migration state.
