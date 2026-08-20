@@ -56,10 +56,16 @@ sudo chown -R deploy:deploy /opt/fuelgrid /var/backups/fuelgrid
 cd /opt/fuelgrid
 cp /path/to/FuelGrid-OS/deploy/docker-compose.shared-droplet.yml .
 cp /path/to/FuelGrid-OS/deploy/backup/pg_backup.sh .
-cp /path/to/FuelGrid-OS/.env.production.example .env
-chmod 600 .env
+cp /path/to/FuelGrid-OS/deploy/bootstrap-shared-droplet-env.sh .
+cp /path/to/FuelGrid-OS/.env.production.example .
 chmod 755 pg_backup.sh
+chmod 755 bootstrap-shared-droplet-env.sh
+DOMAIN=itembagrouptz.com ./bootstrap-shared-droplet-env.sh
 ```
+
+For a new host, `deploy/bootstrap-shared-droplet-env.sh` can generate the first
+`.env` directly from the production example without printing any secrets. It
+refuses to overwrite an existing environment file.
 
 Set at least these values in `/opt/fuelgrid/.env`:
 
