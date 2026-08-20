@@ -5824,6 +5824,42 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { description: Employee not found }
+  /api/v1/employees/{employeeID}/login-account:
+    post:
+      tags: [Workforce]
+      summary: Create or link an attendant login for an employee
+      description: >-
+        Creates an invited attendant account, or links an existing unprivileged
+        attendant account in the same tenant. The login receives access to the
+        employee's station and becomes shift-ready after password activation.
+        Requires station.manage, users.invite, and users.assign_roles.
+      parameters: [{ in: path, name: employeeID, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '201':
+          description: Login account created or linked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, email, status, created]
+                properties:
+                  user_id: { type: string, format: uuid }
+                  email: { type: string, format: email }
+                  status: { type: string, enum: [active, invited] }
+                  created: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Employee not found }
+        '409': { description: Employee or login account cannot be linked }
   /api/v1/stations/{stationID}/teams:
     parameters: [{ in: path, name: stationID, required: true, schema: { type: string, format: uuid } }]
     get:
