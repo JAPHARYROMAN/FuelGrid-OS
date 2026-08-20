@@ -33,20 +33,19 @@ import {
 import { PermissionGate } from '@/components/permission-gate';
 import { api } from '@/lib/api';
 
+const PAGE_SIZE = 50;
+
 export default function UsersPage() {
   const qc = useQueryClient();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteForm, setInviteForm] = useState({ email: '', full_name: '' });
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [scope, setScope] = useState<UserSummary | null>(null);
+  const [offset, setOffset] = useState(0);
 
   const list = useQuery({
-    queryKey: ['users'],
-    // TODO(pagination): the API now returns a paged envelope (items/has_more/
-    // offset). We request the max page size and render a single page for now;
-    // add a Load more / prev-next control here if a tenant's user count grows
-    // past one page.
-    queryFn: ({ signal }) => api.listUsers({ limit: 200 }, signal),
+    queryKey: ['users', offset],
+    queryFn: ({ signal }) => api.listUsers({ limit: PAGE_SIZE, offset }, signal),
   });
   const roles = useQuery({
     queryKey: ['roles'],
@@ -244,6 +243,30 @@ export default function UsersPage() {
                 })}
               </TableBody>
             </Table>
+            <div className="flex items-center justify-between border-t border-border px-4 py-3">
+              <span className="text-xs text-muted-foreground">
+                Showing {list.data!.items.length === 0 ? 0 : offset + 1}–
+                {offset + list.data!.items.length}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={offset === 0 || list.isFetching}
+                  onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!list.data!.has_more || list.isFetching}
+                  onClick={() => setOffset((value) => value + PAGE_SIZE)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}

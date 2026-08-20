@@ -155,7 +155,7 @@ func setupHarnessOpts(t *testing.T, opts harnessOpts) (*harness, func()) {
 	var appDB *database.Pool
 	appClose := func() {}
 	if enableRLS {
-		if _, err := pool.Exec(ctx, `ALTER ROLE fuelgrid_app WITH LOGIN PASSWORD 'fuelgrid_app'`); err != nil {
+		if err := ensureAppRolePassword(ctx, pool); err != nil {
 			pool.Close()
 			_ = redis.Close()
 			t.Fatalf("ensure fuelgrid_app password: %v", err)

@@ -13,7 +13,8 @@ name: Security Scan
 # hermetic and has no such moving parts.
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
+    tags: ['v*']
   pull_request:
     branches: [main]
   schedule:
@@ -77,32 +78,55 @@ jobs:
               --no-progress --exit-code 1 .
 
   image:
-    name: Trivy — API image + SBOM
+    name: Trivy — ${{ matrix.name }} image + SBOM
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            file: services/api/Dockerfile
+            tag: fuelgrid-api:scan
+            build_args: |
+              VERSION=security-scan
+              COMMIT=${{ github.sha }}
+          - name: web
+            file: apps/web/Dockerfile
+            tag: fuelgrid-web:scan
+            build_args: ''
+          - name: migrate
+            file: services/api/Dockerfile.migrate
+            tag: fuelgrid-migrate:scan
+            build_args: ''
+          - name: caddy
+            file: deploy/images/Dockerfile.caddy
+            tag: fuelgrid-caddy:scan
+            build_args: ''
+          - name: postgres
+            file: deploy/images/Dockerfile.postgres
+            tag: fuelgrid-postgres:scan
+            build_args: ''
+          - name: redis
+            file: deploy/images/Dockerfile.redis
+            tag: fuelgrid-redis:scan
+            build_args: ''
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      # Build the same image ci.yml ships (services/api/Dockerfile), loaded
-      # into the local daemon so Trivy and the SBOM step can scan it by tag.
-      - name: Build API image
+      - name: Build ${{ matrix.name }} image
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: services/api/Dockerfile
+          file: ${{ matrix.file }}
           push: false
           load: true
-          tags: fuelgrid-api:scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            VERSION=${{ github.sha }}
-            COMMIT=${{ github.sha }}
+          tags: ${{ matrix.tag }}
+          cache-from: type=gha,scope=security-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=security-${{ matrix.name }}
+          build-args: ${{ matrix.build_args }}
 
-      # Full-visibility image scan -> SARIF for the Security tab. Trivy runs in
-      # a container with the host docker socket mounted so it can read the
-      # locally-built fuelgrid-api:scan image from the daemon.
       - name: Trivy image scan (SARIF report)
         run: |
           docker run --rm \
@@ -110,18 +134,17 @@ jobs:
             -v "$PWD:/work" -w /work \
             "$TRIVY_IMAGE" image \
               --scanners vuln,secret \
-              --format sarif --output trivy-image.sarif \
-              --no-progress --exit-code 0 fuelgrid-api:scan
+              --format sarif --output "trivy-${{ matrix.name }}.sarif" \
+              --no-progress --exit-code 0 "${{ matrix.tag }}"
 
       - name: Upload image SARIF to code-scanning
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         continue-on-error: true
         with:
-          sarif_file: trivy-image.sarif
-          category: trivy-image
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-image-${{ matrix.name }}
 
-      # Gate pass: same fixable CRITICAL/HIGH policy as the filesystem job.
       - name: Trivy image gate (fixable CRITICAL/HIGH)
         run: |
           docker run --rm \
@@ -129,23 +152,21 @@ jobs:
             "$TRIVY_IMAGE" image \
               --scanners vuln \
               --severity CRITICAL,HIGH --ignore-unfixed \
-              --no-progress --exit-code 1 fuelgrid-api:scan
+              --no-progress --exit-code 1 "${{ matrix.tag }}"
 
-      # CycloneDX SBOM of the built image, archived as a build artifact for
-      # supply-chain provenance / downstream license + component audits.
       - name: Generate SBOM (CycloneDX)
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD:/work" -w /work \
             "$TRIVY_IMAGE" image \
-              --format cyclonedx --output fuelgrid-api.cdx.json \
-              --no-progress fuelgrid-api:scan
+              --format cyclonedx --output "fuelgrid-${{ matrix.name }}.cdx.json" \
+              --no-progress "${{ matrix.tag }}"
 
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sbom-fuelgrid-api-cyclonedx
-          path: fuelgrid-api.cdx.json
+          name: sbom-fuelgrid-${{ matrix.name }}-cyclonedx
+          path: fuelgrid-${{ matrix.name }}.cdx.json
           if-no-files-found: error

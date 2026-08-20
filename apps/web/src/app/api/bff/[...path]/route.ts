@@ -49,6 +49,43 @@ const STRIP_RESPONSE_HEADERS = new Set([
   'set-cookie',
 ]);
 
+const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function hasValidRequestOrigin(req: NextRequest): boolean {
+  if (READ_ONLY_METHODS.has(req.method.toUpperCase())) return true;
+  const origin = req.headers.get('origin');
+  if (!origin) return false;
+  try {
+    const originUrl = new URL(origin);
+    const forwardedHost = req.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
+    const host = req.headers.get('host')?.trim();
+    const requestHosts = [forwardedHost, host, req.nextUrl.host].filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+
+    // Next can reconstruct req.nextUrl from an internal server address while
+    // the browser correctly sends the public Host/Origin pair. Compare the
+    // browser origin with the request host first so legitimate requests still
+    // work behind Caddy and under `next start`.
+    if (
+      !requestHosts.some(
+        (requestHost) => requestHost.toLowerCase() === originUrl.host.toLowerCase(),
+      )
+    ) {
+      return false;
+    }
+
+    const forwardedProto = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
+    if (forwardedProto && `${forwardedProto.toLowerCase()}:` !== originUrl.protocol.toLowerCase()) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isLoginPath(path: string): boolean {
   return path === 'api/v1/auth/login';
 }
@@ -81,6 +118,10 @@ function copyResponseHeaders(upstream: Response): Headers {
 }
 
 async function proxy(req: NextRequest, segments: string[]): Promise<NextResponse> {
+  if (!hasValidRequestOrigin(req)) {
+    return NextResponse.json({ error: 'invalid request origin' }, { status: 403 });
+  }
+
   const path = segments.join('/');
   const search = req.nextUrl.search;
   const url = `${apiOrigin()}/${path}${search}`;

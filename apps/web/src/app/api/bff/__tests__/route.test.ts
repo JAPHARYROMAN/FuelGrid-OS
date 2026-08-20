@@ -35,6 +35,9 @@ function request(
 ): NextRequest {
   const url = `http://localhost:3000/api/bff/${pathAndQuery}`;
   const headers = new Headers(opts.headers);
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase()) && !headers.has('origin')) {
+    headers.set('origin', new URL(url).origin);
+  }
   if (opts.cookieToken !== undefined) {
     headers.set('cookie', `${SESSION_COOKIE}=${opts.cookieToken}`);
   }
@@ -73,6 +76,76 @@ afterEach(() => {
 });
 
 describe('BFF proxy — authenticated forwarding', () => {
+  it('rejects state-changing requests from another origin before forwarding', async () => {
+    mockUpstream(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const req = request('POST', 'api/v1/orders', {
+      cookieToken: TOKEN,
+      body: { qty: 3 },
+      headers: { origin: 'https://attacker.example' },
+    });
+    const res = await POST(req, ctx('api', 'v1', 'orders'));
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: 'invalid request origin' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts a same-origin request when Next reconstructed a different internal URL', async () => {
+    mockUpstream(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const req = request('POST', 'api/v1/orders', {
+      cookieToken: TOKEN,
+      body: { qty: 3 },
+      headers: {
+        host: '127.0.0.1:3100',
+        origin: 'http://127.0.0.1:3100',
+      },
+    });
+    const res = await POST(req, ctx('api', 'v1', 'orders'));
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the public origin forwarded by a TLS reverse proxy', async () => {
+    mockUpstream(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const req = request('POST', 'api/v1/orders', {
+      cookieToken: TOKEN,
+      body: { qty: 3 },
+      headers: {
+        host: 'web:3000',
+        origin: 'https://app.fuelgrid.example',
+        'x-forwarded-host': 'app.fuelgrid.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const res = await POST(req, ctx('api', 'v1', 'orders'));
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a forwarded origin whose protocol does not match', async () => {
+    mockUpstream(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const req = request('POST', 'api/v1/orders', {
+      cookieToken: TOKEN,
+      body: { qty: 3 },
+      headers: {
+        host: 'web:3000',
+        origin: 'http://app.fuelgrid.example',
+        'x-forwarded-host': 'app.fuelgrid.example',
+        'x-forwarded-proto': 'https',
+      },
+    });
+    const res = await POST(req, ctx('api', 'v1', 'orders'));
+
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('reads fg_session and sends Authorization: Bearer to the upstream origin', async () => {
     mockUpstream(
       new Response(JSON.stringify({ id: 'station-1' }), {

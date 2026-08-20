@@ -2,8 +2,12 @@ node_modules
 dist
 build
 .next
+apps/web/next-env.d.ts
+apps/web/test-results
 .turbo
 coverage
+coverage*
+trivy-*.json
 pnpm-lock.yaml
 .husky/_
 docs

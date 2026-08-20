@@ -35,6 +35,31 @@ func appRoleURL(ownerURL string) (string, error) {
 	return u.String(), nil
 }
 
+type appRolePool interface {
+	Acquire(context.Context) (*pgxpool.Conn, error)
+}
+
+// ensureAppRolePassword serializes the shared test-role DDL across every test
+// process using the same database. PostgreSQL role rows are global catalog
+// tuples, so concurrent ALTER ROLE statements can otherwise fail with
+// "tuple concurrently updated" even when each test owns separate tenant data.
+func ensureAppRolePassword(ctx context.Context, pool appRolePool) error {
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+
+	const lockID int64 = 0x46554752 // "FUGR": FuelGrid test-role DDL.
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, lockID); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, lockID) }()
+
+	_, err = conn.Exec(ctx, `ALTER ROLE fuelgrid_app WITH LOGIN PASSWORD 'fuelgrid_app'`)
+	return err
+}
+
 // scopedCompanyCount counts how many of the given company ids are visible over
 // a fuelgrid_app connection scoped (or not, when tenant=="") to a tenant.
 func scopedCompanyCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tenant string, ids []uuid.UUID) int {
@@ -72,7 +97,7 @@ func TestRLS_TenantIsolation(t *testing.T) {
 
 	// Guarantee the fuelgrid_app login password matches what we connect with
 	// (the role exists from migration 0005; this is idempotent and owner-only).
-	if _, err := owner.Exec(ctx, `ALTER ROLE fuelgrid_app WITH LOGIN PASSWORD 'fuelgrid_app'`); err != nil {
+	if err := ensureAppRolePassword(ctx, owner); err != nil {
 		t.Fatalf("ensure fuelgrid_app password: %v", err)
 	}
 
@@ -172,7 +197,7 @@ func TestRLS_PoolWrapperScoping(t *testing.T) {
 		t.Fatalf("owner pool: %v", err)
 	}
 	defer owner.Close()
-	if _, err := owner.Exec(ctx, `ALTER ROLE fuelgrid_app WITH LOGIN PASSWORD 'fuelgrid_app'`); err != nil {
+	if err := ensureAppRolePassword(ctx, owner); err != nil {
 		t.Fatalf("ensure fuelgrid_app password: %v", err)
 	}
 

@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+
+# Keep the production database on the supported Postgres 16 line while
+# replacing the vulnerable Go-based gosu startup helper with Alpine's tiny
+# su-exec equivalent. Repacking the final root filesystem (instead of deleting
+# gosu in a child layer) also keeps the vulnerable binary out of the published
+# image's layer history and SBOM.
+FROM postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685 AS upstream
+
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b AS helper
+COPY --from=upstream /usr/local/bin/docker-entrypoint.sh /tmp/docker-entrypoint.sh
+RUN apk upgrade --no-cache \
+    && apk add --no-cache su-exec \
+    && sed -i 's/gosu/su-exec/g' /tmp/docker-entrypoint.sh
+
+FROM scratch
+
+COPY --from=upstream --exclude=usr/local/bin/gosu --exclude=usr/local/bin/docker-entrypoint.sh / /
+COPY --from=helper /sbin/su-exec /sbin/su-exec
+COPY --from=helper /tmp/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LANG=en_US.utf8
+ENV PG_MAJOR=16
+ENV PG_VERSION=16.15
+ENV PGDATA=/var/lib/postgresql/data
+
+EXPOSE 5432
+VOLUME /var/lib/postgresql/data
+STOPSIGNAL SIGINT
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["postgres"]

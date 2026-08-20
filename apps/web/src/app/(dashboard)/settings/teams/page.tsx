@@ -6,6 +6,7 @@ import { CalendarClock, Check, ListChecks, Plus, Users } from 'lucide-react';
 
 import {
   SdkError,
+  type Employee,
   type SetupChecklist,
   type SetupChecklistStep,
   type ShiftTeam,
@@ -93,10 +94,18 @@ export default function TeamsPage() {
   });
   const employees = useQuery({
     queryKey: ['employees', stationID],
-    // TODO(pagination): paged envelope; request the max page size so the full
-    // roster is available for team assignment. Revisit with a control if a
-    // station's headcount grows past one page.
-    queryFn: ({ signal }) => api.listEmployees(stationID, { limit: 200 }, signal),
+    queryFn: async ({ signal }) => {
+      const items: Employee[] = [];
+      let offset = 0;
+      let page = await api.listEmployees(stationID, { limit: 200, offset }, signal);
+      while (true) {
+        items.push(...page.items);
+        offset += page.items.length;
+        if (!page.has_more || page.items.length === 0) break;
+        page = await api.listEmployees(stationID, { limit: 200, offset }, signal);
+      }
+      return { ...page, items, count: items.length, offset: 0, has_more: false };
+    },
     enabled: !!stationID,
   });
   const anchorKey = ['rotation-anchor', stationID];

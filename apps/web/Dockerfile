@@ -56,11 +56,11 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 RUN pnpm -r build
 
 # ---------------------------------------------------------------------------
-# runtime — slim Node image running the standalone server as a nonroot user.
+# runtime — distroless Node image running the standalone server as nonroot.
 # Only the standalone server, the (non-traced) static assets, and public/ are
-# copied; the full node_modules / build toolchain is left behind.
+# copied; npm, Corepack, a shell, and the build toolchain are left behind.
 # ---------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+FROM gcr.io/distroless/nodejs22-debian13:nonroot AS runtime
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -70,22 +70,20 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
-# node:slim ships a `node` user (uid/gid 1000) — run unprivileged.
-USER node
-
 # 1) The standalone server + its hoisted, traced node_modules. In a monorepo
 #    the app server nests under apps/web/, so this lays down /app/node_modules,
 #    /app/package.json and /app/apps/web/server.js together.
-COPY --from=build --chown=node:node /app/apps/web/.next/standalone ./
+COPY --from=build --chown=65532:65532 /app/apps/web/.next/standalone ./
 # 2) Static assets are NOT traced into standalone — copy them to the path the
 #    server serves them from (relative to the nested app: apps/web/.next/static).
-COPY --from=build --chown=node:node /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build --chown=65532:65532 /app/apps/web/.next/static ./apps/web/.next/static
 # 3) public/ (icons, manifest, etc.) likewise sits next to the nested server.
-COPY --from=build --chown=node:node /app/apps/web/public ./apps/web/public
+COPY --from=build --chown=65532:65532 /app/apps/web/public ./apps/web/public
 
 EXPOSE 3000
 
 # Run the standalone server. The monorepo tracer emits server.js under the
 # app's workspace path; middleware (incl. the per-request CSP nonce) runs as
 # part of this Next server exactly as in `next start`.
-CMD ["node", "apps/web/server.js"]
+# The distroless Node image already sets /nodejs/bin/node as ENTRYPOINT.
+CMD ["apps/web/server.js"]

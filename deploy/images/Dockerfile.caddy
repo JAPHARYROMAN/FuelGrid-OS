@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.25.13-alpine@sha256:1e0126852075c9c60731c8ba49088448b91f63e2aed97ca9d1a9791622a05946 AS builder
+
+RUN apk add --no-cache git
+WORKDIR /src
+
+# Build a pinned Caddy release on the patched Go toolchain and patched
+# transitive networking/text dependencies. Verify the tag's commit so a moved
+# upstream tag cannot silently change the production proxy binary.
+RUN git clone --depth 1 --branch v2.11.4 https://github.com/caddyserver/caddy.git . \
+    && test "$(git rev-parse HEAD)" = "e2eee6a7fce366321294c9c2a79f3146891dcbdf" \
+    && go get golang.org/x/net@v0.58.0 \
+    && go get golang.org/x/text@v0.41.0 \
+    && go get google.golang.org/grpc@v1.83.1 \
+    && go mod tidy
+
+RUN CGO_ENABLED=0 go build \
+    -trimpath \
+    -ldflags="-s -w" \
+    -o /out/caddy \
+    ./cmd/caddy
+
+FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ca-certificates libcap mailcap tzdata \
+    && mkdir -p /config/caddy /data/caddy /srv \
+    && chmod 0777 /config/caddy /data/caddy
+
+COPY --from=builder /out/caddy /usr/bin/caddy
+
+RUN setcap cap_net_bind_service=+ep /usr/bin/caddy
+
+ENV XDG_CONFIG_HOME=/config
+ENV XDG_DATA_HOME=/data
+
+VOLUME /config /data
+WORKDIR /srv
+EXPOSE 80 443 443/udp 2019
+
+USER nobody
+ENTRYPOINT ["caddy"]
+CMD ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

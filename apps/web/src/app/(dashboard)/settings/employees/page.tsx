@@ -70,6 +70,8 @@ const blankForm: FormState = {
   status: 'active',
 };
 
+const PAGE_SIZE = 50;
+
 export default function EmployeesPage() {
   const qc = useQueryClient();
   const [stationID, setStationID] = useState('');
@@ -80,6 +82,7 @@ export default function EmployeesPage() {
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleName, setRoleName] = useState('');
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -91,7 +94,7 @@ export default function EmployeesPage() {
     if (!stationID && first) setStationID(first.id);
   }, [stationID, stations.data]);
 
-  const employeesKey = ['employees', stationID];
+  const employeesKey = ['employees', stationID, offset];
   const rolesKey = ['employee-roles'];
   const roleOptions = useQuery({
     queryKey: rolesKey,
@@ -99,10 +102,7 @@ export default function EmployeesPage() {
   });
   const list = useQuery({
     queryKey: employeesKey,
-    // TODO(pagination): the API now returns a paged envelope. We request the
-    // max page size and render a single page; add a Load more / prev-next
-    // control here if a station's headcount grows past one page.
-    queryFn: ({ signal }) => api.listEmployees(stationID, { limit: 200 }, signal),
+    queryFn: ({ signal }) => api.listEmployees(stationID, { limit: PAGE_SIZE, offset }, signal),
     enabled: !!stationID,
   });
 
@@ -224,7 +224,10 @@ export default function EmployeesPage() {
         <select
           className="h-9 rounded-md border border-border bg-background px-2 text-sm"
           value={stationID}
-          onChange={(e) => setStationID(e.target.value)}
+          onChange={(e) => {
+            setStationID(e.target.value);
+            setOffset(0);
+          }}
         >
           {stations.data!.items.map((s) => (
             <option key={s.id} value={s.id}>
@@ -334,6 +337,30 @@ export default function EmployeesPage() {
                 ))}
               </TableBody>
             </Table>
+            <div className="flex items-center justify-between border-t border-border px-4 py-3">
+              <span className="text-xs text-muted-foreground">
+                Showing {list.data!.items.length === 0 ? 0 : offset + 1}–
+                {offset + list.data!.items.length}
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={offset === 0 || list.isFetching}
+                  onClick={() => setOffset((value) => Math.max(0, value - PAGE_SIZE))}
+                >
+                  Previous
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!list.data!.has_more || list.isFetching}
+                  onClick={() => setOffset((value) => value + PAGE_SIZE)}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}

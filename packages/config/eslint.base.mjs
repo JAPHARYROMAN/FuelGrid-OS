@@ -10,6 +10,7 @@ export default [
       '**/dist/**',
       '**/build/**',
       '**/.next/**',
+      '**/next-env.d.ts',
       '**/coverage/**',
       '**/.turbo/**',
     ],

@@ -3,14 +3,15 @@ import { defineConfig, devices } from '@playwright/test';
 /**
  * Playwright e2e config (QA-7 / CICD-3).
  *
- * The specs drive the real Next.js production build (build + `next start`)
- * but the BACKEND is never real: every spec intercepts `/api/**` with
- * Playwright route mocking, so CI needs no Postgres/Redis/API to run the
- * auth smoke. baseURL points at the locally-started server.
+ * The default specs drive the real Next.js production build (build +
+ * `next start`) while mocking the backend. CI also runs a dedicated
+ * FULLSTACK_E2E job whose spec talks through the BFF to a real Go API,
+ * Postgres, and Redis instance.
  */
 const PORT = Number(process.env.PORT ?? 3100);
 const baseURL = `http://127.0.0.1:${PORT}`;
 const isCI = !!process.env.CI;
+const isFullStack = process.env.FULLSTACK_E2E === '1';
 
 export default defineConfig({
   testDir: './e2e',
@@ -48,6 +49,7 @@ export default defineConfig({
     reuseExistingServer: !isCI,
     env: {
       NEXT_PUBLIC_API_URL: baseURL,
+      API_ORIGIN: isFullStack ? (process.env.API_ORIGIN ?? 'http://127.0.0.1:8080') : baseURL,
       NEXT_STANDALONE_OUTPUT: process.platform === 'win32' ? '0' : '1',
     },
   },

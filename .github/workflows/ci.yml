@@ -8,6 +8,9 @@ on:
       - 'fix/**'
       - 'chore/**'
       - 'docs/**'
+      - 'codex/**'
+    tags:
+      - 'v*'
   pull_request:
     branches: [main]
 
@@ -57,7 +60,7 @@ jobs:
         with:
           node-version-file: .nvmrc
       - name: Lint docs/openapi.yaml
-        run: npx --yes @redocly/cli@latest lint docs/openapi.yaml
+        run: npx --yes @redocly/cli@2.46.2 lint docs/openapi.yaml
 
   go:
     name: Go — vet, lint, test, build
@@ -85,13 +88,11 @@ jobs:
         # golangci-lint v2 (see .golangci.yml `version: '2'`) requires
         # golangci-lint-action v7; v6 fails to install it ("v2 is not
         # supported"), which failed the whole `go` job and skipped `migrations`
-        # (needs: go) — so the integration suite never ran. `latest` is required
-        # because golangci-lint refuses to lint when it was built with an older
-        # Go than the targeted version (go.mod is go 1.25), and the pinned
-        # v2.1.x was built with go1.24.
+        # (needs: go) — so the integration suite never ran. Pin the tool to keep
+        # CI reproducible; update this deliberately alongside the Go toolchain.
         uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.12.2
 
       - name: Test (with race detector + no-DB coverage guard)
         # CONTRACT_STRICT flips the route↔OpenAPI contract test
@@ -691,7 +692,7 @@ jobs:
           }'
 
   docker:
-    name: Docker — build api image
+    name: Docker — build and smoke API image
     runs-on: ubuntu-latest
     needs: go
     steps:
@@ -746,3 +747,33 @@ jobs:
           curl -sS http://127.0.0.1:8080/metrics | head -10
           curl -sS http://127.0.0.1:8080/metrics | grep -q '^fuelgrid_'
           docker stop api
+
+  deployment-contract:
+    name: Deployment — validate workflows, compose, and scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate GitHub Actions workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          # Shell scripts are checked explicitly below; keep this gate focused on workflow semantics.
+          actionlint -color -shellcheck=
+
+      - name: Validate backup shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          find deploy/backup -type f -name '*.sh' -print0 | xargs -0 shellcheck
+
+      - name: Validate production Compose rendering
+        env:
+          RUNTIME_ENV_FILE: ../.env.production.example
+        run: |
+          docker compose --env-file .env.production.example \
+            -f deploy/docker-compose.prod.yml config >/dev/null
