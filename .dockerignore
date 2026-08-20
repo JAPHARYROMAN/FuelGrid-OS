@@ -29,6 +29,17 @@ bin
 # (node_modules/.next/coverage are already pruned by the **/ rules above.)
 apps/*
 !apps/web
+# Re-apply generated-directory exclusions after re-including apps/web. Docker's
+# last-match-wins rules otherwise allow a local .next tree back into the build
+# context, which can add hundreds of megabytes to a production build.
+apps/web/.next
+apps/web/**/.next
+apps/web/node_modules
+apps/web/**/node_modules
+apps/web/coverage
+apps/web/**/coverage
+apps/web/dist
+apps/web/**/dist
 docs
 .env
 .env.*

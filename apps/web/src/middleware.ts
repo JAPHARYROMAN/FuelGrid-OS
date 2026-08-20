@@ -39,7 +39,7 @@ const SESSION_COOKIE = 'fg_session';
 const PUBLIC_PREFIXES = ['/login', '/forgot-password', '/reset-password', '/mfa'];
 
 function isPublic(pathname: string): boolean {
-  if (pathname === '/') return true; // root is a thin client redirector
+  if (pathname === '/') return true; // root resolves the cookie-aware redirect server-side
   return PUBLIC_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 

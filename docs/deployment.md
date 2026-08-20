@@ -17,7 +17,8 @@ deploy/Caddyfile                 # reverse proxy: WEB_DOMAIN -> web, API_DOMAIN 
 deploy/backup/                   # nightly pg_dump + systemd timer + restore drill
 .env.production.example          # full prod config + secret inventory (copy to .env on the droplet)
 services/api/Dockerfile.migrate  # golang-migrate + the SQL migrations baked in (the migrate image)
-.github/workflows/deploy.yml     # CD: build+push 3 GHCR images, self-hosted droplet deploy, smoke gate
+.github/workflows/deploy.yml     # gated CD: release images, backup, rollout, verification, rollback
+deploy/images/                   # hardened Caddy/Postgres and digest-pinned Redis definitions
 ```
 
 ### Why a Droplet + compose
@@ -91,59 +92,68 @@ It runs on push to `main` and on `v*` tags, single-flight per ref
 (`concurrency: deploy-<ref>`, `cancel-in-progress: false` so a migration is
 never interrupted mid-flight).
 
-The three image build/push jobs always run on GitHub-hosted runners (GHCR auth
-via the automatic `GITHUB_TOKEN`). The deploy job runs on a dedicated
+The release gate first requires the **CI**, **E2E**, and **Security Scan**
+workflows to pass for the exact commit. Five image build/push jobs then run on
+GitHub-hosted runners (GHCR auth via the automatic `GITHUB_TOKEN`). The deploy
+job runs on a dedicated
 self-hosted runner installed on the production droplet with the label
 `fuelgrid-prod`; that runner polls GitHub over outbound HTTPS, so SSH can remain
 locked down to operator IPs. The smoke job still runs from GitHub-hosted infra
-and skips cleanly when `DEPLOY_HEALTH_URL` is absent.
+and fails closed when `DEPLOY_HEALTH_URL` is absent.
 
 ### Jobs
 
-1. **build-push** — builds `services/api/Dockerfile` and pushes to GHCR at
+1. **release-gate** — waits for CI, E2E, and Security Scan to succeed for the
+   exact source commit. A failed or missing gate prevents image publication.
+2. **build-push** — builds `services/api/Dockerfile` and pushes to GHCR at
    `ghcr.io/<owner>/<repo>-api`.
-2. **build-push-web** — builds `apps/web/Dockerfile` → `…-web`.
-3. **build-push-migrate** — builds `services/api/Dockerfile.migrate` (golang-migrate
+3. **build-push-web** — builds `apps/web/Dockerfile` → `…-web`.
+4. **build-push-migrate** — builds `services/api/Dockerfile.migrate` (golang-migrate
    + the `services/api/migrations` SQL baked in) → `…-migrate`. This is what lets
-   the droplet (no repo checkout) apply the schema.
+   the droplet apply the schema.
+5. **build-push-caddy / build-push-postgres** — build the pinned, hardened
+   infrastructure images from `deploy/images/`. The deploy records their exact
+   registry digests, so production never relies on a mutable base-image tag.
 
-   All three tag: `sha-<full-sha>` (immutable, per commit), `latest` (main branch
+   Application images tag: `sha-<full-sha>` (immutable, per commit), `latest` (main branch
    only), and `<tag>` on `v*` tags. GHCR auth is the automatic `GITHUB_TOKEN` —
    no manually-created registry secret needed.
 
-4. **deploy** — runs on the production droplet's self-hosted runner
+6. **deploy** — runs on the production droplet's self-hosted runner
    (`runs-on: [self-hosted, Linux, X64, fuelgrid-prod]`) as the `deploy` user
    and, from `/opt/fuelgrid`, runs:
+   - installs the versioned compose file, Caddyfile, and backup script,
+   - captures the current application image set for rollback,
+   - creates a verified logical database backup and verifies its offsite object,
    - optional `docker login ghcr.io` (only if `GHCR_PULL_TOKEN` is set — needed
      only for a private package),
-   - pins `API_IMAGE` / `WEB_IMAGE` / `MIGRATE_IMAGE` = `…:sha-<sha>` into the
-     on-droplet `.env`,
-   - `docker compose -f docker-compose.prod.yml pull api web migrate`,
+   - pins application SHA tags and Caddy/Postgres digests into `.env`,
+   - pulls the five published release images plus the digest-pinned Redis image,
    - `docker compose -f docker-compose.prod.yml run --rm -T migrate` (schema first),
+   - normalizes persistent Caddy volume ownership for its non-root runtime,
    - `docker compose -f docker-compose.prod.yml up -d`,
-   - `docker image prune -f`.
+   - verifies API readiness and the public web login page,
+   - restores the prior application images automatically if rollout verification fails.
 
-5. **smoke** — *gated on `DEPLOY_HEALTH_URL`.* Curls the deployed `/readyz` and
+7. **smoke** — curls the deployed `/readyz` from GitHub-hosted infrastructure and
    **fails the deploy unless it returns `200` with `{"status":"ready"}`** (postgres
    + redis ok). Polls up to 30× with 5s backoff.
 
-All jobs use `environment: production`, so GitHub Environment protection rules
-apply when configured.
-
-### Gating pattern (safe no-op)
-
-Only the smoke job is secret-gated now. Secrets can't be used in a job-level
-`if:`, so its first step checks `DEPLOY_HEALTH_URL` and exports
-`configured=true|false`; the probe step emits a `::notice::` + skips when the
-secret is absent.
+The deploy and smoke jobs use `environment: production`, so GitHub Environment
+protection rules apply at the point production can change.
 
 ### Required secrets / configuration
 
 | Name | Where | Purpose | Behavior if unset |
 |---|---|---|---|
-| `GITHUB_TOKEN` | automatic | Push the three images to GHCR | Always present |
-| `DEPLOY_HEALTH_URL` | repo/environment secret | `https://<API_DOMAIN>/readyz` for the smoke gate | smoke gate no-ops |
+| `GITHUB_TOKEN` | automatic | Push the five images to GHCR | Always present |
+| `DEPLOY_HEALTH_URL` | repo/environment secret | `https://<API_DOMAIN>/readyz` for rollout and external smoke gates | deployment fails closed |
 | `GHCR_PULL_TOKEN` | repo/environment secret (optional) | PAT w/ `read:packages` if the GHCR package is private | compose pull runs unauthenticated (public package) |
+
+The droplet `.env` must also contain `SPACES_BUCKET`, `SPACES_ENDPOINT`,
+`SPACES_ACCESS_KEY_ID`, and `SPACES_SECRET_ACCESS_KEY`. The `aws` CLI must be
+installed on the runner host. Production migration does not start until the
+backup archive and uploaded Spaces object have both been verified.
 
 Infrastructure requirement: register one repo self-hosted runner on the droplet,
 running as `deploy`, with labels `self-hosted`, `Linux`, `X64`, and
@@ -154,9 +164,11 @@ belong to the `docker` group.
 
 ```
 push to main / v* tag
-  → build-push, build-push-web, build-push-migrate  (3 images → GHCR :sha-…, :latest | :<tag>)
-  → deploy   (droplet self-hosted runner: pull → migrate one-shot → up -d → prune)
-  → smoke    (curl /readyz @ DEPLOY_HEALTH_URL must be 200; gated on DEPLOY_HEALTH_URL)
+  → release-gate (CI + E2E + Security Scan for this SHA)
+  → five parallel image builds (api, web, migrate, hardened Caddy, hardened Postgres)
+  → deploy (install manifests → verified offsite backup → pull → migrate → up)
+  → verify API + web (automatic app-image rollback on failure)
+  → external smoke (/readyz must be ready)
 ```
 
 ## Database migrations on deploy
@@ -227,6 +239,8 @@ every `<...>` placeholder with your values; never commit a populated `.env`.
 - [ ] `AUTH_PASSWORD_PEPPER` generated **once** and recorded safely (rotation invalidates every password hash + MFA enrollment).
 - [ ] `/readyz` returns `200 {"status":"ready"}` (postgres + redis ok) and a login smoke passes.
 - [ ] Nightly backup timer active (`systemctl list-timers fuelgrid-backup.timer`).
+- [ ] DigitalOcean Spaces credentials are configured and an upload/restore drill has passed.
+- [ ] `aws` CLI is installed for the mandatory pre-deploy offsite backup.
 - [ ] GHCR pull works on the droplet (`docker compose pull` succeeds).
 - [ ] GitHub Actions self-hosted runner is online with label `fuelgrid-prod`.
 - [ ] GitHub Actions CD smoke secret set: `DEPLOY_HEALTH_URL`.
@@ -261,11 +275,14 @@ mkdir -p /home/deploy/.ssh && cp ~/.ssh/authorized_keys /home/deploy/.ssh/ \
   && chown -R deploy:deploy /home/deploy/.ssh && chmod 700 /home/deploy/.ssh
 ```
 
-From your workstation, copy the three files onto the droplet:
+For initial bootstrap, copy the stack files and `.env` onto the droplet. Future
+CD runs install the versioned compose file, Caddyfile, and backup script from the
+checked-out release before any migration.
 
 ```sh
 scp deploy/docker-compose.prod.yml deploy/Caddyfile \
     deploy:<droplet-ip>:/opt/fuelgrid/
+scp deploy/backup/pg_backup.sh deploy@<droplet-ip>:/opt/fuelgrid/pg_backup.sh
 # Create the .env from the example, fill it in, then copy it (0600):
 cp .env.production.example .env   # edit it locally, NEVER commit it
 scp .env deploy@<droplet-ip>:/opt/fuelgrid/.env
@@ -284,8 +301,8 @@ or ACME issuance will fail.
 ssh deploy@<droplet-ip>
 cd /opt/fuelgrid
 
-# Pull images first (set API_IMAGE/WEB_IMAGE/MIGRATE_IMAGE in .env to the
-# :sha-<sha> refs CD built, or :latest for a manual first cut):
+# Pull images first (set application images to immutable :sha-<sha> refs and
+# hardened infrastructure images to the digest-pinned refs produced by CD):
 docker compose -f docker-compose.prod.yml pull
 
 # Apply migrations as the OWNER (creates the fuelgrid_app role with a WEAK default):
@@ -315,6 +332,7 @@ docker compose -f docker-compose.prod.yml logs -f caddy   # watch ACME issue cer
 curl -fsS https://<API_DOMAIN>/readyz             # expect 200 {"status":"ready"} (postgres+redis ok)
 # Login smoke against the web BFF (no token leaves the server):
 curl -i -X POST https://<WEB_DOMAIN>/api/bff/auth/login \
+  -H 'Origin: https://<WEB_DOMAIN>' \
   -H 'content-type: application/json' \
   -d '{"email":"<user>","password":"<pw>"}'
 ```
@@ -345,23 +363,20 @@ DEPLOY_HEALTH_URL  = https://<API_DOMAIN>/readyz
 GHCR_PULL_TOKEN    = <PAT with read:packages>
 ```
 
-Until the runner is online, the deploy job will wait for a matching runner. Until
-`DEPLOY_HEALTH_URL` exists, the CD pipeline still builds, deploys, and skips only
-the post-deploy smoke gate.
+Until the runner is online, the deploy job waits for a matching runner. If
+`DEPLOY_HEALTH_URL` is absent, both rollout verification and the external smoke
+gate fail closed.
 
 ### (i) Enable nightly backups
 
 ```sh
-# As root (or via sudo) on the droplet:
-cp /opt/fuelgrid/pg_backup.sh /opt/fuelgrid/pg_backup.sh 2>/dev/null || true
+# From the workstation:
 scp deploy/backup/pg_backup.sh deploy@<droplet-ip>:/opt/fuelgrid/pg_backup.sh
-ssh root@<droplet-ip> '
-  chmod +x /opt/fuelgrid/pg_backup.sh
-  cp /opt/fuelgrid/fuelgrid-backup.service /etc/systemd/system/ 2>/dev/null || true
-'
 scp deploy/backup/fuelgrid-backup.service deploy/backup/fuelgrid-backup.timer \
     root@<droplet-ip>:/etc/systemd/system/
 ssh root@<droplet-ip> '
+  apt-get update && apt-get install -y awscli
+  chmod +x /opt/fuelgrid/pg_backup.sh
   systemctl daemon-reload
   systemctl enable --now fuelgrid-backup.timer
   systemctl list-timers fuelgrid-backup.timer
@@ -369,8 +384,10 @@ ssh root@<droplet-ip> '
 ```
 
 Backups are **logical** (`pg_dump -Fc`), rotated `BACKUP_KEEP_DAYS` days, with an
-optional push to DigitalOcean Spaces when `SPACES_BUCKET` is set. Restore drill +
-the PITR caveat: [deploy/backup/RESTORE.md](../deploy/backup/RESTORE.md).
+offsite push to DigitalOcean Spaces. The CD workflow sets
+`REQUIRE_OFFSITE_BACKUP=1`; migration is blocked unless local archive validation,
+upload, and remote object verification all succeed. Restore drill + the PITR
+caveat: [deploy/backup/RESTORE.md](../deploy/backup/RESTORE.md).
 
 ### (j) Seeding note
 
@@ -388,7 +405,17 @@ gh api -X PUT repos/JAPHARYROMAN/FuelGrid-OS/branches/main/protection \
     -F required_status_checks.checks[][context]=Node — lint, typecheck, test, build \
     -F required_status_checks.checks[][context]=Go — vet, lint, test, build \
     -F required_status_checks.checks[][context]=Migrations — apply, seed, /readyz check \
-    -F required_status_checks.checks[][context]=Docker — build api image \
+    -F required_status_checks.checks[][context]=Docker — build and smoke API image \
+    -F required_status_checks.checks[][context]=Deployment — validate workflows, compose, and scripts \
+    -F required_status_checks.checks[][context]=Playwright — production build journeys \
+    -F required_status_checks.checks[][context]=Playwright — real API auth smoke \
+    -F required_status_checks.checks[][context]=Trivy — filesystem (vuln + misconfig + secret) \
+    -F required_status_checks.checks[][context]=Trivy — api image + SBOM \
+    -F required_status_checks.checks[][context]=Trivy — web image + SBOM \
+    -F required_status_checks.checks[][context]=Trivy — migrate image + SBOM \
+    -F required_status_checks.checks[][context]=Trivy — caddy image + SBOM \
+    -F required_status_checks.checks[][context]=Trivy — postgres image + SBOM \
+    -F required_status_checks.checks[][context]=Trivy — redis image + SBOM \
     -F enforce_admins=true \
     -F required_pull_request_reviews.required_approving_review_count=1 \
     -F required_pull_request_reviews.dismiss_stale_reviews=true \
@@ -399,4 +426,4 @@ gh api -X PUT repos/JAPHARYROMAN/FuelGrid-OS/branches/main/protection \
 
 - DigitalOcean Managed Postgres + PITR (or self-hosted WAL archiving) once the RPO requires it (see RESTORE.md).
 - Horizontal scale-out (multiple Droplets / a load balancer) and remote `/metrics` scraping behind an authenticated route.
-- Offsite-backup verification automation (a scheduled restore-drill job).
+- Automated full restore drills (offsite object verification already gates every deploy).

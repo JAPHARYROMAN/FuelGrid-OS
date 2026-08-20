@@ -69,18 +69,18 @@ function maybeWithSentry(config: NextConfig): NextConfig {
 }
 
 // The production container build (apps/web/Dockerfile sets CONTAINER_BUILD=1)
-// skips the in-image type-check + lint. These are NOT dropped: CI runs
-// `pnpm -r typecheck` and `pnpm -r lint` as required gates on every PR, and
-// local `pnpm build` still type-checks (CONTAINER_BUILD unset). Skipping the
-// redundant re-check inside the image keeps the build hermetic and avoids a
-// container-only type-resolution false positive on transpilePackages source.
+// skips its redundant in-image type-check. Lint always runs as a separate
+// required CI command because Next 15's deprecated built-in lint wrapper does
+// not correctly discover this monorepo's flat ESLint configuration.
 const containerBuild = process.env.CONTAINER_BUILD === '1';
-const standaloneOutput = process.env.NEXT_STANDALONE_OUTPUT !== '0';
+const standaloneOutput =
+  process.env.NEXT_STANDALONE_OUTPUT === '1' ||
+  (process.env.NEXT_STANDALONE_OUTPUT !== '0' && process.platform !== 'win32');
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   typescript: { ignoreBuildErrors: containerBuild },
-  eslint: { ignoreDuringBuilds: containerBuild },
+  eslint: { ignoreDuringBuilds: true },
   /**
    * Emit the self-contained Next.js standalone server (.next/standalone) so the
    * web tier ships as a slim container image: `node server.js` runs the app

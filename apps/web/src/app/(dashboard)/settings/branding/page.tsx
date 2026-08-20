@@ -251,6 +251,8 @@ export default function BrandingPage() {
               <CardContent className="flex flex-col gap-4">
                 <div className="flex h-28 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30">
                   {logoSrc ? (
+                    // The preview may be a local object/data URL selected by the user.
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={logoSrc}
                       alt="Company logo"
@@ -352,6 +354,8 @@ function LetterheadPreview({
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-start gap-3">
             {logoSrc ? (
+              // The preview may be a local object/data URL selected by the user.
+              // eslint-disable-next-line @next/next/no-img-element
               <img src={logoSrc} alt="" className="h-12 w-12 shrink-0 object-contain" />
             ) : null}
             <div className="min-w-0 flex-1">

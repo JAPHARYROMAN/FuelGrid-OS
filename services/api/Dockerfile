@@ -4,7 +4,7 @@
 # Builder stage — compile a static binary using BuildKit cache mounts so
 # repeated builds reuse the Go module cache and build cache.
 # ---------------------------------------------------------------------------
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25.13-alpine AS builder
 
 WORKDIR /src
 

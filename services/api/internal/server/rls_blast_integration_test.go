@@ -228,7 +228,7 @@ func TestRLS_BlastCrossTenantIsolation(t *testing.T) {
 
 	// Guarantee the fuelgrid_app login password matches what we connect with
 	// (the role exists from migration 0005; idempotent, owner-only).
-	if _, err := owner.Exec(ctx, `ALTER ROLE fuelgrid_app WITH LOGIN PASSWORD 'fuelgrid_app'`); err != nil {
+	if err := ensureAppRolePassword(ctx, owner); err != nil {
 		t.Fatalf("ensure fuelgrid_app password: %v", err)
 	}
 

@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1
+
+# Redis currently scans clean; this wrapper exists to pin the exact verified
+# upstream artifact and include it in the same production image security gate.
+FROM redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD redis-cli ping || exit 1
+
+USER redis

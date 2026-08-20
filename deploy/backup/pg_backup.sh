@@ -43,6 +43,7 @@ fi
 PGUSER="${POSTGRES_USER:-fuelgrid}"
 PGDB="${POSTGRES_DB:-fuelgrid}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
+REQUIRE_OFFSITE_BACKUP="${REQUIRE_OFFSITE_BACKUP:-0}"
 
 mkdir -p "${BACKUP_DIR}"
 
@@ -63,22 +64,47 @@ docker compose -f "${COMPOSE_FILE}" exec -T postgres \
 # Atomic publish: only rename in once the full dump succeeded.
 mv "${TMP_FILE}" "${DUMP_FILE}"
 SIZE="$(du -h "${DUMP_FILE}" | cut -f1)"
-log "Backup complete: ${DUMP_FILE} (${SIZE})"
+
+# A successful pg_dump process is not enough: verify both gzip integrity and
+# that pg_restore can parse the custom archive before it can gate a deploy.
+gzip -t "${DUMP_FILE}"
+gzip -dc "${DUMP_FILE}" \
+  | docker compose -f "${COMPOSE_FILE}" exec -T postgres pg_restore --list >/dev/null
+log "Backup complete and verified: ${DUMP_FILE} (${SIZE})"
 
 # --- Optional offsite push to DigitalOcean Spaces ----------------------------
 if [[ -n "${SPACES_BUCKET:-}" ]]; then
   if ! command -v aws >/dev/null 2>&1; then
-    log "WARN: SPACES_BUCKET set but 'aws' CLI not found; skipping offsite push."
+    if [[ "${REQUIRE_OFFSITE_BACKUP}" == "1" ]]; then
+      log "ERROR: offsite backup is required but the aws CLI is unavailable."
+      exit 1
+    fi
+    log "WARN: SPACES_BUCKET set but 'aws' CLI not found; keeping the verified local backup only."
   else
+    if [[ -z "${SPACES_ACCESS_KEY_ID:-}" || -z "${SPACES_SECRET_ACCESS_KEY:-}" ]]; then
+      log "ERROR: SPACES_BUCKET is set but Spaces credentials are missing."
+      exit 1
+    fi
     ENDPOINT="${SPACES_ENDPOINT:-https://nyc3.digitaloceanspaces.com}"
-    REMOTE="s3://${SPACES_BUCKET}/postgres/$(basename "${DUMP_FILE}")"
+    REMOTE_KEY="postgres/$(basename "${DUMP_FILE}")"
+    REMOTE="s3://${SPACES_BUCKET}/${REMOTE_KEY}"
     log "Pushing offsite to ${REMOTE} via ${ENDPOINT}"
     AWS_ACCESS_KEY_ID="${SPACES_ACCESS_KEY_ID:-}" \
       AWS_SECRET_ACCESS_KEY="${SPACES_SECRET_ACCESS_KEY:-}" \
       aws s3 cp "${DUMP_FILE}" "${REMOTE}" --endpoint-url "${ENDPOINT}"
-    log "Offsite push complete."
+    AWS_ACCESS_KEY_ID="${SPACES_ACCESS_KEY_ID}" \
+      AWS_SECRET_ACCESS_KEY="${SPACES_SECRET_ACCESS_KEY}" \
+      aws s3api head-object \
+        --bucket "${SPACES_BUCKET}" \
+        --key "${REMOTE_KEY}" \
+        --endpoint-url "${ENDPOINT}" >/dev/null
+    log "Offsite push verified."
   fi
 else
+  if [[ "${REQUIRE_OFFSITE_BACKUP}" == "1" ]]; then
+    log "ERROR: SPACES_BUCKET is unset; production deployment requires an offsite backup."
+    exit 1
+  fi
   log "SPACES_BUCKET unset; keeping backup local-only."
 fi
 

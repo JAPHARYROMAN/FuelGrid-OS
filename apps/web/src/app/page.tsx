@@ -1,26 +1,15 @@
-'use client';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 
-import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-
-import { useAuthStore } from '@/stores/auth-store';
+import { SESSION_COOKIE } from '@/lib/server/session-cookie';
 
 /**
  * Root route is a thin redirector — authenticated users go to the
- * command center, the rest get the login screen. The real session lives
- * in the httpOnly cookie (checked by middleware); this client-side hop
- * uses the non-sensitive `authed` hint only to pick the destination
- * without a flash.
+ * command center, the rest get the login screen. Resolve this on the server
+ * from the real httpOnly session cookie so localStorage can never disagree
+ * with the navigation decision.
  */
-export default function HomePage() {
-  const router = useRouter();
-  const hydrated = useAuthStore((s) => s.hydrated);
-  const authed = useAuthStore((s) => s.authed);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    router.replace(authed ? '/command-center' : '/login');
-  }, [hydrated, authed, router]);
-
-  return null;
+export default async function HomePage() {
+  const session = (await cookies()).get(SESSION_COOKIE)?.value;
+  redirect(session ? '/command-center' : '/login');
 }
