@@ -115,6 +115,10 @@ func (s *Server) handleCreateRegion(w http.ResponseWriter, r *http.Request) {
 		CompanyID: req.CompanyID, Name: req.Name, Code: req.Code,
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a region with that name already exists for this company")
+			return
+		}
 		s.logger.Error("create region", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -188,6 +192,10 @@ func (s *Server) handleUpdateRegion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a region with that name already exists for this company")
+			return
+		}
 		s.logger.Error("update region", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
