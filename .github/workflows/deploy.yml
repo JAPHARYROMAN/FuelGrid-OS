@@ -214,13 +214,19 @@ jobs:
     environment: production
     timeout-minutes: 15
     steps:
+      - name: Check out deployment definition
+        uses: actions/checkout@v4
+
       # Run on the droplet itself. The runner user is `deploy`, owns
-      # /opt/fuelgrid, and is in the docker group. The compose file, Caddyfile,
-      # and production .env already live on the droplet from the runbook.
+      # /opt/fuelgrid, and is in the docker group. ITEMBA-R owns Caddy and the
+      # public ports; this job installs only the shared-droplet FuelGrid stack.
       - name: Deploy local docker compose stack
         run: |
           set -euo pipefail
+          install -m 0644 deploy/docker-compose.shared-droplet.yml \
+            /opt/fuelgrid/docker-compose.shared-droplet.yml
           cd /opt/fuelgrid
+          compose_file=docker-compose.shared-droplet.yml
 
           owner_repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
           api_image="ghcr.io/${owner_repo}-api:sha-${GITHUB_SHA}"
@@ -241,19 +247,33 @@ jobs:
             echo "MIGRATE_IMAGE=${migrate_image}"
           } >> .env
 
+          # ITEMBA-R's Caddy and FuelGrid's public services meet only on this
+          # explicitly named network. Creating it is idempotent and does not
+          # restart either application.
+          shared_edge=$(sed -n 's/^SHARED_EDGE_NETWORK=//p' .env | tail -n1)
+          shared_edge=${shared_edge:-itemba_shared_edge}
+          docker network inspect "${shared_edge}" >/dev/null 2>&1 \
+            || docker network create "${shared_edge}"
+
+          docker compose -f "${compose_file}" config >/dev/null
+
           # Pull the freshly-built images.
-          docker compose -f docker-compose.prod.yml pull api web migrate
+          docker compose -f "${compose_file}" pull api web migrate
 
           # Schema first: apply migrations as the OWNER (one-shot), then roll
           # out. golang-migrate `up` is idempotent (no pending = exit 0).
-          docker compose -f docker-compose.prod.yml run --rm -T migrate
+          docker compose -f "${compose_file}" up -d postgres redis
+          docker compose -f "${compose_file}" run --rm -T migrate
+          docker compose -f "${compose_file}" run --rm -T db-role-sync
 
-          # Roll out the app tiers + Caddy.
-          docker compose -f docker-compose.prod.yml up -d
+          # Roll out only FuelGrid's private app and data tiers. --remove-orphans
+          # removes the obsolete FuelGrid-owned Caddy if this host previously
+          # used the standalone compose definition.
+          docker compose -f "${compose_file}" up -d --remove-orphans postgres redis api web
 
           # Reclaim disk from superseded image layers and print the final state.
           docker image prune -f
-          docker compose -f docker-compose.prod.yml ps
+          docker compose -f "${compose_file}" ps
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_SHA: ${{ github.sha }}

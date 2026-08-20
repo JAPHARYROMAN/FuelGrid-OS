@@ -19,9 +19,9 @@
 set -euo pipefail
 
 # --- Resolve paths -----------------------------------------------------------
-# DEPLOY_DIR holds docker-compose.prod.yml + .env. Override via env if needed.
+# DEPLOY_DIR holds docker-compose.shared-droplet.yml + .env.
 DEPLOY_DIR="${DEPLOY_DIR:-/opt/fuelgrid}"
-COMPOSE_FILE="${COMPOSE_FILE:-${DEPLOY_DIR}/docker-compose.prod.yml}"
+COMPOSE_FILE="${COMPOSE_FILE:-${DEPLOY_DIR}/docker-compose.shared-droplet.yml}"
 ENV_FILE="${ENV_FILE:-${DEPLOY_DIR}/.env}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/fuelgrid}"
 LOG_PREFIX="[fuelgrid-backup $(date -u +%Y-%m-%dT%H:%M:%SZ)]"

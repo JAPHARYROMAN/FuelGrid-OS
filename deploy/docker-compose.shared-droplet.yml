@@ -1,0 +1,174 @@
+# =============================================================================
+# FuelGrid OS - production stack hosted beside ITEMBA-R on one droplet.
+#
+# ITEMBA-R owns the only Caddy container and the host's 80/443 ports. FuelGrid
+# joins the externally-created shared edge network under stable DNS aliases:
+#
+#   fuelgrid-web -> web:3000
+#   fuelgrid-api -> api:8080
+#
+# Postgres and Redis remain private to this Compose project, use dedicated
+# volumes, and never publish host ports. This keeps the applications logically
+# isolated while avoiding a second public ingress on the same machine.
+# =============================================================================
+
+name: fuelgrid-prod
+
+services:
+  web:
+    image: ${WEB_IMAGE:?set WEB_IMAGE in .env}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      API_ORIGIN: http://api:8080
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-FuelGrid OS}
+      NEXT_PUBLIC_APP_ENV: ${NEXT_PUBLIC_APP_ENV:-production}
+      NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+      NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE: ${NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE:-0.05}
+    expose:
+      - '3000'
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      internal:
+      shared_edge:
+        aliases:
+          - fuelgrid-web
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'node -e "fetch(''http://127.0.0.1:3000/api/health'').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"',
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+
+  api:
+    image: ${API_IMAGE:?set API_IMAGE in .env}
+    restart: unless-stopped
+    env_file:
+      - ${FUELGRID_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: '8080'
+      API_TRUSTED_PROXY_DEPTH: '1'
+      DATABASE_APP_URL: postgres://fuelgrid_app:${DATABASE_APP_PASSWORD:?set DATABASE_APP_PASSWORD in .env}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    expose:
+      - '8080'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      internal:
+      shared_edge:
+        aliases:
+          - fuelgrid-api
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 256
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    expose:
+      - '5432'
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    mem_limit: 768m
+    cpus: 0.50
+    pids_limit: 256
+    shm_size: 128m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redisdata:/data
+    expose:
+      - '6379'
+    networks:
+      - internal
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    mem_limit: 256m
+    cpus: 0.25
+    pids_limit: 128
+
+  migrate:
+    image: ${MIGRATE_IMAGE:?set MIGRATE_IMAGE in .env}
+    profiles: ['migrate']
+    restart: 'no'
+    command: ['-path', '/migrations', '-database', '${DATABASE_URL}', 'up']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 128
+
+  db-role-sync:
+    image: postgres:16-alpine
+    profiles: ['migrate']
+    restart: 'no'
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      DATABASE_APP_PASSWORD: ${DATABASE_APP_PASSWORD:?set DATABASE_APP_PASSWORD in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    command:
+      - sh
+      - -ec
+      - |
+        printf '%s\n' "ALTER ROLE fuelgrid_app PASSWORD :'app_password';" \
+          | psql -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" \
+              -v app_password="$${DATABASE_APP_PASSWORD}" -v ON_ERROR_STOP=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - internal
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+
+networks:
+  internal:
+    driver: bridge
+  shared_edge:
+    name: ${SHARED_EDGE_NETWORK:-itemba_shared_edge}
+    external: true
+
+volumes:
+  pgdata:
+    name: fuelgrid_prod_pgdata
+  redisdata:
+    name: fuelgrid_prod_redisdata
