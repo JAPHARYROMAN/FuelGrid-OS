@@ -34,6 +34,9 @@ does not join FuelGrid's private data network. Only `fuelgrid-web` and
   - `fuelgrid.itembagrouptz.com`
   - `api.fuelgrid.itembagrouptz.com`
 - FuelGrid GHCR images produced by `.github/workflows/deploy.yml`.
+- A repository self-hosted runner with the `fuelgrid-prod` label. Install it on
+  a replacement droplet with `deploy/install-self-hosted-runner.sh` and a
+  short-lived GitHub runner registration token.
 
 Do not start `deploy/docker-compose.prod.yml` on this host. It contains a second
 Caddy service and would compete with ITEMBA-R for ports 80 and 443.
