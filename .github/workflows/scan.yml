@@ -87,28 +87,34 @@ jobs:
           - name: api
             file: services/api/Dockerfile
             tag: fuelgrid-api:scan
+            sarif_category: trivy-image
             build_args: |
               VERSION=security-scan
               COMMIT=${{ github.sha }}
           - name: web
             file: apps/web/Dockerfile
             tag: fuelgrid-web:scan
+            sarif_category: trivy-image-web
             build_args: ''
           - name: migrate
             file: services/api/Dockerfile.migrate
             tag: fuelgrid-migrate:scan
+            sarif_category: trivy-image-migrate
             build_args: ''
           - name: caddy
             file: deploy/images/Dockerfile.caddy
             tag: fuelgrid-caddy:scan
+            sarif_category: trivy-image-caddy
             build_args: ''
           - name: postgres
             file: deploy/images/Dockerfile.postgres
             tag: fuelgrid-postgres:scan
+            sarif_category: trivy-image-postgres
             build_args: ''
           - name: redis
             file: deploy/images/Dockerfile.redis
             tag: fuelgrid-redis:scan
+            sarif_category: trivy-image-redis
             build_args: ''
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +149,7 @@ jobs:
         continue-on-error: true
         with:
           sarif_file: trivy-${{ matrix.name }}.sarif
-          category: trivy-image-${{ matrix.name }}
+          category: ${{ matrix.sarif_category }}
 
       - name: Trivy image gate (fixable CRITICAL/HIGH)
         run: |
