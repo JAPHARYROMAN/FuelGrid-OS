@@ -319,7 +319,9 @@ jobs:
           GHCR_ACTOR: ${{ github.actor }}
           # Optional: a PAT with read:packages if the GHCR package is private.
           # Leave unset for a public package (compose pull needs no auth).
-          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          # The job token can pull packages built by this same workflow. A
+          # dedicated PAT remains an optional override for stricter setups.
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || github.token }}
 
   smoke:
     name: Post-deploy smoke (/readyz must be 200)
