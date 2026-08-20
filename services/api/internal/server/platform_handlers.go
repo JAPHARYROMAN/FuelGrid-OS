@@ -25,7 +25,7 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
 // existence isn't advertised on deployments that don't use it.
 func (s *Server) requirePlatformAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		want := s.cfg.PlatformAdminToken
+		want := s.cfg.PlatformAdminToken.Reveal()
 		if want == "" {
 			http.NotFound(w, r)
 			return
