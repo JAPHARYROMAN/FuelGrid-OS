@@ -378,7 +378,6 @@ export default function TeamsPage() {
                 const activeLoginCount = members.filter(
                   (employee) => employee.login_status === 'active',
                 ).length;
-                const canOpenShift = activeLoginCount > 0;
                 const allMembersReady = members.length > 0 && activeLoginCount === members.length;
                 return (
                   <Card key={team.id}>
@@ -394,21 +393,14 @@ export default function TeamsPage() {
                         <span className="text-muted-foreground">
                           {members.length} member{members.length === 1 ? '' : 's'}
                         </span>
-                        <Badge
-                          tone={allMembersReady ? 'success' : canOpenShift ? 'warning' : 'danger'}
-                        >
+                        <Badge tone={allMembersReady ? 'success' : 'danger'}>
                           {activeLoginCount}/{members.length} login-ready
                         </Badge>
                       </div>
                       {!allMembersReady && members.length > 0 ? (
-                        <p
-                          className={`rounded-md px-2.5 py-2 text-xs ${
-                            canOpenShift ? 'bg-warning/10 text-warning' : 'bg-danger/10 text-danger'
-                          }`}
-                        >
-                          {canOpenShift
-                            ? 'Members without active logins will not be auto-assigned.'
-                            : 'This team cannot open its shift because it has no active login.'}{' '}
+                        <p className="rounded-md bg-danger/10 px-2.5 py-2 text-xs text-danger">
+                          This team cannot open a shift until every scheduled member has an active
+                          login.{' '}
                           <Link href="/settings/employees" className="font-medium underline">
                             Create employee logins
                           </Link>

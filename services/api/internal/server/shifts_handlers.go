@@ -223,9 +223,9 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 			attendantUserIDs = append(attendantUserIDs, *sched.Members[i].UserID)
 		}
 	}
-	if len(attendantUserIDs) == 0 {
+	if len(sched.Members) == 0 || len(attendantUserIDs) != len(sched.Members) {
 		writeError(w, http.StatusBadRequest,
-			"the scheduled team has no members with an active login account — create their logins and complete password setup first")
+			"every scheduled team member must have an active login account — create missing logins and complete password setup first")
 		return
 	}
 

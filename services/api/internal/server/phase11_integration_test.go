@@ -225,7 +225,7 @@ func TestPhase11_InvitedLoginIsNotShiftReady(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("open with invited login: code=%d body=%v, want 400", code, body)
 	}
-	if body["error"] != "the scheduled team has no members with an active login account — create their logins and complete password setup first" {
+	if body["error"] != "every scheduled team member must have an active login account — create missing logins and complete password setup first" {
 		t.Fatalf("unexpected active-login error: %v", body)
 	}
 }
