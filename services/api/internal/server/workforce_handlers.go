@@ -494,7 +494,8 @@ func (s *Server) handleProvisionEmployeeLogin(w http.ResponseWriter, r *http.Req
 		WHERE tenant_id = $1 AND lower(email) = lower($2) AND status <> 'deleted'
 		FOR UPDATE`, actor.TenantID, emailAddress,
 	).Scan(&userID, &accountStatus)
-	if errors.Is(err, pgx.ErrNoRows) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO users (tenant_id, email, full_name, status)
 			VALUES ($1, $2, $3, 'invited')
@@ -509,11 +510,11 @@ func (s *Server) handleProvisionEmployeeLogin(w http.ResponseWriter, r *http.Req
 			return
 		}
 		created = true
-	} else if err != nil {
+	case err != nil:
 		s.logger.Error("provision employee login: find user", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
-	} else {
+	default:
 		if accountStatus == "suspended" {
 			writeError(w, http.StatusConflict, "the matching login account is suspended")
 			return
