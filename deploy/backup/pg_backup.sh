@@ -49,6 +49,13 @@ mkdir -p "${BACKUP_DIR}"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DUMP_FILE="${BACKUP_DIR}/fuelgrid-${TIMESTAMP}.dump.gz"
 TMP_FILE="${DUMP_FILE}.partial"
+VERIFY_FILE="/tmp/fuelgrid-backup-verify-${TIMESTAMP}.dump"
+cleanup() {
+  rm -f "${TMP_FILE}"
+  docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+    rm -f "${VERIFY_FILE}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 log "Starting backup of database '${PGDB}' (user '${PGUSER}') -> ${DUMP_FILE}"
 
@@ -60,8 +67,20 @@ docker compose -f "${COMPOSE_FILE}" exec -T postgres \
   pg_dump -U "${PGUSER}" -d "${PGDB}" -Fc \
   | gzip -c >"${TMP_FILE}"
 
-# Atomic publish: only rename in once the full dump succeeded.
+# Verify both the gzip stream and the embedded Postgres archive before the
+# atomic publish. A non-empty but truncated backup must never pass deployment.
+test -s "${TMP_FILE}"
+gzip -t "${TMP_FILE}"
+gunzip -c "${TMP_FILE}" \
+  | docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+      sh -ec "cat > '${VERIFY_FILE}'"
+docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+  pg_restore --list "${VERIFY_FILE}" >/dev/null
+docker compose -f "${COMPOSE_FILE}" exec -T postgres rm -f "${VERIFY_FILE}"
+
+# Atomic publish: only rename once the full dump has been verified.
 mv "${TMP_FILE}" "${DUMP_FILE}"
+trap - EXIT
 SIZE="$(du -h "${DUMP_FILE}" | cut -f1)"
 log "Backup complete: ${DUMP_FILE} (${SIZE})"
 

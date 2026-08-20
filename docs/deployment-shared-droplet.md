@@ -52,8 +52,10 @@ sudo chown -R deploy:deploy /opt/fuelgrid /var/backups/fuelgrid
 
 cd /opt/fuelgrid
 cp /path/to/FuelGrid-OS/deploy/docker-compose.shared-droplet.yml .
+cp /path/to/FuelGrid-OS/deploy/backup/pg_backup.sh .
 cp /path/to/FuelGrid-OS/.env.production.example .env
 chmod 600 .env
+chmod 755 pg_backup.sh
 ```
 
 Set at least these values in `/opt/fuelgrid/.env`:
@@ -67,6 +69,7 @@ POSTGRES_USER=fuelgrid
 POSTGRES_DB=fuelgrid
 POSTGRES_PASSWORD=<strong owner password>
 DATABASE_APP_PASSWORD=<openssl rand -hex 32>
+ALLOW_INITIAL_DATABASE_BOOTSTRAP=true
 DATABASE_URL=postgres://fuelgrid:<owner password>@postgres:5432/fuelgrid?sslmode=disable
 DATABASE_APP_URL=postgres://fuelgrid_app:<app password>@postgres:5432/fuelgrid?sslmode=disable
 
@@ -77,6 +80,9 @@ MPESA_CALLBACK_URL=https://api.fuelgrid.itembagrouptz.com/api/v1/payments/mpesa/
 
 Fill every fail-stop secret in `.env.production.example`. Use URI-safe
 alphanumeric or hexadecimal database passwords so DSNs remain valid.
+`ALLOW_INITIAL_DATABASE_BOOTSTRAP=true` is a one-use authorization for the first
+empty database. The deployment changes it to `false` after a successful rollout;
+subsequent deployments stop if the named volume or migration history is missing.
 
 Pin the three immutable images built for the same commit:
 
@@ -144,7 +150,8 @@ route contains `"service":"fuelgrid-web"`.
 
 For normal releases, FuelGrid's CD workflow pulls immutable images, migrates,
 synchronizes the runtime database role, and replaces only FuelGrid containers.
-It does not restart ITEMBA-R.
+It takes and verifies a pre-migration database backup and does not restart
+ITEMBA-R. If the persistent volume is missing, deployment fails before migration.
 
 To roll FuelGrid back, restore the previous three `:sha-...` image values in
 `/opt/fuelgrid/.env`, then run:

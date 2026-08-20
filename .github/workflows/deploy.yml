@@ -225,6 +225,8 @@ jobs:
           set -euo pipefail
           install -m 0644 deploy/docker-compose.shared-droplet.yml \
             /opt/fuelgrid/docker-compose.shared-droplet.yml
+          install -m 0755 deploy/backup/pg_backup.sh \
+            /opt/fuelgrid/pg_backup.sh
           cd /opt/fuelgrid
           compose_file=docker-compose.shared-droplet.yml
 
@@ -257,12 +259,43 @@ jobs:
 
           docker compose -f "${compose_file}" config >/dev/null
 
+          # Never let a routine deployment silently replace a missing database
+          # volume with an empty one. A first installation requires a temporary,
+          # explicit opt-in in /opt/fuelgrid/.env.
+          allow_bootstrap=$(sed -n 's/^ALLOW_INITIAL_DATABASE_BOOTSTRAP=//p' .env | tail -n1)
+          allow_bootstrap=${allow_bootstrap:-false}
+          if ! docker volume inspect fuelgrid_prod_pgdata >/dev/null 2>&1 \
+            && [ "${allow_bootstrap}" != "true" ]; then
+            echo "ERROR: FuelGrid production database volume is missing." >&2
+            echo "Set ALLOW_INITIAL_DATABASE_BOOTSTRAP=true only for the first installation." >&2
+            exit 1
+          fi
+
           # Pull the freshly-built images.
           docker compose -f "${compose_file}" pull api web migrate
 
+          # Start the private data services, then protect the current state with
+          # a verified logical backup before applying any migration.
+          docker compose -f "${compose_file}" up -d postgres redis
+          has_schema=$(docker compose -f "${compose_file}" exec -T postgres \
+            sh -ec 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT to_regclass('\''public.schema_migrations'\'') IS NOT NULL"' \
+            | tr -d '[:space:]')
+          if [ "${has_schema}" = "t" ]; then
+            DEPLOY_DIR=/opt/fuelgrid \
+              COMPOSE_FILE=/opt/fuelgrid/docker-compose.shared-droplet.yml \
+              ENV_FILE=/opt/fuelgrid/.env \
+              BACKUP_DIR=/var/backups/fuelgrid \
+              /opt/fuelgrid/pg_backup.sh
+          elif [ "${allow_bootstrap}" != "true" ]; then
+            echo "ERROR: FuelGrid database has no migration history." >&2
+            echo "Refusing to migrate a potentially wrong or empty volume." >&2
+            exit 1
+          else
+            echo "Authorized first installation: no existing database to back up."
+          fi
+
           # Schema first: apply migrations as the OWNER (one-shot), then roll
           # out. golang-migrate `up` is idempotent (no pending = exit 0).
-          docker compose -f "${compose_file}" up -d postgres redis
           docker compose -f "${compose_file}" run --rm -T migrate
           docker compose -f "${compose_file}" run --rm -T db-role-sync
 
@@ -270,6 +303,12 @@ jobs:
           # removes the obsolete FuelGrid-owned Caddy if this host previously
           # used the standalone compose definition.
           docker compose -f "${compose_file}" up -d --remove-orphans postgres redis api web
+
+          # Bootstrap authorization is one-use. Persist the safe default after
+          # the first successful rollout so later volume loss stops deployment.
+          if [ "${allow_bootstrap}" = "true" ]; then
+            sed -i 's/^ALLOW_INITIAL_DATABASE_BOOTSTRAP=.*/ALLOW_INITIAL_DATABASE_BOOTSTRAP=false/' .env
+          fi
 
           # Reclaim disk from superseded image layers and print the final state.
           docker image prune -f
