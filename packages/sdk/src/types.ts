@@ -2941,6 +2941,8 @@ export interface Employee {
   tenant_id: string;
   station_id: string;
   user_id?: string;
+  login_email?: string;
+  login_status?: 'active' | 'invited' | 'suspended';
   full_name: string;
   role: EmployeeRole;
   employee_code?: string;

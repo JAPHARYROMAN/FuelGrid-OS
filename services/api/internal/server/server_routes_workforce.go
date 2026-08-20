@@ -24,6 +24,12 @@ func (s *Server) registerWorkforceRoutes(r chi.Router) {
 		r.Post("/stations/{stationID}/employees", s.handleCreateEmployee)
 		r.Patch("/employees/{employeeID}", s.handleUpdateEmployee)
 	})
+	r.With(
+		s.requireMFASatisfied,
+		s.requirePermission("station.manage", nil),
+		s.requirePermission("users.invite", nil),
+		s.requirePermission("users.assign_roles", nil),
+	).Post("/employees/{employeeID}/login-account", s.handleProvisionEmployeeLogin)
 
 	// Teams — list + ensure the three rotation teams.
 	r.With(s.requirePermissionHeld("station.read")).

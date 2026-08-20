@@ -199,3 +199,33 @@ func TestPhase11_OpenShiftEnforcement(t *testing.T) {
 		t.Fatalf("open empty-team shift: code=%d body=%v (want 400)", code, body)
 	}
 }
+
+func TestPhase11_InvitedLoginIsNotShiftReady(t *testing.T) {
+	h, cleanup := setupHarness(t)
+	defer cleanup()
+	ctx := context.Background()
+	admin := h.login(t, slug(h), h.ids.adminEmail)
+	st := h.ids.station1.String()
+
+	code, day := h.postJSON(t, "/api/v1/stations/"+st+"/operating-days", admin, `{}`)
+	if code != http.StatusCreated {
+		t.Fatalf("open day: code=%d body=%v", code, day)
+	}
+	configureRotation(t, h)
+	if _, err := h.pool.Exec(ctx,
+		`UPDATE users SET status = 'invited' WHERE tenant_id = $1 AND id = $2`,
+		h.ids.tenantID, h.ids.opID,
+	); err != nil {
+		t.Fatalf("mark login invited: %v", err)
+	}
+
+	dayID, _ := day["id"].(string)
+	code, body := h.postJSON(t, "/api/v1/stations/"+st+"/shifts", admin,
+		`{"operating_day_id":"`+dayID+`","name":"Morning","slot":"morning"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("open with invited login: code=%d body=%v, want 400", code, body)
+	}
+	if body["error"] != "the scheduled team has no members with an active login account — create their logins and complete password setup first" {
+		t.Fatalf("unexpected active-login error: %v", body)
+	}
+}

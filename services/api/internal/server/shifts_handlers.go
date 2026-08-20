@@ -215,17 +215,17 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 			"station has no rotation configured (set the rotation anchor and the three teams first)")
 		return
 	}
-	// Attendants are the team members that have a login account (user_id);
-	// back-office staff without one are simply not auto-assigned.
+	// Only active login accounts can operate a shift. A merely invited or
+	// suspended account cannot sign in and must not make the roster look ready.
 	attendantUserIDs := make([]uuid.UUID, 0, len(sched.Members))
 	for i := range sched.Members {
-		if sched.Members[i].UserID != nil {
+		if sched.Members[i].UserID != nil && sched.Members[i].LoginStatus != nil && *sched.Members[i].LoginStatus == "active" {
 			attendantUserIDs = append(attendantUserIDs, *sched.Members[i].UserID)
 		}
 	}
 	if len(attendantUserIDs) == 0 {
 		writeError(w, http.StatusBadRequest,
-			"the scheduled team has no members with a login account — no shift without its expected employees")
+			"the scheduled team has no members with an active login account — create their logins and complete password setup first")
 		return
 	}
 
@@ -297,7 +297,7 @@ func (s *Server) handleOpenShift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Auto-populate the shift's attendants from the scheduled team's members
-	// that have a login account.
+	// that have an active login account.
 	for _, uid := range attendantUserIDs {
 		if err := s.operations.AssignAttendant(ctx, tx, actor.TenantID, shift.ID, uid, actor.UserID); err != nil {
 			s.logger.Error("open shift: auto-assign attendant", "error", err)

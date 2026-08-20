@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Check, ListChecks, Plus, Users } from 'lucide-react';
@@ -374,6 +375,11 @@ export default function TeamsPage() {
             <div className="grid gap-4 md:grid-cols-3">
               {teamList.map((team) => {
                 const members = (employees.data?.items ?? []).filter((e) => e.team_id === team.id);
+                const activeLoginCount = members.filter(
+                  (employee) => employee.login_status === 'active',
+                ).length;
+                const canOpenShift = activeLoginCount > 0;
+                const allMembersReady = members.length > 0 && activeLoginCount === members.length;
                 return (
                   <Card key={team.id}>
                     <CardHeader className="flex-row items-center justify-between gap-2 space-y-0">
@@ -384,9 +390,30 @@ export default function TeamsPage() {
                       <Badge tone="neutral">order {team.rotation_order}</Badge>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-2">
-                      <p className="text-xs text-muted-foreground">
-                        {members.length} member{members.length === 1 ? '' : 's'}
-                      </p>
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-muted-foreground">
+                          {members.length} member{members.length === 1 ? '' : 's'}
+                        </span>
+                        <Badge
+                          tone={allMembersReady ? 'success' : canOpenShift ? 'warning' : 'danger'}
+                        >
+                          {activeLoginCount}/{members.length} login-ready
+                        </Badge>
+                      </div>
+                      {!allMembersReady && members.length > 0 ? (
+                        <p
+                          className={`rounded-md px-2.5 py-2 text-xs ${
+                            canOpenShift ? 'bg-warning/10 text-warning' : 'bg-danger/10 text-danger'
+                          }`}
+                        >
+                          {canOpenShift
+                            ? 'Members without active logins will not be auto-assigned.'
+                            : 'This team cannot open its shift because it has no active login.'}{' '}
+                          <Link href="/settings/employees" className="font-medium underline">
+                            Create employee logins
+                          </Link>
+                        </p>
+                      ) : null}
                       <div className="flex flex-wrap gap-1.5">
                         {(employees.data?.items ?? []).map((e) => {
                           const onThisTeam = employeeTeam.get(e.id) === team.id;
@@ -415,6 +442,7 @@ export default function TeamsPage() {
                                 )}
                                 {e.full_name}
                                 {onOtherTeam ? <span className="opacity-60">·moved</span> : null}
+                                {!e.user_id ? <span className="opacity-60">/ no login</span> : null}
                               </button>
                             </PermissionGate>
                           );
