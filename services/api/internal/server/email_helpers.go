@@ -3,7 +3,10 @@ package server
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"github.com/japharyroman/fuelgrid-os/internal/email"
 )
@@ -17,7 +20,7 @@ func (s *Server) sendPasswordResetEmail(ctx context.Context, to, token string) {
 		return
 	}
 	base := strings.TrimRight(s.cfg.AppBaseURL, "/")
-	link := fmt.Sprintf("%s/reset-password?token=%s", base, token)
+	link := fmt.Sprintf("%s/reset-password?token=%s", base, url.QueryEscape(token))
 	body := strings.Join([]string{
 		"We received a request to reset your FuelGrid OS password.",
 		"",
@@ -34,17 +37,23 @@ func (s *Server) sendPasswordResetEmail(ctx context.Context, to, token string) {
 		Body:    body,
 	}); err != nil {
 		s.logger.Warn("password reset email not delivered", "error", err)
+		return
 	}
+	s.logger.Info("password reset email delivered", "driver", s.email.Driver())
 }
 
 // sendInviteEmail welcomes a newly invited user and points them at the reset
 // flow to set their first password (invited accounts have no password yet).
 // Best-effort, exactly like the reset email.
-func (s *Server) sendInviteEmail(ctx context.Context, to, fullName string) {
+func (s *Server) sendInviteEmail(ctx context.Context, to, fullName, tenantSlug string) {
 	if s.email == nil || to == "" {
 		return
 	}
 	base := strings.TrimRight(s.cfg.AppBaseURL, "/")
+	resetURL := base + "/forgot-password"
+	if tenantSlug != "" {
+		resetURL += "?tenant=" + url.QueryEscape(tenantSlug) + "&email=" + url.QueryEscape(to)
+	}
 	greeting := "Hello"
 	if fullName != "" {
 		greeting = "Hello " + fullName
@@ -56,7 +65,7 @@ func (s *Server) sendInviteEmail(ctx context.Context, to, fullName string) {
 		"",
 		"To get started, set your password using the password-reset flow:",
 		"",
-		base + "/forgot-password",
+		resetURL,
 		"",
 		"Then sign in at " + base + "/login.",
 	}, "\n")
@@ -67,5 +76,25 @@ func (s *Server) sendInviteEmail(ctx context.Context, to, fullName string) {
 		Body:    body,
 	}); err != nil {
 		s.logger.Warn("invite email not delivered", "error", err)
+		return
 	}
+	s.logger.Info("invite email delivered", "driver", s.email.Driver())
+}
+
+// tenantSlug resolves the public login/reset identifier for invitation links.
+// Failure is non-fatal: the invitation still contains the reset page, but the
+// recipient must enter the tenant manually.
+func (s *Server) tenantSlug(ctx context.Context, tenantID uuid.UUID) string {
+	if s.deps.DB == nil {
+		return ""
+	}
+	var slug string
+	if err := s.deps.DB.QueryRow(ctx, `
+		SELECT slug
+		FROM tenants
+		WHERE id = $1 AND status <> 'deleted'`, tenantID).Scan(&slug); err != nil {
+		s.logger.Warn("resolve tenant slug for invite email", "error", err, "tenant_id", tenantID)
+		return ""
+	}
+	return slug
 }

@@ -46,11 +46,19 @@ export function LoginForm() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { tenant_slug: '' },
   });
+
+  const resetParams = new URLSearchParams();
+  const tenantForReset = watch('tenant_slug');
+  const emailForReset = watch('email');
+  if (tenantForReset) resetParams.set('tenant', tenantForReset.trim().toLowerCase());
+  if (emailForReset) resetParams.set('email', emailForReset.trim().toLowerCase());
+  const forgotPasswordHref = `/forgot-password${resetParams.size ? `?${resetParams}` : ''}`;
 
   async function onSubmit(values: FormValues) {
     setSubmitError(null);
@@ -162,7 +170,7 @@ export function LoginForm() {
           </Button>
 
           <Link
-            href="/forgot-password"
+            href={forgotPasswordHref}
             className="self-center text-xs text-muted-foreground underline-offset-2 hover:underline"
           >
             Forgot password?

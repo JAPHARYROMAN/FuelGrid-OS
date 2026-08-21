@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 
 import { SdkError } from '@fuelgrid/sdk';
 import {
@@ -18,8 +19,12 @@ import {
 
 import { api } from '@/lib/api';
 
-export default function ForgotPasswordPage() {
-  const [form, setForm] = useState({ tenant_slug: '', email: '' });
+function ForgotPasswordForm() {
+  const searchParams = useSearchParams();
+  const [form, setForm] = useState({
+    tenant_slug: searchParams.get('tenant')?.trim().toLowerCase() ?? '',
+    email: searchParams.get('email')?.trim().toLowerCase() ?? '',
+  });
   const [submitting, setSubmitting] = useState(false);
   // The backend always returns 202 regardless of whether the email
   // matched — the UI shows the same confirmation either way. Deliberate:
@@ -36,7 +41,12 @@ export default function ForgotPasswordPage() {
     setSubmitting(true);
     setError(null);
     try {
-      await api.requestPasswordReset(form);
+      const normalizedForm = {
+        tenant_slug: form.tenant_slug.trim().toLowerCase(),
+        email: form.email.trim().toLowerCase(),
+      };
+      await api.requestPasswordReset(normalizedForm);
+      setForm(normalizedForm);
       setDone(true);
     } catch (err) {
       setError(err instanceof SdkError ? err.message : 'Network error. Try again.');
@@ -96,6 +106,9 @@ export default function ForgotPasswordPage() {
               value={form.tenant_slug}
               onChange={(e) => setForm({ ...form, tenant_slug: e.target.value })}
             />
+            <p className="text-xs text-muted-foreground">
+              Use the same tenant slug shown on the sign-in form.
+            </p>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="email">Email</Label>
@@ -130,5 +143,13 @@ export default function ForgotPasswordPage() {
         </Link>
       </CardFooter>
     </Card>
+  );
+}
+
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense>
+      <ForgotPasswordForm />
+    </Suspense>
   );
 }

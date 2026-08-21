@@ -605,7 +605,7 @@ func (s *Server) handleProvisionEmployeeLogin(w http.ResponseWriter, r *http.Req
 	}
 
 	if created || accountStatus == "invited" {
-		s.sendInviteEmail(ctx, emailAddress, fullName)
+		s.sendInviteEmail(ctx, emailAddress, fullName, s.tenantSlug(ctx, actor.TenantID))
 	}
 	writeJSON(w, http.StatusCreated, provisionEmployeeLoginResponse{
 		UserID: userID, Email: emailAddress, Status: accountStatus, Created: created,
