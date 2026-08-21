@@ -1,6 +1,6 @@
 // Package email is the transactional-email boundary: a small Sender interface
-// with an SMTP driver for production and a console/no-op driver used when SMTP
-// is unconfigured so local development is a safe no-op.
+// with HTTPS and SMTP production drivers plus a console/no-op driver used when
+// neither transport is configured, so local development is a safe no-op.
 //
 // Callers (password reset, user invite, critical notifications) treat sending
 // as BEST-EFFORT: a send failure is logged, never returned to the request, and
@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strconv"
 	"strings"
@@ -47,34 +48,45 @@ type Message struct {
 // error to the request.
 type Sender interface {
 	Send(ctx context.Context, msg Message) error
-	// Driver names the active transport ("smtp" / "console") for startup logs.
+	// Driver names the active transport ("resend" / "smtp" / "console") for startup logs.
 	Driver() string
 }
 
-// Config carries the SMTP_* settings. When Host is empty the constructor
-// returns the console driver, keeping dev a no-op.
+// Config carries transactional email transport settings. Resend is preferred
+// when configured because it uses HTTPS and works from hosts that block SMTP.
+// When neither ResendAPIKey nor Host is set, New returns the console driver.
 type Config struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
+	ResendAPIKey  string
+	ResendBaseURL string
+	Host          string
+	Port          int
+	Username      string
+	Password      string
+	From          string
 }
 
-// New returns the SMTP sender when Config.Host is set, otherwise a console
-// (log-only) sender. This makes "SMTP unconfigured" the safe default: dev and
-// CI never attempt a real send.
+// New returns the Resend HTTPS sender when configured, then falls back to SMTP,
+// then to a console (log-only) sender. Dev and CI therefore never attempt a
+// real send without explicit credentials.
 func New(cfg Config, logger *slog.Logger) Sender {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if strings.TrimSpace(cfg.Host) == "" {
-		logger.Info("email: SMTP unconfigured — using console (no-op) sender")
-		return &ConsoleSender{logger: logger}
-	}
 	from := cfg.From
 	if from == "" {
 		from = "no-reply@fuelgrid.local"
+	}
+	if strings.TrimSpace(cfg.ResendAPIKey) != "" {
+		baseURL := strings.TrimRight(strings.TrimSpace(cfg.ResendBaseURL), "/")
+		if baseURL == "" {
+			baseURL = defaultResendBaseURL
+		}
+		logger.Info("email: Resend HTTPS sender wired", "base_url", baseURL, "from", from)
+		return newResendSender(cfg.ResendAPIKey, baseURL, from)
+	}
+	if strings.TrimSpace(cfg.Host) == "" {
+		logger.Info("email: no transport configured — using console (no-op) sender")
+		return &ConsoleSender{logger: logger}
 	}
 	logger.Info("email: SMTP sender wired", "host", cfg.Host, "port", cfg.Port, "from", from)
 	return &SMTPSender{cfg: cfg, from: from, logger: logger}
@@ -139,7 +151,11 @@ func (s *SMTPSender) Send(ctx context.Context, msg Message) error {
 		}
 	}
 
-	if err := client.Mail(s.from); err != nil {
+	envelopeFrom := s.from
+	if parsed, parseErr := mail.ParseAddress(s.from); parseErr == nil {
+		envelopeFrom = parsed.Address
+	}
+	if err := client.Mail(envelopeFrom); err != nil {
 		return fmt.Errorf("email: MAIL FROM: %w", err)
 	}
 	if err := client.Rcpt(msg.To); err != nil {
