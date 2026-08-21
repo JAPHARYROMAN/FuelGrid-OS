@@ -222,10 +222,14 @@ type Config struct {
 	SchedulerOutboxRequeueAfter time.Duration `envconfig:"SCHEDULER_OUTBOX_REQUEUE_AFTER" default:"1h"`
 	SchedulerJobRunRetention    time.Duration `envconfig:"SCHEDULER_JOB_RUN_RETENTION" default:"720h"`
 	SchedulerLockTimeout        time.Duration `envconfig:"SCHEDULER_LOCK_TIMEOUT" default:"10m"`
-	// Transactional email. When SMTP_HOST is empty the email package falls back
-	// to a console (log-only) sender so local development never sends real mail.
-	// SMTP_PASSWORD is a Secret so it never reaches a log line. SMTP_FROM is the
-	// envelope/header From; it defaults inside the email package when blank.
+	// Transactional email. Resend uses HTTPS and is preferred when configured;
+	// SMTP remains a fallback for infrastructure that allows outbound SMTP. With
+	// neither transport configured, local development uses a console-only sender.
+	ResendAPIKey  Secret `envconfig:"RESEND_API_KEY"`
+	ResendBaseURL string `envconfig:"RESEND_API_BASE_URL" default:"https://api.resend.com"`
+	EmailFrom     string `envconfig:"EMAIL_FROM"`
+	// SMTP_PASSWORD is a Secret so it never reaches a log line. SMTP_FROM is
+	// retained as a backwards-compatible fallback for EMAIL_FROM.
 	SMTPHost     string `envconfig:"SMTP_HOST"`
 	SMTPPort     int    `envconfig:"SMTP_PORT" default:"587"`
 	SMTPUsername string `envconfig:"SMTP_USERNAME"`

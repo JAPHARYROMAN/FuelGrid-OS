@@ -307,15 +307,20 @@ func wireDeps(ctx context.Context, cfg config.Config, logger *slog.Logger) (serv
 		logger.Warn("identity service skipped — needs both DATABASE_URL and REDIS_URL")
 	}
 
-	// Transactional email sender. Falls back to the console (no-op) driver when
-	// SMTP_HOST is unset, so dev/CI never send real mail. Always wired (no DB
-	// dependency) so the password-reset / invite handlers have a Sender.
+	// Transactional email sender. Resend HTTPS is preferred, SMTP is the fallback,
+	// and the console driver keeps dev/CI a safe no-op when neither is configured.
+	emailFrom := cfg.EmailFrom
+	if emailFrom == "" {
+		emailFrom = cfg.SMTPFrom
+	}
 	deps.Email = email.New(email.Config{
-		Host:     cfg.SMTPHost,
-		Port:     cfg.SMTPPort,
-		Username: cfg.SMTPUsername,
-		Password: cfg.SMTPPassword.Reveal(),
-		From:     cfg.SMTPFrom,
+		ResendAPIKey:  cfg.ResendAPIKey.Reveal(),
+		ResendBaseURL: cfg.ResendBaseURL,
+		Host:          cfg.SMTPHost,
+		Port:          cfg.SMTPPort,
+		Username:      cfg.SMTPUsername,
+		Password:      cfg.SMTPPassword.Reveal(),
+		From:          emailFrom,
 	}, logger.With("component", "email"))
 
 	// Metrics observe worker. Refreshes the DB-sampled gauges — outbox

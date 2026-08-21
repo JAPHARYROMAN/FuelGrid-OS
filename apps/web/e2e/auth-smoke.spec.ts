@@ -40,6 +40,22 @@ const ME_BODY = {
   mfa_satisfied: true,
 };
 
+const BACK_OFFICE_ACCESS = {
+  permissions: [{ code: 'company.read', station_scoped: false }],
+  tenant_wide: true,
+};
+
+async function mockPermissions(page: Page, body = BACK_OFFICE_ACCESS) {
+  await page.route('**/api/bff/api/v1/me/permissions', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'X-Request-Id': 'e2e-permissions' },
+      body: JSON.stringify(body),
+    });
+  });
+}
+
 /**
  * Mock the BFF login endpoint. The real proxy strips the token from the body
  * and sets it in an httpOnly cookie; we reproduce both: the body carries no
@@ -85,6 +101,7 @@ test.describe('auth smoke', () => {
 
   test('successful login lands on the command center', async ({ page }) => {
     await mockLoginSuccess(page);
+    await mockPermissions(page);
     // The command center fetches /me on mount via the BFF; return a valid body.
     await page.route('**/api/bff/api/v1/me', async (route) => {
       await route.fulfill({
@@ -98,7 +115,8 @@ test.describe('auth smoke', () => {
     await page.goto('/login');
     await submitLogin(page);
 
-    // Login success -> router.replace(safeRedirect(next)) -> /command-center.
+    // Login verifies the cookie, resolves the user's workspace, and performs
+    // a full navigation through the server-side session gate.
     await expect(page).toHaveURL(/\/command-center(\?|$)/);
     // The flagship Executive Command Center renders its hero immediately,
     // independent of the (here-unmocked) dashboard data fan-out.
@@ -128,27 +146,14 @@ test.describe('auth smoke', () => {
     page,
   }) => {
     await mockLoginSuccess(page);
+    await mockPermissions(page);
 
-    // First /me succeeds so login lands on the command center...
-    let meCalls = 0;
+    // First /me succeeds so login lands on the command center.
     await page.route('**/api/bff/api/v1/me', async (route) => {
-      meCalls += 1;
-      if (meCalls === 1) {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify(ME_BODY),
-        });
-        return;
-      }
-      // ...then the session "expires": a later /me returns 401. The real BFF
-      // also clears the cookie on a 401; reproduce that with an expiring
-      // Set-Cookie so the middleware no longer sees a session.
       await route.fulfill({
-        status: 401,
+        status: 200,
         contentType: 'application/json',
-        headers: { 'Set-Cookie': 'fg_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' },
-        body: JSON.stringify({ error: 'unauthorized' }),
+        body: JSON.stringify(ME_BODY),
       });
     });
 
@@ -156,8 +161,18 @@ test.describe('auth smoke', () => {
     await submitLogin(page);
     await expect(page).toHaveURL(/\/command-center(\?|$)/);
 
-    // Force a re-fetch of /me (now 401): a reload re-runs the query.
-    await page.evaluate(() => window.location.reload());
+    // Replace the successful identity response with an expired-session
+    // response, then reload so the fresh QueryClient must fetch it again.
+    await page.unroute('**/api/bff/api/v1/me');
+    await page.route('**/api/bff/api/v1/me', async (route) => {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        headers: { 'Set-Cookie': 'fg_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' },
+        body: JSON.stringify({ error: 'unauthorized' }),
+      });
+    });
+    await page.reload();
 
     // The 401 backstop clears the session and bounces to /login.
     await expect(page).toHaveURL(/\/login(\?|$)/);

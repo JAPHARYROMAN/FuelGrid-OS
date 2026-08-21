@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -20,7 +20,7 @@ import {
 } from '@fuelgrid/ui';
 
 import { api } from '@/lib/api';
-import { safeRedirect } from '@/lib/safe-redirect';
+import { loginDestination, navigateAfterLogin } from '@/lib/login-destination';
 import { useAuthStore } from '@/stores/auth-store';
 
 const schema = z.object({
@@ -36,7 +36,6 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const setAuthed = useAuthStore((s) => s.setAuthed);
 
@@ -46,11 +45,19 @@ export function LoginForm() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { tenant_slug: '' },
   });
+
+  const resetParams = new URLSearchParams();
+  const tenantForReset = watch('tenant_slug');
+  const emailForReset = watch('email');
+  if (tenantForReset) resetParams.set('tenant', tenantForReset.trim().toLowerCase());
+  if (emailForReset) resetParams.set('email', emailForReset.trim().toLowerCase());
+  const forgotPasswordHref = `/forgot-password${resetParams.size ? `?${resetParams}` : ''}`;
 
   async function onSubmit(values: FormValues) {
     setSubmitError(null);
@@ -65,11 +72,18 @@ export function LoginForm() {
         return;
       }
 
-      // No mfa challenge -> the cookie was set. Record the non-sensitive UI
-      // hint (no token) so the client guards stop showing the login screen.
-      setAuthed(res.expires_at);
+      // Verify that the browser accepted the new httpOnly cookie before
+      // leaving the login page. This also lets attendant-only users enter the
+      // focused mobile workspace when the installed app opens /login without
+      // an explicit `next` destination.
+      const access = await api.mePermissions();
+      const destination = loginDestination(searchParams.get('next'), access);
 
-      router.replace(safeRedirect(searchParams.get('next')));
+      // The cookie is the security boundary; this persisted flag is only a UI
+      // hint. A full-page navigation makes middleware validate the cookie and
+      // avoids App Router transitions getting stranded on the login document.
+      setAuthed(res.expires_at);
+      navigateAfterLogin(destination);
     } catch (err) {
       if (err instanceof SdkError) {
         if (err.status === 401) {
@@ -162,7 +176,7 @@ export function LoginForm() {
           </Button>
 
           <Link
-            href="/forgot-password"
+            href={forgotPasswordHref}
             className="self-center text-xs text-muted-foreground underline-offset-2 hover:underline"
           >
             Forgot password?

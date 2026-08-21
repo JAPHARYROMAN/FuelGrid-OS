@@ -48,6 +48,13 @@ export default function RegionsPage() {
   const [form, setForm] = useState<FormState>(blankForm);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  function closeDialog() {
+    setOpen(false);
+    setEditing(null);
+    setForm(blankForm);
+    setSubmitError(null);
+  }
+
   const companies = useQuery({
     queryKey: ['companies'],
     queryFn: ({ signal }) => api.listCompanies(signal),
@@ -65,10 +72,9 @@ export default function RegionsPage() {
         name: input.name,
         code: input.code || undefined,
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['regions'] });
-      setOpen(false);
-      setForm(blankForm);
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['regions'] });
+      closeDialog();
     },
     onError: (err) => setSubmitError(err instanceof SdkError ? err.message : 'Could not save'),
   });
@@ -79,9 +85,9 @@ export default function RegionsPage() {
         name: input.name,
         code: input.code || undefined,
       } as Partial<Region>),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['regions'] });
-      setEditing(null);
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['regions'] });
+      closeDialog();
     },
     onError: (err) => setSubmitError(err instanceof SdkError ? err.message : 'Could not save'),
   });
@@ -187,7 +193,7 @@ export default function RegionsPage() {
         </Card>
       )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(nextOpen) => (nextOpen ? setOpen(true) : closeDialog())}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit region' : 'New region'}</DialogTitle>
@@ -244,7 +250,7 @@ export default function RegionsPage() {
             ) : null}
 
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              <Button type="button" variant="ghost" onClick={closeDialog}>
                 Cancel
               </Button>
               <Button type="submit" disabled={create.isPending || update.isPending}>

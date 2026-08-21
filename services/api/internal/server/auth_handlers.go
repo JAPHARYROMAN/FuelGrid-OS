@@ -107,6 +107,8 @@ func (s *Server) handlePasswordResetRequest(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	req.TenantSlug = strings.ToLower(strings.TrimSpace(req.TenantSlug))
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.TenantSlug == "" || req.Email == "" {
 		writeError(w, http.StatusBadRequest, "tenant_slug and email are required")
 		return

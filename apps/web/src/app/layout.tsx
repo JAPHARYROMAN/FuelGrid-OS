@@ -25,8 +25,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: appName,
   description: 'The operating system for modern fuel businesses.',
-  // Served by app/manifest.ts at /manifest.webmanifest. Installable-PWA
-  // basics only — no service worker / offline support yet (see Phase 14).
+  // Served by app/manifest.ts. The installed surface is the dedicated
+  // attendant PWA; the desktop ERP remains a normal browser application.
   manifest: '/manifest.webmanifest',
   applicationName: appName,
   appleWebApp: {

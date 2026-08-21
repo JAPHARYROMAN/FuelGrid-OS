@@ -1,23 +1,23 @@
 import type { MetadataRoute } from 'next';
 
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? 'FuelGrid OS';
-
 /**
  * Web App Manifest, served by Next.js at /manifest.webmanifest.
  *
- * Scope is deliberately "installable PWA basics" only: name, icons, and
- * standalone display so the app can be added to a home screen. There is NO
- * service worker yet, so this does not provide offline support — see
- * docs/architecture.md and the Phase-14 roadmap for the planned offline work.
+ * FuelGrid's install affordance is specifically for pump attendants, so the
+ * installed app must reopen the touch-first attendant workspace rather than
+ * the desktop command centre. The root-scoped service worker provides the
+ * attendant shell and offline action queue.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: appName,
-    short_name: 'FuelGrid',
-    description: 'The operating system for modern fuel businesses.',
-    start_url: '/',
+    id: '/attendant',
+    name: 'FuelGrid Attendant',
+    short_name: 'Attendant',
+    description: 'Pump attendant shift readings, collections, and field workflow.',
+    start_url: '/attendant',
     scope: '/',
     display: 'standalone',
+    orientation: 'portrait',
     background_color: '#0a0f1a',
     theme_color: '#3b82f6',
     icons: [

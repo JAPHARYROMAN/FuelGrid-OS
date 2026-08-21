@@ -18,12 +18,11 @@
  *   - any cross-origin request,
  *   - navigations outside /attendant (the desktop dashboard is untouched).
  *
- * Updates: a new SW waits (no skipWaiting on install) so the page can show a
- * gentle "App updated — reload" affordance; the page posts SKIP_WAITING when
- * the attendant accepts, then reloads on controllerchange.
+ * Updates activate immediately. A stale installed app can otherwise remain
+ * pinned to an obsolete shell and fail before the update affordance renders.
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC_CACHE = `fg-attendant-static-${VERSION}`;
 const SHELL_CACHE = `fg-attendant-shell-${VERSION}`;
 const KNOWN_CACHES = [STATIC_CACHE, SHELL_CACHE];
@@ -32,7 +31,7 @@ const KNOWN_CACHES = [STATIC_CACHE, SHELL_CACHE];
 const SHELL_FALLBACK_PATH = '/attendant';
 
 self.addEventListener('install', () => {
-  // Deliberately no skipWaiting(): the update flow is user-controlled.
+  self.skipWaiting();
 });
 
 self.addEventListener('message', (event) => {

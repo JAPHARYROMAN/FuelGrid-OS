@@ -13,10 +13,12 @@ import (
 // Tokens never need a database round-trip to decide whether to show a
 // button — this payload is all they need.
 type mePermissionsResponse struct {
-	Permissions   []permissionItem `json:"permissions"`
-	StationIDs    []uuid.UUID      `json:"station_ids,omitempty"`
-	TenantWide    bool             `json:"tenant_wide"`
-	IsSystemAdmin bool             `json:"is_system_admin"`
+	Permissions     []permissionItem `json:"permissions"`
+	StationIDs      []uuid.UUID      `json:"station_ids,omitempty"`
+	Roles           []string         `json:"roles"`
+	TenantWide      bool             `json:"tenant_wide"`
+	IsSystemAdmin   bool             `json:"is_system_admin"`
+	IsAttendantOnly bool             `json:"is_attendant_only"`
 }
 
 type permissionItem struct {
@@ -37,8 +39,19 @@ func (s *Server) handleMePermissions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not load permissions")
 		return
 	}
+	roles, err := s.userRepo.ListRoles(r.Context(), actor.UserID)
+	if err != nil {
+		s.logger.Error("load actor roles", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not load access profile")
+		return
+	}
 
-	resp := mePermissionsResponse{TenantWide: ps.TenantWide, IsSystemAdmin: ps.IsSystemAdmin}
+	resp := mePermissionsResponse{
+		Roles:           roles,
+		TenantWide:      ps.TenantWide,
+		IsSystemAdmin:   ps.IsSystemAdmin,
+		IsAttendantOnly: attendantOnlyAccess(roles, ps.IsSystemAdmin),
+	}
 	for code := range ps.Permissions {
 		resp.Permissions = append(resp.Permissions, permissionItem{
 			Code:          code,
@@ -58,4 +71,8 @@ func (s *Server) handleMePermissions(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func attendantOnlyAccess(roles []string, isSystemAdmin bool) bool {
+	return !isSystemAdmin && len(roles) == 1 && roles[0] == "attendant"
 }

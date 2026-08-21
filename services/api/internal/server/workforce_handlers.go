@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/mail"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,6 +28,8 @@ type employeeDTO struct {
 	TenantID     uuid.UUID  `json:"tenant_id"`
 	StationID    uuid.UUID  `json:"station_id"`
 	UserID       *uuid.UUID `json:"user_id,omitempty"`
+	LoginEmail   *string    `json:"login_email,omitempty"`
+	LoginStatus  *string    `json:"login_status,omitempty"`
 	FullName     string     `json:"full_name"`
 	Role         string     `json:"role"`
 	EmployeeCode *string    `json:"employee_code,omitempty"`
@@ -62,6 +65,7 @@ func toEmployeeRoleDTO(r *workforce.EmployeeRole) employeeRoleDTO {
 func toEmployeeDTO(e *workforce.Employee) employeeDTO {
 	return employeeDTO{
 		ID: e.ID, TenantID: e.TenantID, StationID: e.StationID, UserID: e.UserID,
+		LoginEmail: e.LoginEmail, LoginStatus: e.LoginStatus,
 		FullName: e.FullName, Role: e.Role, EmployeeCode: e.EmployeeCode,
 		Phone: e.Phone, Email: e.Email, Status: e.Status, TeamID: e.TeamID,
 		CreatedAt: e.CreatedAt.Format(time.RFC3339),
@@ -408,6 +412,204 @@ func (s *Server) handleUpdateEmployee(w http.ResponseWriter, r *http.Request) {
 		RequestID: chimiddleware.GetReqID(ctx),
 	})
 	writeJSON(w, http.StatusOK, toEmployeeDTO(&after))
+}
+
+type provisionEmployeeLoginRequest struct {
+	Email string `json:"email"`
+}
+
+type provisionEmployeeLoginResponse struct {
+	UserID  uuid.UUID `json:"user_id"`
+	Email   string    `json:"email"`
+	Status  string    `json:"status"`
+	Created bool      `json:"created"`
+}
+
+// handleProvisionEmployeeLogin creates or reuses a dedicated attendant login,
+// scopes it to the employee's station, grants the attendant role, and links it
+// to the employee in one transaction. This is the supported onboarding path
+// for rotation-team members who must capture readings and cash submissions.
+func (s *Server) handleProvisionEmployeeLogin(w http.ResponseWriter, r *http.Request) {
+	actor, err := identity.Require(r.Context())
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	employeeID, err := uuid.Parse(chi.URLParam(r, "employeeID"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid employee id")
+		return
+	}
+	var req provisionEmployeeLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	emailAddress := strings.ToLower(strings.TrimSpace(req.Email))
+	parsed, err := mail.ParseAddress(emailAddress)
+	if err != nil || parsed.Address != emailAddress {
+		writeError(w, http.StatusBadRequest, "a valid email is required")
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.deps.DB.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var stationID uuid.UUID
+	var fullName, employeeStatus string
+	var existingLink *uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT station_id, full_name, status, user_id
+		FROM employees
+		WHERE tenant_id = $1 AND id = $2
+		FOR UPDATE`, actor.TenantID, employeeID,
+	).Scan(&stationID, &fullName, &employeeStatus, &existingLink); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "employee not found")
+		return
+	} else if err != nil {
+		s.logger.Error("provision employee login: load employee", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if employeeStatus != "active" {
+		writeError(w, http.StatusConflict, "activate the employee before creating a login account")
+		return
+	}
+	if existingLink != nil {
+		writeError(w, http.StatusConflict, "employee already has a login account")
+		return
+	}
+
+	var userID uuid.UUID
+	var accountStatus string
+	created := false
+	err = tx.QueryRow(ctx, `
+		SELECT id, status
+		FROM users
+		WHERE tenant_id = $1 AND lower(email) = lower($2) AND status <> 'deleted'
+		FOR UPDATE`, actor.TenantID, emailAddress,
+	).Scan(&userID, &accountStatus)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO users (tenant_id, email, full_name, status)
+			VALUES ($1, $2, $3, 'invited')
+			RETURNING id, status`, actor.TenantID, emailAddress, fullName,
+		).Scan(&userID, &accountStatus); err != nil {
+			if isUniqueViolation(err) {
+				writeError(w, http.StatusConflict, "a user with that email already exists")
+				return
+			}
+			s.logger.Error("provision employee login: invite user", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		created = true
+	case err != nil:
+		s.logger.Error("provision employee login: find user", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	default:
+		if accountStatus == "suspended" {
+			writeError(w, http.StatusConflict, "the matching login account is suspended")
+			return
+		}
+		var linkedElsewhere bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM employees
+				WHERE tenant_id = $1 AND user_id = $2 AND id <> $3
+			)`, actor.TenantID, userID, employeeID,
+		).Scan(&linkedElsewhere); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if linkedElsewhere {
+			writeError(w, http.StatusConflict, "the matching login is already linked to another employee")
+			return
+		}
+		var hasNonAttendantRole bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM user_roles ur
+				JOIN roles r ON r.id = ur.role_id
+				WHERE ur.tenant_id = $1 AND ur.user_id = $2 AND r.code <> 'attendant'
+			)`, actor.TenantID, userID,
+		).Scan(&hasNonAttendantRole); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if hasNonAttendantRole {
+			writeError(w, http.StatusConflict, "that email belongs to a privileged account; use a dedicated employee email")
+			return
+		}
+	}
+
+	var attendantRoleID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM roles WHERE code = 'attendant' AND is_system = true`).Scan(&attendantRoleID); err != nil {
+		s.logger.Error("provision employee login: attendant role", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_roles (user_id, role_id, tenant_id, granted_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id, role_id) DO NOTHING`, userID, attendantRoleID, actor.TenantID, actor.UserID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO user_station_access (user_id, station_id, tenant_id, granted_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id, station_id) DO NOTHING`, userID, stationID, actor.TenantID, actor.UserID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE employees
+		SET user_id = $3, email = $4
+		WHERE tenant_id = $1 AND id = $2`, actor.TenantID, employeeID, userID, emailAddress,
+	); err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "the login is already linked to another employee")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := audit.WriteWithOutbox(ctx, tx, audit.TxRecord{
+		TenantID: actor.TenantID, ActorID: actor.UserID,
+		Action: "employee.login_account_provisioned", EventType: "EmployeeLoginAccountProvisioned",
+		EntityType: "employee", EntityID: employeeID.String(),
+		NewValue: map[string]any{
+			"employee_id": employeeID, "user_id": userID, "email": emailAddress,
+			"station_id": stationID, "account_status": accountStatus, "created": created,
+		},
+		IP: clientIP(r), UserAgent: r.UserAgent(), RequestID: chimiddleware.GetReqID(ctx),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if created || accountStatus == "invited" {
+		s.sendInviteEmail(ctx, emailAddress, fullName, s.tenantSlug(ctx, actor.TenantID))
+	}
+	writeJSON(w, http.StatusCreated, provisionEmployeeLoginResponse{
+		UserID: userID, Email: emailAddress, Status: accountStatus, Created: created,
+	})
 }
 
 // ---- Teams -----------------------------------------------------------------

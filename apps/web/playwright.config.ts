@@ -35,7 +35,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /attendant-mobile\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'mobile-attendant',
+      testMatch: /attendant-mobile\.spec\.ts/,
+      use: { ...devices['Pixel 5'] },
     },
   ],
   // Build once, then serve the production bundle. NEXT_PUBLIC_API_URL points

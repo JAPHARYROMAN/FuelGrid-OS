@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus, UserPlus } from 'lucide-react';
 
 import { SdkError, type Employee, type EmployeeRole, type EmployeeRoleOption } from '@fuelgrid/sdk';
 import {
@@ -80,6 +80,10 @@ export default function EmployeesPage() {
   const [roleOpen, setRoleOpen] = useState(false);
   const [roleName, setRoleName] = useState('');
   const [roleError, setRoleError] = useState<string | null>(null);
+  const [loginEmployee, setLoginEmployee] = useState<Employee | null>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [pageNotice, setPageNotice] = useState<string | null>(null);
 
   const stations = useQuery({
     queryKey: ['stations'],
@@ -173,6 +177,28 @@ export default function EmployeesPage() {
     onError: (err) => setSubmitError(err instanceof SdkError ? err.message : 'Could not save'),
   });
 
+  const provisionLogin = useMutation({
+    mutationFn: ({ employeeID, email }: { employeeID: string; email: string }) =>
+      api.provisionEmployeeLogin(employeeID, { email }),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: employeesKey });
+      qc.invalidateQueries({ queryKey: ['users'] });
+      qc.invalidateQueries({ queryKey: ['setup-checklist', stationID] });
+      setLoginEmployee(null);
+      setLoginEmail('');
+      setLoginError(null);
+      if (result.status === 'invited') {
+        setPageNotice(
+          `Login invitation created for ${result.email}. The employee must use Forgot password before joining a shift.`,
+        );
+      } else {
+        setPageNotice(`${result.email} is linked and ready to join scheduled shifts.`);
+      }
+    },
+    onError: (err) =>
+      setLoginError(err instanceof SdkError ? err.message : 'Could not create login account'),
+  });
+
   function openCreate() {
     setEditing(null);
     setForm(blankForm);
@@ -192,6 +218,13 @@ export default function EmployeesPage() {
     });
     setSubmitError(null);
     setOpen(true);
+  }
+
+  function openLogin(e: Employee) {
+    setLoginEmployee(e);
+    setLoginEmail(e.email ?? '');
+    setLoginError(null);
+    setPageNotice(null);
   }
 
   function submit() {
@@ -260,6 +293,12 @@ export default function EmployeesPage() {
         }
       />
 
+      {pageNotice ? (
+        <p className="rounded-md bg-info/10 px-3 py-2 text-sm text-info" role="status">
+          {pageNotice}
+        </p>
+      ) : null}
+
       {!stationID ? (
         <EmptyState
           title="No station selected"
@@ -316,19 +355,39 @@ export default function EmployeesPage() {
                       {[e.phone, e.email].filter(Boolean).join(' · ') || '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge tone={e.user_id ? 'info' : 'neutral'}>
-                        {e.user_id ? 'linked' : 'none'}
+                      <Badge
+                        tone={
+                          e.login_status === 'active'
+                            ? 'success'
+                            : e.login_status === 'invited'
+                              ? 'warning'
+                              : e.login_status === 'suspended'
+                                ? 'danger'
+                                : 'neutral'
+                        }
+                      >
+                        {e.login_status ?? 'none'}
                       </Badge>
                     </TableCell>
                     <TableCell>
                       <Badge tone={e.status === 'active' ? 'success' : 'warning'}>{e.status}</Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <PermissionGate permission="station.manage">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(e)}>
-                          Edit
-                        </Button>
-                      </PermissionGate>
+                      <div className="flex justify-end gap-1">
+                        {!e.user_id ? (
+                          <PermissionGate permission="users.invite">
+                            <Button variant="ghost" size="sm" onClick={() => openLogin(e)}>
+                              <UserPlus className="size-3.5" />
+                              Create login
+                            </Button>
+                          </PermissionGate>
+                        ) : null}
+                        <PermissionGate permission="station.manage">
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(e)}>
+                            Edit
+                          </Button>
+                        </PermissionGate>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -344,7 +403,7 @@ export default function EmployeesPage() {
             <DialogTitle>{editing ? 'Edit employee' : 'New employee'}</DialogTitle>
             <DialogDescription>
               {editing
-                ? 'Update this employee. Linking a login account happens via Users.'
+                ? 'Update this employee. Use Create login in the employee list for shift access.'
                 : 'Add a member of this station’s workforce.'}
             </DialogDescription>
           </DialogHeader>
@@ -439,6 +498,74 @@ export default function EmployeesPage() {
               </Button>
               <Button type="submit" disabled={create.isPending || update.isPending}>
                 {create.isPending || update.isPending ? 'Saving…' : 'Save'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(loginEmployee)}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen && !provisionLogin.isPending) setLoginEmployee(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create employee login</DialogTitle>
+            <DialogDescription>
+              {loginEmployee?.full_name} will receive an attendant account for this station. If the
+              email already belongs to an unprivileged attendant account, it will be linked instead
+              of duplicated.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!loginEmployee || !loginEmail.trim()) {
+                setLoginError('Email is required');
+                return;
+              }
+              provisionLogin.mutate({ employeeID: loginEmployee.id, email: loginEmail.trim() });
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="employee_login_email">Login email</Label>
+              <Input
+                id="employee_login_email"
+                type="email"
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
+                placeholder="employee@example.com"
+                autoComplete="email"
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                New users complete password setup through the Forgot password link on the login
+                page. The account becomes shift-ready only after activation.
+              </p>
+            </div>
+
+            {loginError ? (
+              <p className="rounded-md bg-danger/10 px-3 py-2 text-sm text-danger" role="alert">
+                {loginError}
+              </p>
+            ) : null}
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={provisionLogin.isPending}
+                onClick={() => setLoginEmployee(null)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={provisionLogin.isPending}>
+                <UserPlus className="size-4" />
+                {provisionLogin.isPending ? 'Creating...' : 'Create and link login'}
               </Button>
             </DialogFooter>
           </form>

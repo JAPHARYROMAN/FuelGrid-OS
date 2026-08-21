@@ -1663,6 +1663,24 @@ export class Client {
     });
   }
 
+  /** Provision or reuse a dedicated attendant login and link it to an employee. */
+  provisionEmployeeLogin(
+    employeeID: string,
+    req: { email: string },
+    signal?: AbortSignal,
+  ): Promise<{
+    user_id: string;
+    email: string;
+    status: 'active' | 'invited';
+    created: boolean;
+  }> {
+    return this.request(`/api/v1/employees/${encodeURIComponent(employeeID)}/login-account`, {
+      method: 'POST',
+      body: req,
+      signal,
+    });
+  }
+
   /** A station's three shift teams (station.read). */
   listTeams(stationID: string, signal?: AbortSignal): Promise<WorkforceList<ShiftTeam>> {
     return this.request<WorkforceList<ShiftTeam>>(

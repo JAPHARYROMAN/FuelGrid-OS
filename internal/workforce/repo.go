@@ -24,6 +24,8 @@ type Employee struct {
 	TenantID     uuid.UUID
 	StationID    uuid.UUID
 	UserID       *uuid.UUID
+	LoginEmail   *string
+	LoginStatus  *string
 	FullName     string
 	Role         string
 	EmployeeCode *string
@@ -160,14 +162,17 @@ type CreateEmployeeInput struct {
 	Email        *string
 }
 
-const employeeColumns = `e.id, e.tenant_id, e.station_id, e.user_id, e.full_name, e.role,
+const employeeColumns = `e.id, e.tenant_id, e.station_id, e.user_id,
+	(SELECT u.email FROM users u WHERE u.tenant_id = e.tenant_id AND u.id = e.user_id) AS login_email,
+	(SELECT u.status FROM users u WHERE u.tenant_id = e.tenant_id AND u.id = e.user_id) AS login_status,
+	e.full_name, e.role,
 	e.employee_code, e.phone, e.email, e.status,
 	(SELECT m.team_id FROM shift_team_members m WHERE m.tenant_id = e.tenant_id AND m.employee_id = e.id) AS team_id,
 	e.created_at, e.updated_at`
 
 func scanEmployee(row pgx.Row) (Employee, error) {
 	var e Employee
-	err := row.Scan(&e.ID, &e.TenantID, &e.StationID, &e.UserID, &e.FullName, &e.Role,
+	err := row.Scan(&e.ID, &e.TenantID, &e.StationID, &e.UserID, &e.LoginEmail, &e.LoginStatus, &e.FullName, &e.Role,
 		&e.EmployeeCode, &e.Phone, &e.Email, &e.Status, &e.TeamID, &e.CreatedAt, &e.UpdatedAt)
 	return e, err
 }
