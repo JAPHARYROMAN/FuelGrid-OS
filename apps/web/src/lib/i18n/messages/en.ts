@@ -510,6 +510,8 @@ export const en = {
     contrastNormal: 'Normal',
     contrastHigh: 'High',
     done: 'Done',
+    signOut: 'Sign out',
+    signingOut: 'Signing out…',
   },
 
   install: {
@@ -521,6 +523,9 @@ export const en = {
     addToHomeScreen: 'Add to Home Screen',
     scanInstruction2: ' to install.',
     languageLabel: 'Language',
+    installThisDevice: 'Install on this device',
+    installing: 'Opening installer…',
+    openApp: 'Open attendant app',
   },
 };
 

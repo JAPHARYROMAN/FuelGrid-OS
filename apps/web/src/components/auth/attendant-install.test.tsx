@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import * as React from 'react';
@@ -49,5 +49,25 @@ describe('AttendantInstall language selector', () => {
     render(<AttendantInstall />);
     await userEvent.click(await screen.findByText('Mhudumu wa pampu? Sakinisha programu'));
     expect(screen.getByText('Ongeza kwenye Skrini ya Mwanzo')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Fungua programu ya mhudumu' })).toHaveAttribute(
+      'href',
+      '/attendant',
+    );
+  });
+
+  it('uses the browser install prompt when this device is eligible', async () => {
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const event = new Event('beforeinstallprompt');
+    Object.assign(event, {
+      prompt,
+      userChoice: Promise.resolve({ outcome: 'accepted', platform: 'web' }),
+    });
+
+    render(<AttendantInstall />);
+    window.dispatchEvent(event);
+    await userEvent.click(screen.getByText('Pump attendant? Install the app'));
+    await userEvent.click(await screen.findByRole('button', { name: 'Install on this device' }));
+
+    expect(prompt).toHaveBeenCalledOnce();
   });
 });

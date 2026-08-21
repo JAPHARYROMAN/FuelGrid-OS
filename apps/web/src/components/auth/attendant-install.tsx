@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { QrCode } from 'lucide-react';
+import Link from 'next/link';
+import { Download, ExternalLink, QrCode } from 'lucide-react';
 
 import { AttendantPrefsProvider, useAttendantPrefs, useT } from '@/lib/i18n';
 
@@ -37,6 +38,11 @@ function QRCodeLoading() {
   );
 }
 
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
+
 export function AttendantInstall() {
   return (
     <AttendantPrefsProvider>
@@ -48,6 +54,32 @@ export function AttendantInstall() {
 function AttendantInstallInner() {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    const capturePrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', capturePrompt);
+    return () => window.removeEventListener('beforeinstallprompt', capturePrompt);
+  }, []);
+
+  async function installOnThisDevice() {
+    if (!installPrompt) return;
+    setInstalling(true);
+    try {
+      await installPrompt.prompt();
+      await installPrompt.userChoice;
+      // A beforeinstallprompt event can be used only once, regardless of the
+      // user's choice. The browser will emit another event when eligible.
+      setInstallPrompt(null);
+    } finally {
+      setInstalling(false);
+    }
+  }
+
   // window is always defined here: this client component renders interactive
   // content only after the user clicks (open starts false).
   const url = open ? `${window.location.origin}/attendant` : '';
@@ -77,6 +109,26 @@ function AttendantInstallInner() {
             {t.install.scanInstruction2}
           </p>
           <p className="font-mono text-[11px] text-muted-foreground">{url}</p>
+          <div className="mt-1 flex w-full flex-col gap-2">
+            {installPrompt ? (
+              <button
+                type="button"
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-accent-foreground"
+                disabled={installing}
+                onClick={installOnThisDevice}
+              >
+                <Download className="size-4" aria-hidden />
+                {installing ? t.install.installing : t.install.installThisDevice}
+              </button>
+            ) : null}
+            <Link
+              href="/attendant"
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium text-foreground"
+            >
+              <ExternalLink className="size-4" aria-hidden />
+              {t.install.openApp}
+            </Link>
+          </div>
         </div>
       ) : null}
     </div>

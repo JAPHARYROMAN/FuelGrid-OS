@@ -1,10 +1,22 @@
-'use client';
+import type { Metadata } from 'next';
 
 import { ProtectedRoute } from '@/components/auth/protected-route';
 import { Toaster } from '@/components/toaster';
 import { AttendantPrefsProvider } from '@/lib/i18n';
 
 import { AttendantShell } from './attendant-shell';
+
+export const metadata: Metadata = {
+  title: 'FuelGrid Attendant',
+  description: 'Pump attendant shift readings, collections, and field workflow.',
+  manifest: '/manifest.webmanifest',
+  applicationName: 'FuelGrid Attendant',
+  appleWebApp: {
+    capable: true,
+    title: 'FuelGrid Attendant',
+    statusBarStyle: 'black-translucent',
+  },
+};
 
 /**
  * Mobile Attendant App shell (Phase 1). Deliberately NOT the desktop

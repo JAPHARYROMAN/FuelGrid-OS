@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Settings, X } from 'lucide-react';
+import { LogOut, Settings, X } from 'lucide-react';
 
 import { useAttendantPrefs, useT, type Contrast, type Locale, type TextSize } from '@/lib/i18n';
 
@@ -14,7 +14,13 @@ import { useSheetFocusTrap } from './use-focus-trap';
  * (Normal/High). Every change applies instantly (context update, no reload)
  * and persists to localStorage, so it works fully offline.
  */
-export function DisplaySettingsButton() {
+export function DisplaySettingsButton({
+  onSignOut,
+  signingOut,
+}: {
+  onSignOut: () => void;
+  signingOut: boolean;
+}) {
   const t = useT();
   const [open, setOpen] = useState(false);
 
@@ -29,12 +35,26 @@ export function DisplaySettingsButton() {
       >
         <Settings className="size-5" aria-hidden />
       </button>
-      {open ? <DisplaySettingsSheet onClose={() => setOpen(false)} /> : null}
+      {open ? (
+        <DisplaySettingsSheet
+          onClose={() => setOpen(false)}
+          onSignOut={onSignOut}
+          signingOut={signingOut}
+        />
+      ) : null}
     </>
   );
 }
 
-export function DisplaySettingsSheet({ onClose }: { onClose: () => void }) {
+export function DisplaySettingsSheet({
+  onClose,
+  onSignOut,
+  signingOut,
+}: {
+  onClose: () => void;
+  onSignOut: () => void;
+  signingOut: boolean;
+}) {
   const t = useT();
   const prefs = useAttendantPrefs();
   const panelRef = useSheetFocusTrap(onClose);
@@ -93,13 +113,24 @@ export function DisplaySettingsSheet({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="border-t border-border px-4 py-3">
-          <button
-            type="button"
-            className="flex h-12 w-full items-center justify-center rounded-lg bg-accent text-base font-medium text-accent-foreground"
-            onClick={onClose}
-          >
-            {t.settings.done}
-          </button>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className="flex h-12 w-full items-center justify-center rounded-lg bg-accent text-base font-medium text-accent-foreground"
+              onClick={onClose}
+            >
+              {t.settings.done}
+            </button>
+            <button
+              type="button"
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-danger/40 text-base font-medium text-danger"
+              disabled={signingOut}
+              onClick={onSignOut}
+            >
+              <LogOut className="size-4" aria-hidden />
+              {signingOut ? t.settings.signingOut : t.settings.signOut}
+            </button>
+          </div>
         </div>
       </div>
     </div>

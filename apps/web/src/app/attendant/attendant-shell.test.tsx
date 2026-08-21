@@ -4,8 +4,16 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as React from 'react';
 
+const replace = vi.fn();
+const logout = vi.fn();
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ replace }),
+}));
+
 vi.mock('@/lib/api', () => ({
   api: {
+    logout: (...args: unknown[]) => logout(...args),
     attendantCurrentShift: vi.fn().mockResolvedValue({}),
     checkInToShift: vi.fn(),
     checkOutOfShift: vi.fn(),
@@ -57,6 +65,9 @@ describe('AttendantShell display & language', () => {
   beforeEach(() => {
     localStorage.clear();
     resetSyncEngineForTests();
+    replace.mockReset();
+    logout.mockReset();
+    logout.mockResolvedValue(undefined);
   });
 
   it('renders normal modes by default and hosts the settings affordance', () => {
@@ -128,5 +139,14 @@ describe('AttendantShell display & language', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     // Focus returns to the opener.
     expect(screen.getByRole('button', { name: 'Display & language' })).toHaveFocus();
+  });
+
+  it('signs out from the settings sheet and returns to login', async () => {
+    renderShell();
+    await userEvent.click(screen.getByRole('button', { name: 'Display & language' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+
+    expect(logout).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledWith('/login');
   });
 });

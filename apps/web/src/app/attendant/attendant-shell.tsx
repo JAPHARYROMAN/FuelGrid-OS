@@ -1,8 +1,14 @@
 'use client';
 
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Fuel } from 'lucide-react';
 
+import { api } from '@/lib/api';
 import { useAttendantPrefs, useT } from '@/lib/i18n';
+import { clearSentryUser } from '@/lib/sentry';
+import { useAuthStore } from '@/stores/auth-store';
+import { useTenantStore } from '@/stores/tenant-store';
 
 import { DisplaySettingsButton } from './display-settings';
 import { AttendantNotificationBell } from './notification-bell';
@@ -22,6 +28,25 @@ import { OfflineHint, SyncStatusChip } from './sync-status';
 export function AttendantShell({ children }: { children: React.ReactNode }) {
   const t = useT();
   const { textSize, contrast } = useAttendantPrefs();
+  const router = useRouter();
+  const clearSession = useAuthStore((state) => state.clearSession);
+  const resetTenantContext = useTenantStore((state) => state.reset);
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await api.logout();
+    } catch {
+      // The BFF clears the cookie even when the upstream logout fails. Local
+      // state must also be cleared so an attendant can always leave a device.
+    }
+    clearSession();
+    resetTenantContext();
+    clearSentryUser();
+    router.replace('/login');
+  }
 
   return (
     <div
@@ -40,7 +65,7 @@ export function AttendantShell({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-1">
             <SyncStatusChip />
             <AttendantNotificationBell />
-            <DisplaySettingsButton />
+            <DisplaySettingsButton onSignOut={signOut} signingOut={signingOut} />
           </div>
         </div>
       </header>

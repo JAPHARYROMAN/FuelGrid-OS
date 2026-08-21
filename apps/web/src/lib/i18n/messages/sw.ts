@@ -513,6 +513,8 @@ export const sw: Messages = {
     contrastNormal: 'Kawaida',
     contrastHigh: 'Juu',
     done: 'Sawa',
+    signOut: 'Ondoka',
+    signingOut: 'Inaondoka…',
   },
 
   install: {
@@ -523,5 +525,8 @@ export const sw: Messages = {
     addToHomeScreen: 'Ongeza kwenye Skrini ya Mwanzo',
     scanInstruction2: ' ya kivinjari chako ili kusakinisha.',
     languageLabel: 'Lugha',
+    installThisDevice: 'Sakinisha kwenye simu hii',
+    installing: 'Inafungua kisakinishaji…',
+    openApp: 'Fungua programu ya mhudumu',
   },
 };
