@@ -45,8 +45,10 @@ export const permissionItemSchema = z.object({
 export const mePermissionsSchema = z.object({
   permissions: z.array(permissionItemSchema),
   station_ids: z.array(z.string()).optional(),
+  roles: z.array(z.string()).optional(),
   tenant_wide: z.boolean(),
   is_system_admin: z.boolean().optional(),
+  is_attendant_only: z.boolean().optional(),
 });
 
 /**

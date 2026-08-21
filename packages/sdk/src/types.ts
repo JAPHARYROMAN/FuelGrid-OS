@@ -48,8 +48,12 @@ export interface PermissionItem {
 export interface MePermissions {
   permissions: PermissionItem[];
   station_ids?: string[];
+  /** Role codes assigned to the current user. */
+  roles?: string[];
   tenant_wide: boolean;
   is_system_admin?: boolean;
+  /** True when the dedicated attendant app is this account's only surface. */
+  is_attendant_only?: boolean;
 }
 
 export interface Company {

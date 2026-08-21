@@ -28,6 +28,22 @@ describe('loginDestination', () => {
     );
   });
 
+  it('refuses a desktop destination for an attendant-only account', () => {
+    expect(loginDestination('/command-center', attendantAccess)).toBe('/attendant');
+    expect(loginDestination('/settings/users', attendantAccess)).toBe('/attendant');
+  });
+
+  it('uses the authoritative role-based surface marker when present', () => {
+    expect(
+      loginDestination('/finance', {
+        ...attendantAccess,
+        permissions: [{ code: 'company.read', station_scoped: false }],
+        roles: ['attendant'],
+        is_attendant_only: true,
+      }),
+    ).toBe('/attendant');
+  });
+
   it('keeps broader-access users on the command centre', () => {
     expect(
       loginDestination(null, {
@@ -35,6 +51,8 @@ describe('loginDestination', () => {
           ...attendantAccess.permissions,
           { code: 'company.read', station_scoped: false },
         ],
+        roles: ['station_manager'],
+        is_attendant_only: false,
         tenant_wide: true,
       }),
     ).toBe('/command-center');

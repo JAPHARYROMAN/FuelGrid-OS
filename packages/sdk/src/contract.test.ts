@@ -166,6 +166,25 @@ describe('SDK Paginated<T> envelope contract', () => {
   });
 });
 
+describe('SDK access-surface contract', () => {
+  it('preserves role-based attendant-only markers from /me/permissions', async () => {
+    const f = jsonFetch(200, {
+      permissions: [{ code: 'shift.open', station_scoped: true }],
+      station_ids: ['station-1'],
+      roles: ['attendant'],
+      tenant_wide: false,
+      is_system_admin: false,
+      is_attendant_only: true,
+    });
+    const client = new Client({ baseURL: 'http://api.test', fetch: f as unknown as typeof fetch });
+
+    const access = await client.mePermissions();
+
+    expect(access.roles).toEqual(['attendant']);
+    expect(access.is_attendant_only).toBe(true);
+  });
+});
+
 describe('SDK 401 + error mapping contract', () => {
   it('fires onUnauthorized exactly once on a 401 and still rejects with SdkError', async () => {
     const onUnauthorized = vi.fn();

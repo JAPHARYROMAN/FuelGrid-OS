@@ -39,6 +39,23 @@ test('attendant installs, signs in, renders without overflow, and can sign out',
   page,
 }) => {
   await mockBaseline(page);
+  await page.route('**/api/bff/api/v1/me/permissions', (route) =>
+    json(route, {
+      permissions: [
+        'cash.submit',
+        'incidents.report',
+        'payment.record',
+        'pricing.read',
+        'reading.edit',
+        'shift.open',
+      ].map((code) => ({ code, station_scoped: true })),
+      station_ids: ['station-1'],
+      roles: ['attendant'],
+      tenant_wide: false,
+      is_system_admin: false,
+      is_attendant_only: true,
+    }),
+  );
   await page.route('**/api/bff/api/v1/attendant/current-shift', (route) => json(route, SNAPSHOT));
   await page.route('**/api/bff/api/v1/auth/logout', (route) => route.fulfill({ status: 204 }));
 
@@ -55,6 +72,13 @@ test('attendant installs, signs in, renders without overflow, and can sign out',
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+
+  await page.goto('/command-center');
+  await expect(page).toHaveURL(/\/attendant$/);
+  await expect(page.getByText('Itemba Mpemba')).toBeVisible();
+  await expect(
+    page.getByRole('heading', { name: 'How is my fuel business performing right now?' }),
+  ).not.toBeVisible();
 
   await page.getByRole('button', { name: 'Display & language' }).click();
   await page.getByRole('button', { name: 'Sign out' }).click();
