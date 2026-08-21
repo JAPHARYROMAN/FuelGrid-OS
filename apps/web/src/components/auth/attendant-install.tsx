@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
 import { Download, ExternalLink, QrCode } from 'lucide-react';
 
 import { AttendantPrefsProvider, useAttendantPrefs, useT } from '@/lib/i18n';
@@ -66,6 +65,33 @@ function AttendantInstallInner() {
     return () => window.removeEventListener('beforeinstallprompt', capturePrompt);
   }, []);
 
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'production' || !('serviceWorker' in navigator)) return;
+
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloading = false;
+    const onControllerChange = () => {
+      if (!hadController || reloading) return;
+      reloading = true;
+      window.location.reload();
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', onControllerChange);
+    navigator.serviceWorker
+      .register('/sw.js', { updateViaCache: 'none' })
+      .then(async (registration) => {
+        await registration.update();
+        registration.waiting?.postMessage({ type: 'SKIP_WAITING' });
+      })
+      .catch(() => {
+        // Installation remains optional; ordinary browser login must still work.
+      });
+
+    return () => {
+      navigator.serviceWorker.removeEventListener('controllerchange', onControllerChange);
+    };
+  }, []);
+
   async function installOnThisDevice() {
     if (!installPrompt) return;
     setInstalling(true);
@@ -121,13 +147,13 @@ function AttendantInstallInner() {
                 {installing ? t.install.installing : t.install.installThisDevice}
               </button>
             ) : null}
-            <Link
+            <a
               href="/attendant"
               className="flex h-12 w-full items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium text-foreground"
             >
               <ExternalLink className="size-4" aria-hidden />
               {t.install.openApp}
-            </Link>
+            </a>
           </div>
         </div>
       ) : null}

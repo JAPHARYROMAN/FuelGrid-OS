@@ -13,10 +13,9 @@ import { useT } from '@/lib/i18n';
  * the strict nonce-based `script-src` is untouched; /sw.js itself is fetched
  * by the SW machinery under `worker-src` → `default-src 'self'`.
  *
- * Updates are user-controlled: the new SW installs and WAITS (sw.js never
- * calls skipWaiting on its own); we surface a gentle "App updated — reload"
- * pill, and only when the attendant taps it do we post SKIP_WAITING and
- * reload once the new worker takes control.
+ * New workers normally activate immediately so broken/stale installed shells
+ * recover without user intervention. The waiting-worker affordance remains as
+ * a defensive fallback for browsers that defer activation.
  */
 export function ServiceWorkerManager() {
   const t = useT();
@@ -31,9 +30,10 @@ export function ServiceWorkerManager() {
     let cancelled = false;
 
     navigator.serviceWorker
-      .register('/sw.js')
+      .register('/sw.js', { updateViaCache: 'none' })
       .then((registration) => {
         if (cancelled) return;
+        void registration.update();
         if (registration.waiting && navigator.serviceWorker.controller) {
           setWaiting(registration.waiting);
         }
